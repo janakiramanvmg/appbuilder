@@ -27,16 +27,23 @@ app.add_middleware(
 
 @app.get("/msg")
 def health():
+    print("api call yes")
     return {"status": "running"}
+
+# def run_server(host, port):
+#     print(f"host====${host}--- prot===${port}")
+#     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
 
 def run_server(host, port):
     print(f"host====${host}--- prot===${port}")
     from PySide6.QtWidgets import QApplication, QMessageBox
-    app = QApplication.instance()
+    app_2 = QApplication.instance()
     owns_app = False
 
-    if app is None:
-        app = QApplication(sys.argv)
+    if app_2 is None:
+        app_2 = QApplication(sys.argv)
         owns_app = True
 
     QMessageBox.warning(

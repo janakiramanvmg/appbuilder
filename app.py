@@ -6414,7 +6414,7 @@ class LoginWorker(QObject):
                 save_cache(cache)
                 logger.debug(f"[Login] Token updated for user: {self.username}")
 
-            start_local_api()   # START local api server
+            # start_local_api()   # START local api server
             
             logger.debug("Emitting success signal")
             self.success.emit(user_info, access_token)
