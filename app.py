@@ -8385,7 +8385,7 @@ def stop_local_api():
 
 
 if __name__ == "__main__":
-    # lock_handle = ensure_single_instance("PremediaApp")
+    lock_handle = ensure_single_instance("PremediaApp")
     try:
         # 🔹 Step 1: Check for updates before launching GUI
         exe_path = sys.executable
