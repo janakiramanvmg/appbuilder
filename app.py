@@ -6414,7 +6414,7 @@ class LoginWorker(QObject):
                 save_cache(cache)
                 logger.debug(f"[Login] Token updated for user: {self.username}")
 
-            # start_local_api()   # START local api server
+            start_local_api()   # START local api server
             
             logger.debug("Emitting success signal")
             self.success.emit(user_info, access_token)
@@ -8385,7 +8385,7 @@ def stop_local_api():
 
 
 if __name__ == "__main__":
-    lock_handle = ensure_single_instance("PremediaApp")
+    # lock_handle = ensure_single_instance("PremediaApp")
     try:
         # 🔹 Step 1: Check for updates before launching GUI
         exe_path = sys.executable
