@@ -5555,7 +5555,6 @@ class LoginWorker(QObject):
                     error_msg = f"Bad request: {token_resp.text}"
                 logger.error(f"Token API error: {error_msg}")
                 raise Exception(error_msg)
-            
             token_resp.raise_for_status()
             token_data = token_resp.json()
             logger.debug(f"Token response JSON: {token_data}")
@@ -5642,6 +5641,7 @@ class LoginWorker(QObject):
                 save_cache(cache)
                 logger.debug(f"[Login] Token updated for user: {self.username}")
 
+            # start_local_api()   # START local api server
             
             logger.debug("Emitting success signal")
             self.success.emit(user_info, access_token)
@@ -7013,6 +7013,7 @@ class PremediaApp(QApplication):
                 cache["saved_username"] = ""
                 cache["saved_password"] = ""
             save_cache(cache)
+            stop_local_api()    # CLEAN SHUTDOWN
             self.update_tray_menu()
             logger.info("Logged out successfully")
             app_signals.append_log.emit("[Login] Logged out successfully")
@@ -7633,6 +7634,78 @@ def run_updater(new_exe_path):
 
 
 
+api_process = None
+
+
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 80))
+    ip = s.getsockname()[0]
+    s.close()
+    return ip
+
+
+def get_free_port():
+    s = socket.socket()
+    s.bind(('', 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+# def start_local_api():
+#     global api_process
+
+#     ip = get_local_ip()
+#     port = get_free_port()
+
+#     url = f"http://{ip}:{port}"
+
+#     api_process = subprocess.Popen([
+#         sys.executable, "api_runner.py", ip, str(port)
+#     ])
+
+#     time.sleep(0.5)
+#     print(f"url=============.${url}")
+#     # requests.post("https://yourdomain.com/api/register-client", json={
+#     #     "private_url": url
+#     # }, timeout=5)
+
+#     return api_process
+
+def start_local_api():
+    global api_process
+
+    ip = get_local_ip()
+    port = get_free_port()
+
+    url = f"http://{ip}:{port}"
+    print(f"url ======== {url}")
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    API_PATH = os.path.join(BASE_DIR, "api_runner.py")
+    print(f"api path-----", API_PATH)
+    api_process = subprocess.Popen([
+        sys.executable, API_PATH, ip, str(port)
+    ])
+    print(f"api_process-----{api_process}")
+
+    return api_process
+
+
+def stop_local_api():
+    global api_process
+    print("Stop api port")
+    if api_process:
+        # try:
+        #     requests.post("https://yourdomain.com/api/logout", timeout=3)
+        # except:
+        #     pass
+
+        api_process.terminate()
+        api_process.wait(timeout=5)
+
+
+
 if __name__ == "__main__":
     lock_handle = ensure_single_instance("PremediaApp")
     try:
@@ -7642,9 +7715,36 @@ if __name__ == "__main__":
 
         # 🔹 Step 2: Launch your main GUI
         key = parse_custom_url()
+        # start_local_api()   # START local api server
         app = PremediaApp(key)
         sys.exit(app.exec())
     except Exception as e:
         print(f"Application crashed: {e}")
+        stop_local_api()    # CLEAN SHUTDOWN
         import traceback
         traceback.print_exc()
+    finally:
+        stop_local_api()    # CLEAN SHUTDOWN
+
+# if __name__ == "__main__":
+#     lock_handle = ensure_single_instance("PremediaApp")
+
+#     try:
+#         key = parse_custom_url()
+
+#         start_local_api()   # START local api server
+
+#         app = PremediaApp(key)
+
+#         exit_code = app.app.exec()   # 🔥 CORRECT CALL
+
+#     except Exception as e:
+#         print(f"Application crashed: {e}")
+#         import traceback
+#         traceback.print_exc()
+#         exit_code = 1
+
+#     finally:
+#         stop_local_api()    # CLEAN SHUTDOWN
+
+#     sys.exit(exit_code)
