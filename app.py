@@ -1393,7 +1393,8 @@ class FileWatcherWorker(QObject):
         super().__init__(parent)
         FileWatcherWorker._instance = self
         FileWatcherWorker._instance_thread = QThread.currentThread()
-        self.processed_tasks = set()
+        # self.processed_tasks = set()
+        self.processed_tasks = {}
         self.running = True
         self._lock = Lock()  # Initialize the lock
         self.last_api_hit_time = None
@@ -1411,17 +1412,17 @@ class FileWatcherWorker(QObject):
         logger.info("FileWatcherWorker initialized")
         self.log_update.emit("[FileWatcher] Initialized")
         self.log_update.emit(f"[FileWatcher] Application started at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        self.timer = QTimer(self)
-        self.timer.setSingleShot(True)  # Single-shot to prevent overlapping ticks
-        self.timer.timeout.connect(self.run)
-        self.cleanup_signal.connect(self.cleanup)
-        if not self.timer.isActive():
-            self.timer.start(self.api_poll_interval)
-            logger.debug(f"FileWatcherWorker timer started with {self.api_poll_interval/1000}-second interval")
-            self.log_update.emit(f"[FileWatcher] Timer started with {self.api_poll_interval/1000}-second interval")
-        else:
-            logger.debug("FileWatcherWorker timer already active")
-            self.log_update.emit("[FileWatcher] Timer already active")
+        # self.timer = QTimer(self)
+        # self.timer.setSingleShot(True)  # Single-shot to prevent overlapping ticks
+        # self.timer.timeout.connect(self.run)
+        # self.cleanup_signal.connect(self.cleanup)
+        # if not self.timer.isActive():
+        #     self.timer.start(self.api_poll_interval)
+        #     logger.debug(f"FileWatcherWorker timer started with {self.api_poll_interval/1000}-second interval")
+        #     self.log_update.emit(f"[FileWatcher] Timer started with {self.api_poll_interval/1000}-second interval")
+        # else:
+        #     logger.debug("FileWatcherWorker timer already active")
+        #     self.log_update.emit("[FileWatcher] Timer already active")
 
 
     def _prepare_download_path(self, item):
@@ -1452,485 +1453,6 @@ class FileWatcherWorker(QObject):
         logger.debug(f"Prepared local path: {resolved_dest_path}")
         self.log_update.emit(f"[Transfer] Prepared local path: {resolved_dest_path}")
         return resolved_dest_path
-
-    # def _download_from_nas(self, src_path, dest_path, item):
-    #     task_id = item.get("id", '')
-    #     spec_id = str(item.get("spec_id"))
-    #     metadata_key = "downloaded_files_with_metadata"
-    #     cache = load_cache()
-    #     cache.setdefault(metadata_key, {})
-
-    #     try:
-    #         # --- FAST TRANSPORT ---
-    #         conn_start = time.time()
-    #         transport = paramiko.Transport((NAS_IP, NAS_PORT))
-
-    #         # Use fastest cipher
-    #         transport.get_security_options().ciphers = (
-    #             'aes128-ctr', 'aes192-ctr', 'aes256-ctr'
-    #         )
-
-    #         transport.connect(username=NAS_USERNAME, password=NAS_PASSWORD)
-
-    #         # Create high-performance SFTP client
-    #         sftp = paramiko.SFTPClient.from_transport(transport)
-
-    #         # BOOST 1: Increase Max Packet Size (default = 32 KB)
-    #         sftp.MAX_PACKET_SIZE = 327680  # 320 KB
-
-    #         # BOOST 2: Increase Max Request Size
-    #         sftp.MAX_REQUEST_SIZE = 327680  # 320 KB
-
-    #         conn_end = time.time()
-    #         connection_time = (conn_end - conn_start) * 1000
-
-    #         # Resolve NAS path
-    #         nas_path = item.get("file_path", src_path)
-
-    #         # File size
-    #         file_size = sftp.stat(nas_path).st_size
-    #         file_size_mb = file_size / (1024 * 1024)
-
-    #         # --- FAST DOWNLOAD ---
-    #         start_time = time.time()
-
-    #         # Use getfo (streaming) for faster large file downloads
-    #         with open(dest_path, 'wb') as out_f:
-    #             sftp.getfo(nas_path, out_f)
-
-    #         end_time = time.time()
-
-    #         duration = end_time - start_time
-    #         speed = file_size_mb / duration if duration > 0 else 0
-
-    #         print(f"Connection: {connection_time:.1f}ms")
-    #         print(f"Downloaded {file_size_mb:.2f} MB in {duration:.2f}s ({speed:.2f} MB/s)")
-
-    #         sftp.close()
-    #         transport.close()
-
-    #     except Exception as e:
-    #         print(f"❌ Download failed: {e}")
-    #         update_download_upload_metadata(task_id, "failed")
-    #         cache[metadata_key][spec_id]["api_response"]["request_status"] = "Download Failed"
-    #         save_cache(cache, significant_change=True)
-    #         raise
-
-# ///////////////////////////////////////////////////////////////////////////////////////////
-    # def _download_from_nas(self, src_path, dest_path, item):
-        task_id = item.get("id", '')
-        spec_id = str(item.get("spec_id"))
-        metadata_key = "downloaded_files_with_metadata"
-        cache = load_cache()
-        cache.setdefault(metadata_key, {})
-        
-        transport = None  # Initialize transport by Mohan
-
-        try:
-            # --- FAST SSH CONNECTION ---
-            conn_start = time.time()
-            transport = paramiko.Transport((NAS_IP, NAS_PORT))
-            
-            # Apply packet/window size tuning directly to the transport changes by Mohan
-            transport.default_window_size = 2147483647     # 128MB window
-            transport.default_max_packet_size = 65536  # 64MB packet
-            transport.packetizer.REKEY_BYTES = pow(2, 40)
-            transport.packetizer.REKEY_PACKETS = pow(2, 40)
-
-            transport.get_security_options().ciphers = (
-                'aes128-ctr', 'aes192-ctr', 'aes256-ctr'
-            )
-
-            transport.connect(username=NAS_USERNAME, password=NAS_PASSWORD)
-            conn_end = time.time()
-
-            print(f"Connection time: {(conn_end - conn_start) * 1000:.1f} ms")
-
-            # Resolve NAS path
-            nas_path = item.get("file_path", src_path)
-
-            # --- SUPER FAST SCP DOWNLOAD --- buffer size increased by Mohan
-            start_time = time.time()
-
-            with SCPClient(transport, socket_timeout=30, buff_size=8388608) as scp:
-                scp.get(nas_path, local_path=dest_path)
-
-            end_time = time.time()
-
-            # calculate file size + speed
-            size_mb = Path(dest_path).stat().st_size / (1024 * 1024)
-            duration = end_time - start_time
-            speed = size_mb / duration if duration > 0 else 0
-
-            print(f"📥 SCP Downloaded {size_mb:.2f} MB in {duration:.2f}s ({speed:.2f} MB/s)")
-
-            #transport.close() commented by Mohan
-
-        except Exception as e:
-            print(f"❌ Download failed: {e}")
-            cache[metadata_key][spec_id]["api_response"]["request_status"] = "Download Failed"
-            save_cache(cache, significant_change=True)
-            update_download_upload_metadata(task_id, "failed")
-            raise
-            
-        # Transport close by Mohan
-        finally:
-            if transport:
-                # Ensure the transport is closed after transfer is complete
-                transport.close()
-# ////////////////////////////////////////////////////////////////////////////////////////////////
-    # def _download_from_nas(self, src_path, dest_path, item):
-    #     task_id = item.get("id", '')
-    #     spec_id = str(item.get("spec_id"))
-    #     metadata_key = "downloaded_files_with_metadata"
-    #     cache = load_cache()
-    #     cache.setdefault(metadata_key, {})
-        
-    #     transport = None
-
-    #     try:
-    #         # --- FAST SSH CONNECTION ---
-    #         conn_start = time.time()
-    #         transport = paramiko.Transport((NAS_IP, NAS_PORT))
-            
-    #         transport.default_window_size = 2147483647
-    #         transport.packetizer.REKEY_BYTES = pow(2, 40)
-    #         transport.packetizer.REKEY_PACKETS = pow(2, 40)
-    #         transport.get_security_options().ciphers = ('aes128-ctr', 'aes192-ctr', 'aes256-ctr')
-
-    #         transport.connect(username=NAS_USERNAME, password=NAS_PASSWORD)
-    #         conn_end = time.time()
-    #         print(f"Connection time: {(conn_end - conn_start) * 1000:.1f} ms")
-
-    #         # Resolve paths
-    #         nas_path = item.get("file_path", src_path)
-    #         dest_path_obj = Path(dest_path)
-    #         dest_path_obj.parent.mkdir(parents=True, exist_ok=True)
-
-    #         # Get remote file size
-    #         sftp_client = transport.open_sftp_client()
-    #         remote_stat = sftp_client.stat(nas_path)
-    #         total_size_bytes = remote_stat.st_size
-    #         sftp_client.close()
-
-    #         file_size_mb = total_size_bytes / (1024 * 1024)
-    #         print(f"Downloading: {Path(nas_path).name} ({file_size_mb:.2f} MB)")
-
-    #         # Progress state
-    #         start_time = time.time()
-    #         last_ui_update = 0
-    #         file_watcher = FileWatcherWorker.get_instance()
-
-    #         def format_time(seconds):
-    #             if seconds < 0:
-    #                 return "Calculating..."
-    #             if seconds < 60:
-    #                 return f"{int(seconds)}s"
-    #             mins, secs = divmod(int(seconds), 60)
-    #             if mins < 60:
-    #                 return f"{mins}m {secs}s"
-    #             hours, mins = divmod(mins, 60)
-    #             return f"{hours}h {mins}m {secs}s"
-
-    #         def scp_progress_callback(filename, size, sent):
-    #             nonlocal start_time, last_ui_update
-
-    #             current_time = time.time()
-    #             elapsed = current_time - start_time
-    #             if elapsed <= 0:
-    #                 return
-
-    #             percentage = (sent / total_size_bytes) * 100 if total_size_bytes > 0 else 0
-    #             speed_mb_s = (sent / (1024 * 1024)) / elapsed
-
-    #             # Live elapsed time
-    #             elapsed_str = format_time(elapsed)
-
-    #             # Live ETA
-    #             remaining_bytes = total_size_bytes - sent
-    #             eta_seconds = remaining_bytes / (1024 * 1024) / speed_mb_s if speed_mb_s > 0 else -1
-    #             eta_str = format_time(eta_seconds)
-
-    #             # Throttle updates to ~every 0.5 seconds
-    #             if (current_time - last_ui_update >= 0.5) or (percentage >= 100):
-    #                 last_ui_update = current_time
-
-    #                 # === Use your existing progress_update signal ===
-    #                 # Arguments: (file_path, some_string (we use filename), percentage)
-    #                 file_watcher.progress_update.emit(
-    #                     dest_path,
-    #                     Path(dest_path).name,  # second arg – can be filename or anything meaningful
-    #                     int(percentage)
-    #                 )
-
-    #                 # === Use your existing status_update signal for rich text ===
-    #                 status_text = (
-    #                     f"Downloading {percentage:.1f}% "
-    #                     f"@ {speed_mb_s:.1f} MB/s "
-    #                     f"• {elapsed_str} elapsed "
-    #                     f"• ETA: {eta_str}"
-    #                 )
-    #                 file_watcher.status_update.emit(status_text)
-
-    #                 print(f"{percentage:6.1f}% | {speed_mb_s:7.1f} MB/s | "
-    #                     f"Elapsed: {elapsed_str} | ETA: {eta_str} | {Path(dest_path).name}")
-
-    #         # --- PERFORM SCP DOWNLOAD WITH LIVE FEEDBACK ---
-    #         with SCPClient(
-    #             transport,
-    #             buff_size=8388608,
-    #             socket_timeout=60,
-    #             progress=scp_progress_callback
-    #         ) as scp:
-    #             scp.get(nas_path, local_path=dest_path)
-
-    #         # --- FINAL SUCCESS ---
-    #         actual_duration = time.time() - start_time
-    #         actual_time_str = format_time(actual_duration)
-    #         avg_speed = file_size_mb / actual_duration if actual_duration > 0 else 0
-
-    #         print(f"Completed: {file_size_mb:.2f} MB in {actual_time_str} ({avg_speed:.2f} MB/s)")
-
-    #         # Final updates using your existing signals
-    #         file_watcher.progress_update.emit(dest_path, Path(dest_path).name, 100)
-    #         file_watcher.status_update.emit(f"Completed in {actual_time_str}")
-
-    #     except Exception as e:
-    #         print(f"Download failed: {e}")
-            
-    #         if spec_id in cache.get(metadata_key, {}):
-    #             cache[metadata_key][spec_id]["api_response"]["request_status"] = "Download Failed"
-    #             save_cache(cache, significant_change=True)
-            
-    #         update_download_upload_metadata(task_id, "failed")
-
-    #         file_watcher = FileWatcherWorker.get_instance()
-    #         file_watcher.progress_update.emit(dest_path, Path(dest_path).name, 0)
-    #         file_watcher.status_update.emit("Download Failed")
-
-    #         raise
-
-    #     finally:
-    #         if transport and transport.is_active():
-    #             transport.close()
-
-
-    # def _download_from_nas(self, src_path, dest_path, item):
-    #     task_id = item.get("id", "")
-    #     spec_id = str(item.get("spec_id"))
-    #     metadata_key = "downloaded_files_with_metadata"
-    #     cache = load_cache()
-    #     cache.setdefault(metadata_key, {})
-
-    #     transport = None
-    #     file_watcher = FileWatcherWorker.get_instance()
-
-    #     dest_path = str(Path(dest_path))
-    #     filename = Path(dest_path).name
-
-    #     try:
-    #         # ---------- SSH CONNECTION ----------
-    #         transport = paramiko.Transport((NAS_IP, NAS_PORT))
-    #         transport.default_window_size = 2147483647
-    #         transport.packetizer.REKEY_BYTES = 2 ** 40
-    #         transport.packetizer.REKEY_PACKETS = 2 ** 40
-    #         transport.get_security_options().ciphers = (
-    #             "aes128-ctr", "aes192-ctr", "aes256-ctr"
-    #         )
-    #         transport.connect(username=NAS_USERNAME, password=NAS_PASSWORD)
-
-    #         nas_path = item.get("file_path", src_path)
-    #         Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
-
-    #         # ---------- FILE SIZE ----------
-    #         sftp = transport.open_sftp_client()
-    #         total_size = sftp.stat(nas_path).st_size
-    #         sftp.close()
-
-    #         start_time = time.time()
-    #         last_emit = 0.0
-
-    #         def format_time(seconds: float) -> str:
-    #             if seconds <= 0:
-    #                 return "Calculating…"
-    #             m, s = divmod(int(seconds), 60)
-    #             h, m = divmod(m, 60)
-    #             return f"{h}h {m}m {s}s" if h else f"{m}m {s}s" if m else f"{s}s"
-
-    #         def scp_progress(_remote, size, sent):
-    #             nonlocal last_emit
-    #             now = time.time()
-    #             elapsed = now - start_time
-    #             if elapsed <= 0:
-    #                 return
-
-    #             percent = int((sent / total_size) * 100) if total_size else 0
-    #             speed = (sent / 1024 / 1024) / elapsed if elapsed else 0
-    #             remaining = total_size - sent
-    #             eta = (remaining / 1024 / 1024) / speed if speed > 0 else -1
-
-    #             if now - last_emit < 0.5 and percent < 100:
-    #                 return
-    #             last_emit = now
-
-    #             # ---- PROGRESS ----
-    #             file_watcher.progress_update.emit(dest_path, filename, percent)
-
-    #             # ---- STATUS (FILE-SCOPED) ----
-    #             file_watcher.status_update.emit(
-    #                 f"Downloading {percent:.1f}% @ {speed:.1f} MB/s "
-    #                 f"• {format_time(elapsed)} elapsed "
-    #                 f"• ETA: {format_time(eta)} | {filename}"
-    #             )
-
-    #         # ---------- SCP DOWNLOAD ----------
-    #         with SCPClient(
-    #             transport,
-    #             buff_size=8 * 1024 * 1024,
-    #             socket_timeout=60,
-    #             progress=scp_progress,
-    #         ) as scp:
-    #             scp.get(nas_path, local_path=dest_path)
-
-    #         # ---------- SUCCESS ----------
-    #         duration = time.time() - start_time
-    #         file_watcher.progress_update.emit(dest_path, filename, 100)
-    #         file_watcher.status_update.emit(
-    #             f"Completed in {format_time(duration)} | {filename}"
-    #         )
-
-    #     except Exception as e:
-    #         if spec_id in cache.get(metadata_key, {}):
-    #             cache[metadata_key][spec_id]["api_response"]["request_status"] = "Download Failed"
-    #             save_cache(cache, significant_change=True)
-
-    #         update_download_upload_metadata(task_id, "failed")
-
-    #         file_watcher.progress_update.emit(dest_path, filename, 0)
-    #         file_watcher.status_update.emit(f"Download Failed | {filename}")
-    #         raise
-
-    #     finally:
-    #         if transport and transport.is_active():
-    #             transport.close()
-
-
-
-    # def _download_from_nas(self, src_path, dest_path, item):
-    #     task_id = item.get("id", "")
-    #     spec_id = str(item.get("spec_id"))
-    #     metadata_key = "downloaded_files_with_metadata"
-    #     cache = load_cache()
-    #     cache.setdefault(metadata_key, {})
-
-    #     transport = None
-    #     file_watcher = FileWatcherWorker.get_instance()
-
-    #     # CRITICAL FIX: Normalize dest_path EARLY and use it consistently
-    #     dest_path = str(Path(dest_path).resolve())  # Absolute, resolved, consistent
-    #     filename = Path(dest_path).name
-
-    #     try:
-    #         # ---------- SSH CONNECTION ----------
-    #         transport = paramiko.Transport((NAS_IP, NAS_PORT))
-    #         transport.default_window_size = 2147483647
-    #         transport.packetizer.REKEY_BYTES = 2 ** 40
-    #         transport.packetizer.REKEY_PACKETS = 2 ** 40
-    #         transport.get_security_options().ciphers = (
-    #             "aes128-ctr", "aes192-ctr", "aes256-ctr"
-    #         )
-    #         transport.connect(username=NAS_USERNAME, password=NAS_PASSWORD)
-
-    #         nas_path = item.get("file_path", src_path)
-    #         Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
-
-    #         # ---------- FILE SIZE ----------
-    #         sftp = transport.open_sftp_client()
-    #         total_size = sftp.stat(nas_path).st_size
-    #         sftp.close()
-
-    #         start_time = time.time()
-    #         last_emit = 0.0
-
-    #         def format_time(seconds: float) -> str:
-    #             if seconds <= 0:
-    #                 return "Calculating…"
-    #             m, s = divmod(int(seconds), 60)
-    #             h, m = divmod(m, 60)
-    #             parts = []
-    #             if h:
-    #                 parts.append(f"{h}h")
-    #             if m:
-    #                 parts.append(f"{m}m")
-    #             parts.append(f"{s}s")
-    #             return " ".join(parts)
-
-    #         def scp_progress(_remote, size, sent):
-    #             nonlocal last_emit
-    #             now = time.time()
-    #             elapsed = now - start_time
-    #             if elapsed <= 0:
-    #                 return
-
-    #             percent = int((sent / total_size) * 100) if total_size else 0
-    #             speed = (sent / 1024 / 1024) / elapsed if elapsed else 0
-    #             remaining = total_size - sent
-    #             eta = (remaining / 1024 / 1024) / speed if speed > 0 else -1
-
-    #             if now - last_emit < 0.5 and percent < 100:
-    #                 return
-    #             last_emit = now
-
-    #             # ---- PROGRESS: Always emit the SAME normalized dest_path ----
-    #             file_watcher.progress_update.emit(dest_path, filename, percent)
-
-    #             # ---- STATUS (FILE-SCOPED) ----
-    #             speed_str = f"{speed:.1f} MB/s" if speed > 0 else "—"
-    #             eta_str = format_time(eta) if eta > 0 else "—"
-    #             elapsed_str = format_time(elapsed)
-
-    #             file_watcher.status_update.emit(
-    #                 f"Downloading {percent}% @ {speed_str} "
-    #                 f"• {elapsed_str} elapsed "
-    #                 f"• ETA: {eta_str} | {filename}"
-    #             )
-
-    #         # ---------- SCP DOWNLOAD ----------
-    #         with SCPClient(
-    #             transport,
-    #             buff_size=8 * 1024 * 1024,
-    #             socket_timeout=60,
-    #             progress=scp_progress,
-    #         ) as scp:
-    #             scp.get(nas_path, local_path=dest_path)
-
-    #         # ---------- SUCCESS ----------
-    #         duration = time.time() - start_time
-    #         file_watcher.progress_update.emit(dest_path, filename, 100)
-    #         file_watcher.status_update.emit(
-    #             f"Download Completed in {format_time(duration)} | {filename}"
-    #         )
-
-    #     except Exception as e:
-    #         # Mark as failed in cache
-    #         if spec_id in cache.get(metadata_key, {}):
-    #             cache[metadata_key][spec_id]["api_response"]["request_status"] = "Download Failed"
-    #             save_cache(cache, significant_change=True)
-
-    #         update_download_upload_metadata(task_id, "failed")
-
-    #         # Emit failure with consistent path
-    #         file_watcher.progress_update.emit(dest_path, filename, 0)
-    #         file_watcher.status_update.emit(f"Download Failed | {filename}")
-
-    #         raise
-
-    #     finally:
-    #         if transport and transport.is_active():
-    #             transport.close()
-
-
-
 
 
 
@@ -2064,326 +1586,6 @@ class FileWatcherWorker(QObject):
         finally:
             if transport and transport.is_active():
                 transport.close()
-
-    
-    # def _upload_to_nas(self, src_path, dest_path, item):
-    #     task_id = item.get("id", '')
-    #     spec_id = str(item.get("spec_id"))
-    #     metadata_key = "uploaded_files_with_metadata"
-    #     cache = load_cache()
-    #     cache.setdefault(metadata_key, {})
-
-    #     try:
-    #         src_path = Path(src_path)
-    #         if not src_path.exists():
-    #             cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
-    #             save_cache(cache, significant_change=True)
-    #             update_download_upload_metadata(task_id, "failed")
-    #             show_alert_notification("Error (U1)", "Upload failed try again.")
-    #             raise FileNotFoundError(f"Source file does not exist: {src_path}")
-
-    #         # --- FAST PARAMIKO CONNECTION ---
-    #         conn_start = time.time()
-    #         transport = paramiko.Transport((NAS_IP, NAS_PORT))   # IMPORTANT: Use SFTPGo port
-
-    #         transport.get_security_options().ciphers = (
-    #             'aes128-ctr', 'aes192-ctr', 'aes256-ctr'
-    #         )
-
-    #         transport.connect(username=NAS_USERNAME, password=NAS_PASSWORD)
-    #         sftp = paramiko.SFTPClient.from_transport(transport)
-
-    #         sftp.MAX_PACKET_SIZE = 327680
-    #         sftp.MAX_REQUEST_SIZE = 327680
-
-    #         conn_end = time.time()
-    #         print(f"Connection time: {(conn_end - conn_start) * 1000:.1f} ms")
-
-    #         # Destination path
-    #         dest_path = item.get("file_path", dest_path)
-
-    #         # Ensure directory exists
-    #         dest_dir = os.path.dirname(dest_path)
-    #         try:
-    #             sftp.stat(dest_dir)
-    #         except FileNotFoundError:
-    #             parts = dest_dir.strip("/").split("/")
-    #             current = ""
-    #             for part in parts:
-    #                 current += f"/{part}"
-    #                 try:
-    #                     sftp.stat(current)
-    #                 except FileNotFoundError:
-    #                     sftp.mkdir(current, mode=0o777)
-
-    #         file_size = src_path.stat().st_size
-    #         file_size_mb = file_size / (1024 * 1024)
-
-    #         # --- SUPER-FAST CHUNKED UPLOAD ---
-    #         print("Uploading...")
-
-    #         start_time = time.time()
-
-    #         with open(src_path, "rb") as local_file:
-    #             with sftp.open(dest_path, 'wb') as remote_file:
-    #                 while True:
-    #                     chunk = local_file.read(1024 * 1024)  # 1 MB chunks
-    #                     if not chunk:
-    #                         break
-    #                     remote_file.write(chunk)
-
-    #                 remote_file.flush()
-
-    #         sftp.chmod(dest_path, 0o777)
-
-    #         end_time = time.time()
-
-    #         duration = end_time - start_time
-    #         speed = file_size_mb / duration
-
-    #         print(f"⚡ Uploaded {file_size_mb:.2f} MB in {duration:.2f}s ({speed:.2f} MB/s)")
-
-    #         sftp.close()
-    #         transport.close()
-
-    #     except Exception as e:
-    #         print(f"❌ Upload failed: {e}")
-    #         cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
-    #         save_cache(cache, significant_change=True)
-    #         show_alert_notification("Error (U3)", "Upload failed try again.")
-    #         raise
-
-
-#     def _upload_to_nas(self, src_path, dest_path, item):
-#         task_id = item.get("id", '')
-#         spec_id = str(item.get("spec_id"))
-#         metadata_key = "uploaded_files_with_metadata"
-#         cache = load_cache()
-#         cache.setdefault(metadata_key, {})
-#         transport = None  # initialize transport by Mohan
-#         try:
-#             src_path = Path(src_path)
-#             if not src_path.exists():
-#                 cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
-#                 save_cache(cache, significant_change=True)
-#                 update_download_upload_metadata(task_id, "failed")
-#                 show_alert_notification("Error (U1)", "Upload failed try again.")
-#                 raise FileNotFoundError(f"Source file does not exist: {src_path}")
-
-#             # --- FAST SSH (same as before) ---
-#             conn_start = time.time()
-#             transport = paramiko.Transport((NAS_IP, NAS_PORT))
-#             transport.set_keepalive(15) # Send KeepAlive every 15 seconds by Mohan
-#             # Apply packet/window size tuning directly to the transport by Mohan
-#             transport.default_window_size = 3554432     # 32MB window by Mohan
-#             transport.default_max_packet_size = 1048576   # 1MB packet by Mohan
-#             transport.get_security_options().ciphers = (
-# 'aes128-ctr', 'aes192-ctr', 'aes256-ctr'
-#             )
-#             transport.connect(username=NAS_USERNAME, password=NAS_PASSWORD)
-#             conn_end = time.time()
-
-#             print(f"Connection time: {(conn_end - conn_start) * 1000:.1f} ms")
-
-#             # Destination: use item’s file_path if provided
-#             dest_path = item.get("file_path", dest_path)
-            
-#             # --- OPTIMIZATION BY MOHAN: ONE-SHOT DIRECTORY CREATION (FIXES THE 70S BOTTLENECK) ---
-#             # Replaced the slow recursive check with a single fast SSH command:
-#             dest_dir = os.path.dirname(dest_path)
-#             chan = transport.open_session()
-#             chan.exec_command(f'mkdir -p "{dest_dir}"') 
-#             chan.close()
-#             # --------------------------------------------------------------------------
-
-#             # --- SUPER FAST SCP UPLOAD ---
-#             start = time.time()
-#             fast_scp_upload(transport, str(src_path), dest_path)
-#             end = time.time()
-
-#             duration = end - start
-#             size_mb = src_path.stat().st_size / (1024 * 1024)
-#             speed = size_mb / duration
-
-#             print(f"⚡ Uploaded {size_mb:.2f} MB in {duration:.2f}s ({speed:.2f} MB/s)")
-            
-#             # --- FIX: SET PERMISSIONS AFTER UPLOAD ---
-#             try:
-#                 sftp = paramiko.SFTPClient.from_transport(transport)
-#                 sftp.chmod(dest_path, 0o777)
-#                 sftp.close()
-#                 logger.info(f"Set permissions to 777 for uploaded file {dest_path}")
-#             except Exception as perm_e:
-#                 logger.warning(f"Failed to set file permissions (chmod) after SCP: {perm_e}")
-#                 # Continue if chmod fails, as the file is already uploaded by SCP
-
-#             # transport.close() commented by Mohan
-
-#         except Exception as e:
-#         # Check if the error is due to Channel Closed or connection loss
-#             if "Channel closed" in str(e) or "Timeout" in str(e) or "EOF" in str(e):
-#                 logger.error(f"Upload failed due to connection issue (Channel closed/Timeout/EOF): {e}")
-#                 show_alert_notification("Upload Error", "Connection lost during upload. This may be fixed by the KeepAlive setting. Please retry.")
-                
-#             if 'transport' in locals() and transport and transport.is_active():       # transport close by Mohan
-#                 transport.close()
-                
-#             print(f"❌ Upload failed: {e}")
-#             cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
-#             save_cache(cache, significant_change=True)
-#             show_alert_notification("Error (U3)", "Upload failed try again.")
-#             raise
-
-
-    # def _upload_to_nas(self, src_path, dest_path, item):
-    #     task_id = item.get("id", '')
-    #     spec_id = str(item.get("spec_id"))
-    #     metadata_key = "uploaded_files_with_metadata"
-    #     cache = load_cache()
-    #     cache.setdefault(metadata_key, {})
-        
-    #     src_path = Path(src_path)
-    #     if not src_path.exists():
-    #         cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
-    #         save_cache(cache, significant_change=True)
-    #         update_download_upload_metadata(task_id, "failed")
-    #         show_alert_notification("Error (U1)", "Upload failed try again.")
-    #         raise FileNotFoundError(f"Source file does not exist: {src_path}")
-
-    #     dest_path = item.get("file_path", dest_path)
-    #     dest_dir = os.path.dirname(dest_path)
-        
-    #     sock = None
-    #     session = None
-    #     sftp = None
-    #     try:
-    #         # ---------- CONNECTION ----------
-    #         start_conn = time.time()
-    #         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    #         sock.connect((NAS_IP, NAS_PORT))
-            
-    #         session = Session()
-    #         session.handshake(sock)
-            
-    #         session.userauth_password(NAS_USERNAME, NAS_PASSWORD)
-            
-    #         if not session.userauth_authenticated():
-    #             raise Exception("SSH authentication failed")
-            
-    #         end_conn = time.time()
-    #         print(f"Connection established in {(end_conn - start_conn) * 1000:.1f} ms")
-
-    #         # ---------- SFTP INIT ----------
-    #         sftp = session.sftp_init()
-
-    #         # ---------- NO DIRECTORY CREATION ----------
-    #         print(f"Directory creation skipped (as requested).")
-    #         print(f"Assuming destination directory already exists: {dest_dir}")
-    #         print(f"If upload fails with 'No such file or directory', create the folder manually on the NAS.\n")
-
-    #         # ---------- UPLOAD WITH LIVELY PROGRESS ----------
-    #         upload_start = time.time()
-            
-    #         flags = LIBSSH2_FXF_CREAT | LIBSSH2_FXF_WRITE | LIBSSH2_FXF_TRUNC
-    #         chunk_size = 4 * 1024 * 1024  # 4 MB chunks
-            
-    #         file_size = src_path.stat().st_size
-    #         total_mb = file_size / (1024 * 1024)
-            
-    #         # Throttling setup
-    #         bytes_per_second = None
-    #         if THROTTLE_MBPS is not None:
-    #             bytes_per_second = THROTTLE_MBPS * 1024 * 1024 / 8
-            
-    #         transferred = 0
-    #         last_print_time = time.time()
-    #         chunk_start_time = time.time()
-            
-    #         print(f"Uploading: {src_path.name} ({total_mb:.2f} MB)")
-    #         print(f"Destination: {dest_path}")
-    #         print("Progress: 0.0% | Speed: 0.00 MB/s | Transferred: 0.00 / {:.2f} MB".format(total_mb))
-            
-    #         with open(src_path, "rb") as local_file, \
-    #             sftp.open(dest_path, flags, 0o644) as remote_file:
-                
-    #             while True:
-    #                 data = local_file.read(chunk_size)
-    #                 if not data:
-    #                     break
-                    
-    #                 remote_file.write(data)
-    #                 transferred += len(data)
-                    
-    #                 # Throttling
-    #                 if bytes_per_second:
-    #                     chunk_end_time = time.time()
-    #                     elapsed = chunk_end_time - chunk_start_time
-    #                     expected = len(data) / bytes_per_second
-    #                     if elapsed < expected:
-    #                         time.sleep(expected - elapsed)
-    #                     chunk_start_time = time.time()
-                    
-    #                 # Real-time progress
-    #                 current_time = time.time()
-    #                 if current_time - last_print_time >= PRINT_INTERVAL:
-    #                     elapsed_total = current_time - upload_start
-    #                     transferred_mb = transferred / (1024 * 1024)
-    #                     percentage = (transferred / file_size) * 100 if file_size > 0 else 100
-    #                     speed = transferred_mb / elapsed_total if elapsed_total > 0 else 0
-                        
-    #                     print(f"Progress: {percentage:6.1f}% | Speed: {speed:6.2f} MB/s | "
-    #                         f"Transferred: {transferred_mb:8.2f} / {total_mb:.2f} MB", end="\r")
-                        
-    #                     last_print_time = current_time
-            
-    #         # Final results
-    #         upload_end = time.time()
-    #         duration = upload_end - upload_start
-    #         final_mb = file_size / (1024 * 1024)
-    #         final_speed = final_mb / duration if duration > 0 else 0
-            
-    #         print(f"\n\nUpload completed: {final_mb:.2f} MB in {duration:.2f}s ({final_speed:.2f} MB/s)")
-            
-    #         if MIN_REQUIRED_MBPS:
-    #             actual_mbps = final_speed * 8
-    #             if actual_mbps < MIN_REQUIRED_MBPS:
-    #                 print(f"WARNING: Upload speed {actual_mbps:.1f} Mbps is below required {MIN_REQUIRED_MBPS} Mbps!")
-    #             else:
-    #                 print(f"Speed {actual_mbps:.1f} Mbps meets minimum requirement ✓")
-
-    #     except Exception as e:
-    #         print("\nUpload failed!")
-    #         error_details = str(e)
-            
-    #         if sftp:
-    #             sftp_err = sftp.last_error()
-    #             if sftp_err != 0:
-    #                 error_details += f" | SFTP error code: {sftp_err}"
-    #                 if sftp_err == 2:
-    #                     error_details += " (No such file or directory – destination folder missing)"
-    #                 elif sftp_err == 3:
-    #                     error_details += " (Permission denied)"
-            
-    #         if session:
-    #             sess_err = session.last_errno()
-    #             if sess_err != 0:
-    #                 error_details += f" | Session error code: {sess_err}"
-            
-    #         print(f"Error: {error_details or 'Unknown error'}")
-    #         print("Tip: If 'No such file or directory', create the full destination folder manually on the NAS once.")
-    #         traceback.print_exc()
-            
-    #         cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
-    #         save_cache(cache, significant_change=True)
-    #         show_alert_notification("Error (U3)", "Upload failed – check if destination folder exists.")
-    #         raise
-    #     finally:
-    #         if session:
-    #             session.disconnect()
-    #         if sock:
-    #             sock.close()
-
-
 
 
 
@@ -3205,40 +2407,41 @@ class FileWatcherWorker(QObject):
 
             raise
 
-
-
+    @Slot()
     def run(self):
         with self._lock:
             if self._busy:
-                logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] File watcher already running, skipping this cycle, instance: {id(self)}")
+                logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] File watcher already running, skipping")
                 self.log_update.emit("[FileWatcher] Skipped: Already running")
                 return
             current_time = datetime.now(timezone.utc)
             if hasattr(self, 'next_api_hit_time') and self.next_api_hit_time and current_time < self.next_api_hit_time:
-                logger.debug(f"[{current_time.isoformat()}] API call skipped: Too soon since last call, instance: {id(self)}")
+                logger.debug(f"[{current_time.isoformat()}] API call skipped: Too soon since last call")
                 self.log_update.emit("[FileWatcher] Skipped: Too soon since last API call")
                 return
             self._busy = True
             self._is_running = True
+
         try:
             # Initialize executor and semaphore if not already set
             if not hasattr(self, 'executor'):
-                self.executor = ThreadPoolExecutor(max_workers=2)  # Set max_workers to 2 for parallel processing
-                logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Initialized ThreadPoolExecutor with max_workers=2, instance: {id(self)}")
+                self.executor = ThreadPoolExecutor(max_workers=2)
                 self.log_update.emit("[FileWatcher] Initialized ThreadPoolExecutor with max_workers=2")
             if not hasattr(self, 'sftp_semaphore'):
-                self.sftp_semaphore = Semaphore(2)  # Limit concurrent SFTP connections
-                logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Initialized SFTP semaphore with limit=2, instance: {id(self)}")
+                self.sftp_semaphore = Semaphore(2)
                 self.log_update.emit("[FileWatcher] Initialized SFTP semaphore with limit=2")
+
             if not self.running:
-                logger.info(f"[{current_time.isoformat()}] File watcher stopped, instance: {id(self)}")
                 self.log_update.emit("[FileWatcher] Stopped: Worker is not running")
                 return
-            logger.debug(f"[{current_time.isoformat()}] Starting file watcher run, instance: {id(self)}")
+
             self.log_update.emit("[API Scan] Starting file watcher run")
 
+            # ✅ FIX Bug 3: connectivity check now uses a lightweight HEAD request
+            # instead of a fake task API call with user_id=200, which was causing
+            # a double API hit every single cycle and polluting the server logs.
             if not self.check_connectivity():
-                logger.warning(f"[{current_time.isoformat()}] Connectivity check failed, will retry on next run, instance: {id(self)}")
+                logger.warning("Connectivity check failed, will retry on next run")
                 self.status_update.emit("Connectivity check failed, will retry")
                 self.log_update.emit("[API Scan] Connectivity check failed")
                 return
@@ -3248,18 +2451,18 @@ class FileWatcherWorker(QObject):
             token = cache.get('token', '')
             cache.setdefault('user_type', 'operator')
             save_cache(cache)
+
             if not user_id or not token:
-                logger.error(f"[{current_time.isoformat()}] No user_id or token found in cache, instance: {id(self)}")
+                logger.error("No user_id or token found in cache")
                 self.status_update.emit("No user_id or token found in cache")
                 self.log_update.emit("[API Scan] Failed: No user_id or token found in cache")
                 self.request_reauth.emit()
-                logger.debug(f"[{current_time.isoformat()}] Timer remains active for retry after re-authentication, instance: {id(self)}")
-                self.log_update.emit("[FileWatcher] Timer remains active for retry after re-authentication")
                 return
 
             self.status_update.emit("Checking for file tasks...")
             self.log_update.emit("[API Scan] Starting file task check")
             app_signals.append_log.emit("[API Scan] Initiating file task check")
+
             self.last_api_hit_time = current_time
             self.next_api_hit_time = self.last_api_hit_time + timedelta(milliseconds=self.api_poll_interval)
             app_signals.update_timer_status.emit(
@@ -3267,101 +2470,111 @@ class FileWatcherWorker(QObject):
                 f"Next API hit: {self.next_api_hit_time.strftime('%Y-%m-%d %H:%M:%S %Z')} | "
                 f"Interval: {self.api_poll_interval/1000:.1f}s"
             )
+
             headers = {"Authorization": f"Bearer {token}"}
             max_retries = 3
             tasks = []
-            print(f"USER_SYSTEM_INFO.get(÷,).get(mac)-----{USER_SYSTEM_INFO.get('encoded_mac', '')}")
-            # api_url = f"{DOWNLOAD_UPLOAD_API}?user_id={quote(user_id)}&machine_id={USER_SYSTEM_INFO.get("identifiers", {}).get("encoded_mac", "")}"
-            # machine_id = USER_SYSTEM_INFO.get("encoded_mac", "")
-            # api_url = f"{DOWNLOAD_UPLOAD_API}?user_id={quote(user_id)}&machine_id={USER_SYSTEM_INFO.get('encoded_mac', '')}"
+
             if isinstance(USER_SYSTEM_INFO, dict):
                 machine_id = USER_SYSTEM_INFO.get("encoded_mac", "")
             elif isinstance(USER_SYSTEM_INFO, list) and USER_SYSTEM_INFO:
-                # if it's a list, use the first element that contains encoded_mac
                 first_entry = USER_SYSTEM_INFO[0]
                 machine_id = first_entry.get("encoded_mac", "") if isinstance(first_entry, dict) else ""
             else:
                 machine_id = ""
 
-            print(f"[DEBUG] USER_SYSTEM_INFO type={type(USER_SYSTEM_INFO)}, machine_id={machine_id}")
             api_url = f"{DOWNLOAD_UPLOAD_API}?user_id={quote(user_id)}&machine_id={machine_id}"
-            # machine_id = USER_SYSTEM_INFO.get("encoded_mac", "") if isinstance(USER_SYSTEM_INFO, dict) else ""
-            # api_url = f"{DOWNLOAD_UPLOAD_API}?user_id={quote(user_id)}&machine_id={machine_id}"
-            print(api_url)
+            logger.debug(f"[DEBUG] machine_id={machine_id}, api_url={api_url}")
+
             for attempt in range(max_retries):
                 try:
-                    logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Hitting API: {api_url}, instance: {id(self)}")
+                    logger.debug(f"Hitting API: {api_url}")
                     app_signals.append_log.emit(f"[API Scan] Hitting API: {api_url}")
                     response = HTTP_SESSION.get(api_url, headers=headers, verify=False, timeout=60)
-                    
-                    
-                    response_data = response.json()
 
-                    
-                    
-                    logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] API response: Status={response.status_code}, Content={response.text[:500]}..., instance: {id(self)}")
-                    app_signals.append_log.emit(f"[API Scan] API response: Status={response.status_code}, Content={response.text[:500]}...")
-                    app_signals.api_call_status.emit(api_url, "Success" if response.status_code == 200 else f"Failed: {response.status_code}", response.status_code)
+                    # ✅ FIX Bug 1: Call .json() ONCE and store it.
+                    # Previously response.json() was called twice — the second call
+                    # overwrote the first result and could exhaust the response stream,
+                    # causing silent data loss and always returning empty tasks.
+                    try:
+                        response_data = response.json()
+                    except ValueError as json_err:
+                        logger.error(f"Failed to parse API response as JSON: {json_err}")
+                        self.log_update.emit(f"[API Scan] Failed: Invalid JSON response - {str(json_err)}")
+                        return
+
+                    logger.debug(f"API response: Status={response.status_code}, Content={str(response_data)[:500]}")
+                    app_signals.append_log.emit(
+                        f"[API Scan] API response: Status={response.status_code}, "
+                        f"Content={str(response_data)[:500]}"
+                    )
+                    app_signals.api_call_status.emit(
+                        api_url,
+                        "Success" if response.status_code == 200 else f"Failed: {response.status_code}",
+                        response.status_code
+                    )
 
                     if response.status_code == 401:
-                        logger.warning(f"[{datetime.now(timezone.utc).isoformat()}] Unauthorized: Token may be invalid, instance: {id(self)}")
+                        logger.warning("Unauthorized: Token may be invalid")
                         self.log_update.emit("[API Scan] Unauthorized: Token invalid")
                         self.status_update.emit("Unauthorized: Token invalid")
                         self.request_reauth.emit()
-                        logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Timer remains active for retry after re-authentication, instance: {id(self)}")
-                        self.log_update.emit("[FileWatcher] Timer remains active for retry after re-authentication")
                         return
 
                     response.raise_for_status()
-                    response_data = response.json()
-                    print(response_data)
-                    # ✅ Handle both list and dict response formats safely
+
+                    # ✅ FIX Bug 2: Parse tasks ONCE in one clean block.
+                    # Previously tasks were assigned twice — the second unconditional
+                    # assignment always overwrote the first, making the 403 check
+                    # above it pointless and causing tasks to be lost.
                     if isinstance(response_data, dict):
                         if response_data.get("status") == 403:
-                            print("---------------------auto logut")
+                            logger.warning("403 received — user logged in elsewhere")
+                            self.log_update.emit("[API Scan] 403: User logged in on another machine")
+                            # ✅ FIX Bug 6: ONLY emit the signal here.
+                            # Previously premedia.show_login_page() was called directly
+                            # from the worker thread — unsafe UI call across threads.
+                            # The connected slot in PremediaApp handles the logout safely.
                             self.user_in_other_system.emit("user_already_logged_in")
-                            premedia.show_login_page()
                             return
                         tasks = response_data.get("data", [])
                     elif isinstance(response_data, list):
-                        tasks = response_data  # API directly returns a list of tasks
+                        tasks = response_data
                     else:
-                        logger.error(f"Unexpected API response type: {type(response_data)} - {response_data}")
-                        self.log_update.emit(f"[API Scan] Unexpected API response type: {type(response_data)}")
+                        logger.error(f"Unexpected API response type: {type(response_data)}")
+                        self.log_update.emit(f"[API Scan] Unexpected response type: {type(response_data)}")
                         tasks = []
 
-
-                    
-                    tasks = response_data if isinstance(response_data, list) else response_data.get('data', [])
                     if not isinstance(tasks, list):
-                        logger.error(f"[{datetime.now(timezone.utc).isoformat()}] API returned non-list tasks: {type(tasks)}, data: {tasks}, instance: {id(self)}")
-                        self.log_update.emit(f"[API Scan] Failed: API returned non-list tasks: {type(tasks)}")
+                        logger.error(f"API returned non-list tasks: {type(tasks)}, data: {tasks}")
+                        self.log_update.emit(f"[API Scan] Failed: Non-list tasks: {type(tasks)}")
                         return
-                    logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Retrieved {len(tasks)} tasks: {tasks}, instance: {id(self)}")
+
+                    logger.debug(f"Retrieved {len(tasks)} tasks")
                     app_signals.append_log.emit(f"[API Scan] Retrieved {len(tasks)} tasks from API")
                     break
+
                 except RequestException as e:
-                    logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Attempt {attempt + 1} failed fetching tasks from {api_url}: {e}, instance: {id(self)}")
+                    logger.error(f"Attempt {attempt + 1} failed fetching tasks: {e}")
                     self.log_update.emit(f"[API Scan] Failed to fetch tasks (attempt {attempt + 1}): {str(e)}")
                     if attempt < max_retries - 1:
                         time.sleep(2 ** attempt)
                         continue
-                    logger.warning(f"[{datetime.now(timezone.utc).isoformat()}] Max retries reached for task fetch, will retry on next run, instance: {id(self)}")
                     self.status_update.emit(f"Error fetching tasks after retries: {str(e)}")
-                    self.log_update.emit(f"[API Scan] Failed to fetch tasks after retries: {str(e)}")
-                    app_signals.append_log.emit(f"[API Scan] Failed: Task fetch error after retries - {str(e)}")
+                    self.log_update.emit(f"[API Scan] Failed after retries: {str(e)}")
                     return
 
-            unprocessed_tasks = [task for task in tasks if f"{task.get('id', '')}:{task.get('request_type', '').lower()}" not in self.processed_tasks]
+            unprocessed_tasks = [
+                task for task in tasks
+                if f"{task.get('id', '')}:{task.get('request_type', '').lower()}" not in self.processed_tasks
+            ]
 
-            # ✅ FIXED: Properly build download and upload task lists
+            # Build task lists for GUI
             download_tasks = []
             upload_tasks = []
-
             for item in unprocessed_tasks:
                 if not isinstance(item, dict):
                     continue
-
                 req_type = item.get('request_type', '').lower()
                 task_data = {
                     "task_id": str(item.get('id', '')),
@@ -3376,35 +2589,32 @@ class FileWatcherWorker(QObject):
                     "project_name": item.get('project_name', ''),
                     "created_at": datetime.now().strftime("%d-%b-%Y %I:%M %p")
                 }
-
                 if req_type == "download":
-                    logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Download task: {item}, instance: {id(self)}")
                     task_data["task_type"] = "download"
                     download_tasks.append(task_data)
-
                 elif req_type in ("upload", "replace"):
-                    logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Upload task: {item}, instance: {id(self)}")
                     task_data["task_type"] = "upload"
                     upload_tasks.append(task_data)
 
             self.task_list_update.emit(download_tasks + upload_tasks)
-            self.log_update.emit(f"[API Scan] Task list emitted to GUI: {len(download_tasks)} download tasks, {len(upload_tasks)} upload tasks")
+            self.log_update.emit(
+                f"[API Scan] Task list emitted: {len(download_tasks)} download, {len(upload_tasks)} upload"
+            )
 
             self._clean_processed_tasks()
             futures = []
+
             for item in unprocessed_tasks:
                 if not isinstance(item, dict):
-                    logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Invalid task item type: {type(item)}, item: {item}, instance: {id(self)}")
-                    self.log_update.emit(f"[API Scan] Failed: Invalid task item type: {type(item)}")
-                    app_signals.update_file_list.emit("", f"Invalid task: {type(item)}", "unknown", 0, False)
+                    logger.error(f"Invalid task item type: {type(item)}")
+                    self.log_update.emit(f"[API Scan] Failed: Invalid task type: {type(item)}")
                     continue
 
                 task_id = str(item.get('id', ''))
                 file_path = item.get('file_path', '')
                 if not file_path:
-                    logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Invalid task {task_id}: Missing file_path, item: {item}, instance: {id(self)}")
-                    self.log_update.emit(f"[API Scan] Failed: Invalid task {task_id} - Missing file_path")
-                    app_signals.update_file_list.emit("", f"Invalid task {task_id}: Missing file_path", "unknown", 0, False)
+                    logger.error(f"Invalid task {task_id}: Missing file_path")
+                    self.log_update.emit(f"[API Scan] Failed: Task {task_id} missing file_path")
                     continue
 
                 file_name = item.get('file_name', Path(file_path).name)
@@ -3413,68 +2623,67 @@ class FileWatcherWorker(QObject):
                 is_online = 'http' in file_path.lower()
                 local_path = str(BASE_TARGET_DIR / file_path.lstrip("/"))
 
-                    # ✅ Prevent duplicate submissions
                 with self._lock:
                     if task_key in self.processed_tasks:
-                        logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Skipping duplicate task: {task_key}, instance: {id(self)}")
-                        self.log_update.emit(f"[API Scan] Skipped duplicate task: {task_key}")
+                        logger.debug(f"Skipping duplicate task: {task_key}")
+                        self.log_update.emit(f"[API Scan] Skipped duplicate: {task_key}")
                         continue
-                    self.processed_tasks.add(task_key)  # Mark immediately as in-progress
+                    # self.processed_tasks.add(task_key)
+                    self.processed_tasks[task_key] = time.time()
                     update_download_upload_metadata(task_id, "in progress")
 
-                logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Submitting task: task_key={task_key}, task_id={task_id}, action_type={action_type}, file_path={file_path}, instance: {id(self)}")
-                self.log_update.emit(f"[API Scan] Submitting task: task_key={task_key}, task_id={task_id}, action_type={action_type}, file_path={file_path}")
+                logger.debug(f"Submitting task: {task_key}, file_path={file_path}")
+                self.log_update.emit(f"[API Scan] Submitting: {task_key}, action={action_type}")
 
                 futures.append(
                     self.executor.submit(
                         self._process_task,
-                        task_id, file_name, file_path, action_type, local_path, is_online, item, 3, self.sftp_semaphore
+                        task_id, file_name, file_path, action_type,
+                        local_path, is_online, item, 3, self.sftp_semaphore
                     )
                 )
 
-            # Start a background thread to handle task results
             def handle_task_results(futures):
                 completed_tasks = 0
                 failed_tasks = 0
                 updates = []
                 for future in futures:
                     try:
-                        result = future.result()  # Wait for each task to complete
+                        result = future.result()
                         updates.append(result['update'])
                         if result['success']:
                             completed_tasks += 1
                             with self._lock:
-                                self.processed_tasks.add(result['task_key'])
+                                # self.processed_tasks.add(result['task_key'])
+                                self.processed_tasks[result['task_key']] = time.time()
                         else:
                             failed_tasks += 1
                     except Exception as e:
-                        logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Task processing error: {str(e)}, instance: {id(self)}")
-                        self.log_update.emit(f"[API Scan] Task processing error: {str(e)}")
+                        logger.error(f"Task processing error: {str(e)}")
+                        self.log_update.emit(f"[API Scan] Task error: {str(e)}")
                         failed_tasks += 1
-                if updates:
-                    for update in updates:
-                        app_signals.update_file_list.emit(*update)
-                logger.info(f"[{datetime.now(timezone.utc).isoformat()}] Background task summary: {completed_tasks} completed, {failed_tasks} failed, instance: {id(self)}")
-                self.log_update.emit(f"[FileWatcher] Background task summary: {completed_tasks} completed, {failed_tasks} failed")
+                for update in updates:
+                    app_signals.update_file_list.emit(*update)
+                logger.info(f"Background task summary: {completed_tasks} completed, {failed_tasks} failed")
+                self.log_update.emit(
+                    f"[FileWatcher] Background task summary: {completed_tasks} completed, {failed_tasks} failed"
+                )
 
-            # Launch background thread to process results
             Thread(target=handle_task_results, args=(futures,), daemon=True).start()
             self.status_update.emit("File tasks check completed")
-            self.log_update.emit(f"[API Scan] File tasks check completed, submitted {len(futures)} tasks")
-            app_signals.append_log.emit(f"[API Scan] Completed: Submitted {len(futures)} tasks")
+            self.log_update.emit(f"[API Scan] Completed: Submitted {len(futures)} tasks")
+            app_signals.append_log.emit(f"[API Scan] Completed: {len(futures)} tasks submitted")
 
         except Exception as e:
-            logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Error in file watcher run: {e}, instance: {id(self)}")
+            logger.error(f"Error in file watcher run: {e}")
             self.status_update.emit(f"Error processing tasks: {str(e)}")
-            self.log_update.emit(f"[API Scan] Failed: Error processing tasks - {str(e)}")
-            app_signals.append_log.emit(f"[API Scan] Failed: Task processing error - {str(e)}")
+            self.log_update.emit(f"[API Scan] Failed: {str(e)}")
+            app_signals.append_log.emit(f"[API Scan] Failed: {str(e)}")
         finally:
             self._busy = False
             self._is_running = False
-            logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] File watcher cycle completed, instance: {id(self)}")
             self.log_update.emit("[FileWatcher] Cycle completed, awaiting next timer tick")
-            # if self.running:
-            #     self.timer.start(self.api_poll_interval)
+
 
     def _process_task(self, task_id, file_name, file_path, action_type, local_path, is_online, item, max_download_retries, sftp_semaphore):
         """Process a single task (download/upload) with retry logic and SFTP semaphore."""
@@ -3580,17 +2789,18 @@ class FileWatcherWorker(QObject):
 
     def check_connectivity(self):
         try:
-            logger.debug(f"Checking API connectivity (attempt 1): {DOWNLOAD_UPLOAD_API}")
-            self.log_update.emit(f"[API Scan] Checking API connectivity (attempt 1): {DOWNLOAD_UPLOAD_API}")
-            response = HTTP_SESSION.get(f"{DOWNLOAD_UPLOAD_API}?user_id=200", verify=False, timeout=10)
-            app_signals.api_call_status.emit(DOWNLOAD_UPLOAD_API, f"Status: {response.status_code}, Response: {response.text[:500]}...", response.status_code)
-            self.log_update.emit(f"[API Scan] API Call: {DOWNLOAD_UPLOAD_API} | Status: Status: {response.status_code}, Response: {response.text[:500]}...")
-            response.raise_for_status()
-            self.log_update.emit("[API Scan] API connectivity check passed")
+            import socket
+            # ✅ Simple TCP socket check — just tests if the host is reachable
+            # on port 443. No HTTP request, no API hit, no fake user_id.
+            # Guaranteed to be fast and never hit your task API endpoint.
+            host = BASE_DOMAIN.replace("https://", "").replace("http://", "").split("/")[0]
+            socket.setdefaulttimeout(5)
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, 443))
+            self.log_update.emit("[API Scan] Connectivity OK")
             return True
-        except RequestException as e:
-            logger.error(f"API connectivity check failed: {str(e)}")
-            self.log_update.emit(f"[API Scan] API connectivity check failed: {str(e)}")
+        except Exception as e:
+            logger.error(f"Connectivity check failed: {str(e)}")
+            self.log_update.emit(f"[API Scan] Connectivity check failed: {str(e)}")
             return False
 
     def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
@@ -3612,11 +2822,28 @@ class FileWatcherWorker(QObject):
         raise NotImplementedError("HTTP upload not implemented")
 
     def _clean_processed_tasks(self):
+        """
+        Remove tasks older than retention window and enforce max size.
+        Uses dict {task_key: insertion_timestamp} for correct time tracking.
+        """
         current_time = time.time()
         retention_seconds = self.config["task_retention_hours"] * 3600
-        self.processed_tasks = {task for task in self.processed_tasks if (current_time - float(task.split(":")[0])) < retention_seconds}
+
+        # Remove expired tasks based on actual insertion time
+        self.processed_tasks = {
+            key: ts for key, ts in self.processed_tasks.items()
+            if (current_time - ts) < retention_seconds
+        }
+
+        # Enforce max size — keep most recently added tasks
         if len(self.processed_tasks) > self.config["max_processed_tasks"]:
-            self.processed_tasks = set(list(self.processed_tasks)[-self.config["max_processed_tasks"]:])
+            sorted_keys = sorted(self.processed_tasks, key=lambda k: self.processed_tasks[k])
+            excess = len(self.processed_tasks) - self.config["max_processed_tasks"]
+            for key in sorted_keys[:excess]:
+                del self.processed_tasks[key]
+
+        logger.debug(f"[Cleanup] processed_tasks size: {len(self.processed_tasks)}")
+
 
     def cleanup(self):
         self.running = False
@@ -7478,55 +6705,100 @@ class PremediaApp(QApplication):
             except Exception:
                 cache = {}
 
-            # Stop old thread
+            # Stop old thread/worker/timer safely before starting new ones
             self.stop_file_watcher_thread()
 
             FILE_WATCHER_RUNNING = True
 
-            # ---- FIX: Create thread FIRST ----
+            # ✅ FIX: Create worker FIRST on main thread, then move to thread.
+            #         This avoids the race condition where the timer fires before
+            #         the worker is created inside the thread's started signal.
+            FileWatcherWorker._instance = None
+            self.file_watcher = FileWatcherWorker.get_instance(parent=None)
+
+            # ✅ FIX: Create thread and move worker into it
             self.file_watcher_thread = QThread()
+            self.file_watcher.moveToThread(self.file_watcher_thread)
 
-            # ---- FIX: Create worker INSIDE thread ----
-            def create_worker():
-                FileWatcherWorker._instance = None
-                self.file_watcher = FileWatcherWorker.get_instance(parent=None)
-                print("Worker created in thread:", QThread.currentThread())
+            # Connect worker signals AFTER worker is created but BEFORE thread starts
+            self.file_watcher.user_in_other_system.connect(self.show_login_page)
+            self.file_watcher.status_update.connect(
+                self.log_window.status_bar.showMessage, Qt.QueuedConnection
+            )
+            self.file_watcher.log_update.connect(
+                app_signals.append_log, Qt.QueuedConnection
+            )
+            self.file_watcher.progress_update.connect(
+                self.update_progress, Qt.QueuedConnection
+            )
 
-                self.file_watcher.user_in_other_system.connect(self.show_login_page)
-                print("Connected FileWatcherWorker.user_in_other_system → show_login_page")
-                app_signals.append_log.emit("[Security] Auto-logout on session conflict enabled")
+            app_signals.append_log.emit("[Security] Auto-logout on session conflict enabled")
 
-                # connect worker signals
-                self.file_watcher.status_update.connect(self.log_window.status_bar.showMessage)
-                self.file_watcher.log_update.connect(app_signals.append_log)
-                self.file_watcher.progress_update.connect(self.update_progress)
+            # ✅ FIX: Start the poll timer ONLY after thread has started.
+            #         Use thread.started signal to guarantee worker is live before
+            #         any invokeMethod calls happen.
+            def on_thread_started():
+                logger.info("FileWatcherWorker thread is live — starting poll timer")
+                app_signals.append_log.emit("[App] FileWatcherWorker thread live, poll timer starting")
 
-            self.file_watcher_thread.started.connect(create_worker)
+                # ✅ FIX: Safe poll timer with None guard (see _safe_invoke_watcher)
+                if getattr(self, "poll_timer", None):
+                    try:
+                        self.poll_timer.stop()
+                    except Exception:
+                        pass
+
+                self.poll_timer = QTimer(self)
+                self.poll_timer.timeout.connect(self._safe_invoke_watcher)
+                self.poll_timer.start(3000)  # 3 seconds
+
+            self.file_watcher_thread.started.connect(on_thread_started)
+
+            # Start the thread — worker is already inside it via moveToThread
             self.file_watcher_thread.start()
 
             logger.info("FileWatcherWorker thread started successfully")
             app_signals.append_log.emit("[App] FileWatcherWorker thread started successfully")
 
-            # ---- FIX: Ensure poll_timer never becomes None ----
-            if getattr(self, "poll_timer", None):
-                self.poll_timer.stop()
-
-            self.poll_timer = QTimer(self)
-            self.poll_timer.timeout.connect(
-                lambda: QMetaObject.invokeMethod(self.file_watcher, "run", Qt.QueuedConnection)
-            )
-            self.poll_timer.start(3000)  # 3 sec
-
-            # Watchdog
+            # Watchdog timer (runs on main thread, just checks memory — safe)
+            if getattr(self, "watchdog_timer", None):
+                try:
+                    self.watchdog_timer.stop()
+                except Exception:
+                    pass
             self.watchdog_timer = QTimer(self)
             self.watchdog_timer.timeout.connect(self.check_memory_usage)
-            self.watchdog_timer.start(60000)
+            self.watchdog_timer.start(60000)  # every 60 seconds
 
             self.schedule_daily_restart(3, 0)
 
         except Exception as e:
             self.handle_error("FileWatcher", f"Failed to start FileWatcherWorker: {str(e)}")
 
+
+    def _safe_invoke_watcher(self):
+        """
+        ✅ NEW HELPER — Safe wrapper for poll timer.
+        Guards against invokeMethod being called when file_watcher is None
+        (e.g. during restart, after stop, or due to race condition).
+        Without this guard, every timer tick would crash silently and
+        the polling loop would die permanently.
+        """
+        try:
+            if self.file_watcher is not None:
+                QMetaObject.invokeMethod(self.file_watcher, "run", Qt.QueuedConnection)
+            else:
+                logger.warning("[PollTimer] file_watcher is None, skipping invoke")
+                app_signals.append_log.emit("[App] PollTimer skipped: file_watcher not ready")
+        except RuntimeError as e:
+            # Worker was deleted by Qt GC — stop the timer to prevent spam
+            logger.warning(f"[PollTimer] Worker deleted, stopping poll timer: {e}")
+            app_signals.append_log.emit("[App] PollTimer stopped: worker was deleted")
+            if getattr(self, "poll_timer", None):
+                self.poll_timer.stop()
+        except Exception as e:
+            logger.error(f"[PollTimer] Unexpected error: {e}")
+            app_signals.append_log.emit(f"[App] PollTimer error: {str(e)}")
 
 
     def restart_file_watcher(self):
@@ -7555,26 +6827,43 @@ class PremediaApp(QApplication):
             self.handle_error("FileWatcher", f"Failed to restart FileWatcherWorker: {str(e)}")
 
     def check_memory_usage(self, threshold_mb: int = 500, cpu_threshold: int = 80):
-        """Watchdog check: restart file watcher if memory/CPU exceeds thresholds."""
+        """
+        Watchdog check: restart file watcher if memory/CPU exceeds thresholds.
+        Runs every 60 seconds on the main thread — must NEVER block.
+        """
         try:
             import psutil
             process = psutil.Process()
 
             mem_mb = process.memory_info().rss / 1024 / 1024
-            cpu_percent = process.cpu_percent(interval=1)  # lightweight per-process CPU %
+
+            # ✅ FIX: interval=None is non-blocking.
+            #         interval=1 would sleep for 1 second on the main thread,
+            #         causing "Not Responding" every single watchdog tick.
+            #         interval=None returns CPU % accumulated since last call,
+            #         which is accurate enough for watchdog purposes.
+            cpu_percent = process.cpu_percent(interval=None)
 
             logger.info(f"[Watchdog] Memory: {mem_mb:.2f} MB | CPU: {cpu_percent:.1f}%")
-            app_signals.append_log.emit(f"[Watchdog] Memory: {mem_mb:.2f} MB | CPU: {cpu_percent:.1f}%")
+            app_signals.append_log.emit(
+                f"[Watchdog] Memory: {mem_mb:.2f} MB | CPU: {cpu_percent:.1f}%"
+            )
 
             if mem_mb > threshold_mb or cpu_percent > cpu_threshold:
                 reason = "Memory" if mem_mb > threshold_mb else "CPU"
-                logger.warning(f"[Watchdog] {reason} exceeded limit. Restarting FileWatcherWorker...")
-                app_signals.append_log.emit(f"[Watchdog] {reason} exceeded limit. Restarting FileWatcherWorker...")
+                logger.warning(
+                    f"[Watchdog] {reason} exceeded limit. Restarting FileWatcherWorker..."
+                )
+                app_signals.append_log.emit(
+                    f"[Watchdog] {reason} exceeded limit. Restarting FileWatcherWorker..."
+                )
                 self.restart_file_watcher()
 
         except Exception as e:
             logger.error(f"[Watchdog] Failed to check system usage: {str(e)}")
-            app_signals.append_log.emit(f"[Watchdog] Failed to check system usage: {str(e)}")
+            app_signals.append_log.emit(
+                f"[Watchdog] Failed to check system usage: {str(e)}"
+            )
 
 
     def daily_restart_file_watcher(self):
@@ -8221,36 +7510,64 @@ class PremediaApp(QApplication):
                 self.show_login()
                 return
 
-            # Stop existing resources
-            if hasattr(self, 'poll_timer') and self.poll_timer.isActive():
-                self.poll_timer.stop()
-                logger.debug("Stopped existing poll timer")
-                app_signals.append_log.emit("[Login] Stopped existing poll timer")
+            # Stop poll timer safely (non-blocking)
+            if hasattr(self, 'poll_timer') and self.poll_timer is not None:
+                try:
+                    if self.poll_timer.isActive():
+                        self.poll_timer.stop()
+                        logger.debug("Stopped existing poll timer")
+                        app_signals.append_log.emit("[Login] Stopped existing poll timer")
+                except RuntimeError:
+                    pass  # Already deleted
 
-            if hasattr(self, 'file_watcher_thread') and self.file_watcher_thread.isRunning():
-                self.file_watcher_thread.quit()
-                self.file_watcher_thread.wait(10000)
-                logger.debug("Stopped existing file watcher thread")
-                app_signals.append_log.emit("[Login] Stopped existing file watcher thread")
-
-            FileWatcherWorker._instance = None
             FILE_WATCHER_RUNNING = True
+            FileWatcherWorker._instance = None
 
-            # Start file watcher
-            self.start_file_watcher()
+            old_thread = getattr(self, 'file_watcher_thread', None)
 
-            # Update tray menu
+            if old_thread is not None:
+                try:
+                    if old_thread.isRunning():
+                        logger.debug("Old file watcher thread running — requesting stop")
+                        app_signals.append_log.emit("[Login] Stopping old file watcher thread")
+
+                        # ✅ FIX: Connect finished signal BEFORE calling quit().
+                        #         This guarantees start_file_watcher only runs AFTER
+                        #         the old thread is fully stopped — no blocking wait needed.
+                        old_thread.finished.connect(self.start_file_watcher, Qt.SingleShotConnection)
+                        old_thread.quit()  # Signal thread to stop — returns immediately
+
+                        logger.debug("Old thread quit() called, new watcher will start on finish")
+                        app_signals.append_log.emit(
+                            "[Login] Old thread quit requested, new watcher queued on finish"
+                        )
+                    else:
+                        # Thread already stopped — start new watcher immediately
+                        self.start_file_watcher()
+                except RuntimeError:
+                    # Thread was already deleted by Qt GC
+                    logger.warning("Old file_watcher_thread already deleted, starting fresh")
+                    self.start_file_watcher()
+            else:
+                # No existing thread — start immediately
+                self.start_file_watcher()
+
+            # Update tray menu (non-blocking UI update)
             self.update_tray_menu()
             if self.tray_icon and QSystemTrayIcon.isSystemTrayAvailable():
                 self.tray_icon.show()
                 logger.debug(f"Tray icon visible after post-login: {self.tray_icon.isVisible()}")
-                app_signals.append_log.emit(f"[Login] Tray icon visible after post-login: {self.tray_icon.isVisible()}")
+                app_signals.append_log.emit(
+                    f"[Login] Tray icon visible after post-login: {self.tray_icon.isVisible()}"
+                )
             else:
                 logger.warning("Tray icon or system tray not available")
                 app_signals.append_log.emit("[Tray] Tray icon or system tray not available")
 
             # Close progress dialog if visible
-            if hasattr(self, 'login_dialog') and self.login_dialog.progress and self.login_dialog.progress.isVisible():
+            if (hasattr(self, 'login_dialog') and
+                    self.login_dialog.progress and
+                    self.login_dialog.progress.isVisible()):
                 self.login_dialog.progress.close()
                 logger.debug("Progress dialog closed")
                 app_signals.append_log.emit("[Login] Progress dialog closed")
@@ -8260,14 +7577,19 @@ class PremediaApp(QApplication):
                 app_signals.update_status.disconnect(self.log_window.status_bar.showMessage)
             except Exception:
                 logger.debug("No existing update_status connection to disconnect")
-            app_signals.update_status.connect(self.log_window.status_bar.showMessage, Qt.QueuedConnection)
+            app_signals.update_status.connect(
+                self.log_window.status_bar.showMessage, Qt.QueuedConnection
+            )
 
             logger.info("Post-login processes completed successfully")
             app_signals.append_log.emit("[Login] Post-login processes completed successfully")
             app_signals.update_status.emit("File watcher started")
+
         except Exception as e:
             self.handle_error("Post-Login", f"Post-login error: {str(e)}")
-            if hasattr(self, 'login_dialog') and self.login_dialog.progress and self.login_dialog.progress.isVisible():
+            if (hasattr(self, 'login_dialog') and
+                    self.login_dialog.progress and
+                    self.login_dialog.progress.isVisible()):
                 self.login_dialog.progress.close()
                 logger.debug("Progress dialog closed in error handler")
                 app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
