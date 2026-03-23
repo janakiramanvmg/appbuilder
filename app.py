@@ -6533,45 +6533,45 @@ def stop_local_api():
 
 
 
-if __name__ == "__main__":
-    lock_handle = ensure_single_instance("PremediaApp")
-    try:
-        # 🔹 Step 1: Check for updates before launching GUI
-        exe_path = sys.executable
-        # check_for_update(APPVERSION, exe_path)
-
-        # 🔹 Step 2: Launch your main GUI
-        key = parse_custom_url()
-        # start_local_api()   # START local api server
-        app = PremediaApp(key)
-        sys.exit(app.exec())
-    except Exception as e:
-        print(f"Application crashed: {e}")
-        stop_local_api()    # CLEAN SHUTDOWN
-        import traceback
-        traceback.print_exc()
-    finally:
-        stop_local_api()    # CLEAN SHUTDOWN
-
 # if __name__ == "__main__":
 #     lock_handle = ensure_single_instance("PremediaApp")
-
 #     try:
+#         # 🔹 Step 1: Check for updates before launching GUI
+#         exe_path = sys.executable
+#         # check_for_update(APPVERSION, exe_path)
+
+#         # 🔹 Step 2: Launch your main GUI
 #         key = parse_custom_url()
-
-#         start_local_api()   # START local api server
-
+#         # start_local_api()   # START local api server
 #         app = PremediaApp(key)
-
-#         exit_code = app.app.exec()   # 🔥 CORRECT CALL
-
+#         sys.exit(app.exec())
 #     except Exception as e:
 #         print(f"Application crashed: {e}")
+#         stop_local_api()    # CLEAN SHUTDOWN
 #         import traceback
 #         traceback.print_exc()
-#         exit_code = 1
-
 #     finally:
 #         stop_local_api()    # CLEAN SHUTDOWN
 
-#     sys.exit(exit_code)
+if __name__ == "__main__":
+    lock_handle = ensure_single_instance("PremediaApp")
+
+    try:
+        key = parse_custom_url()
+
+        start_local_api()   # START local api server
+
+        app = PremediaApp(key)
+
+        exit_code = app.app.exec()   # 🔥 CORRECT CALL
+
+    except Exception as e:
+        print(f"Application crashed: {e}")
+        import traceback
+        traceback.print_exc()
+        exit_code = 1
+
+    finally:
+        stop_local_api()    # CLEAN SHUTDOWN
+
+    sys.exit(exit_code)
