@@ -1755,7 +1755,7 @@ class FileWatcherWorker(QObject):
         print(file_path)
         print(".....................................................................")
         if not file_path:
-            self.alert_notification.emit("ERROR (MD2)", "Please check Nas Connection.")
+            self.alert_notification.emit("ERROR (MD2)", "File does not exist on NAS")
             raise ValueError("Empty file_path in item")
             # show_alert_notification("ERROR (MD2)", "Please check Nas Connection.")
             # # QMessageBox.warning(None, "ERROR (MD2)", "Please check Nas Connection.")
@@ -1773,7 +1773,7 @@ class FileWatcherWorker(QObject):
             # show_alert_notification("ERROR (MD2)", "Please check Nas Connection.")
             # # QMessageBox.warning(None, "ERROR (MD2)", "Please check Nas Connection.")
             # raise
-            self.alert_notification.emit("ERROR (MD2)", "Please check Nas Connection.")
+            self.alert_notification.emit("ERROR (MD2)", f"[Transfer] Failed to create directory {dest_path.parent}: {str(e)}")
             raise
         resolved_dest_path = str(dest_path.resolve())
         logger.debug(f"Prepared local path: {resolved_dest_path}")
@@ -2651,7 +2651,7 @@ class FileWatcherWorker(QObject):
                         continue
                     # self.processed_tasks.add(task_key)
                     self.processed_tasks[task_key] = time.time()
-                    update_download_upload_metadata(task_id, "in progress")
+                    
 
                 logger.debug(f"Submitting task: {task_key}, file_path={file_path}")
                 self.log_update.emit(f"[API Scan] Submitting: {task_key}, action={action_type}")
@@ -2827,6 +2827,7 @@ class FileWatcherWorker(QObject):
     def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
         task_id = str(item.get('id', ''))
         original_filename = Path(src_path).name
+        update_download_upload_metadata(task_id, "in progress")
         try:
             self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest)
             self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {original_filename}", dest_path, 100)
@@ -6533,45 +6534,45 @@ def stop_local_api():
 
 
 
-# if __name__ == "__main__":
-#     lock_handle = ensure_single_instance("PremediaApp")
-#     try:
-#         # 🔹 Step 1: Check for updates before launching GUI
-#         exe_path = sys.executable
-#         # check_for_update(APPVERSION, exe_path)
-
-#         # 🔹 Step 2: Launch your main GUI
-#         key = parse_custom_url()
-#         # start_local_api()   # START local api server
-#         app = PremediaApp(key)
-#         sys.exit(app.exec())
-#     except Exception as e:
-#         print(f"Application crashed: {e}")
-#         stop_local_api()    # CLEAN SHUTDOWN
-#         import traceback
-#         traceback.print_exc()
-#     finally:
-#         stop_local_api()    # CLEAN SHUTDOWN
-
 if __name__ == "__main__":
     lock_handle = ensure_single_instance("PremediaApp")
-
     try:
+        # 🔹 Step 1: Check for updates before launching GUI
+        exe_path = sys.executable
+        # check_for_update(APPVERSION, exe_path)
+
+        # 🔹 Step 2: Launch your main GUI
         key = parse_custom_url()
-
-        start_local_api()   # START local api server
-
+        # start_local_api()   # START local api server
         app = PremediaApp(key)
-
-        exit_code = app.app.exec()   # 🔥 CORRECT CALL
-
+        sys.exit(app.exec())
     except Exception as e:
         print(f"Application crashed: {e}")
+        stop_local_api()    # CLEAN SHUTDOWN
         import traceback
         traceback.print_exc()
-        exit_code = 1
-
     finally:
         stop_local_api()    # CLEAN SHUTDOWN
 
-    sys.exit(exit_code)
+# if __name__ == "__main__":
+#     lock_handle = ensure_single_instance("PremediaApp")
+
+#     try:
+#         key = parse_custom_url()
+
+#         start_local_api()   # START local api server
+
+#         app = PremediaApp(key)
+
+#         exit_code = app.app.exec()   # 🔥 CORRECT CALL
+
+#     except Exception as e:
+#         print(f"Application crashed: {e}")
+#         import traceback
+#         traceback.print_exc()
+#         exit_code = 1
+
+#     finally:
+#         stop_local_api()    # CLEAN SHUTDOWN
+
+#     sys.exit(exit_code)
