@@ -24,8 +24,6 @@ jobs:
           brew install gettext libssh2
           brew link --force gettext
           brew link --force libssh2
-
-
       # Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -92,7 +90,6 @@ jobs:
           print("ssh2 OK:", ssh2.__file__)
           EOF
 
-
       # Upload install logs
       - name: Upload requirements install log
         uses: actions/upload-artifact@v4
@@ -155,158 +152,6 @@ jobs:
           test -f runtime-hook.py || (echo "❌ runtime-hook.py missing" && exit 1)
           test -f cache/cache.json || (echo "❌ cache.json missing" && exit 1)
         shell: bash
-
-      # # Build app with PyInstaller
-      # - name: Build App with PyInstaller
-      #   run: |
-      #     echo "Starting PyInstaller build at $(date)"
-      #     echo "Checking syntax of app.py..."
-      #     python -m py_compile app.py || (echo "❌ Syntax error in app.py" && exit 1)
-      #     echo "Finding PySide6 plugins..."
-      #     python -c "import PySide6; import os; plugins_path = os.path.join(os.path.dirname(PySide6.__file__), 'Qt/plugins'); print(plugins_path)" > plugins_path.txt
-      #     export PYSIDE6_PLUGINS=$(cat plugins_path.txt)
-      #     echo "PYSIDE6_PLUGINS=$PYSIDE6_PLUGINS"
-      #     ls -ld "$PYSIDE6_PLUGINS/platforms" || (echo "❌ Platforms directory not found at $PYSIDE6_PLUGINS/platforms" && exit 1)
-      #     ls -ld "$PYSIDE6_PLUGINS/imageformats" || (echo "❌ Imageformats directory not found at $PYSIDE6_PLUGINS/imageformats" && exit 1)
-      #     echo "Running PyInstaller..."
-      #     python -m PyInstaller --log-level=DEBUG --noconfirm --windowed --onedir \
-      #       --name PremediaApp \
-      #       --icon=icons/premedia.icns \
-      #       --add-data "cache/cache.json:cache" \
-      #       --add-data "icons/premedia.icns:icons" \
-      #       --add-data "icons/photoshop.png:icons" \
-      #       --add-data "icons/folder.png:icons" \
-      #       --add-data "icons/premedia.png:icons" \
-      #       --add-data "icons/vmg-premedia-logo.png:icons" \
-      #       --add-data "terms.txt:." \
-      #       --add-data "license.txt:." \
-      #       --add-data "login.ui:." \
-      #       --add-data "premediaapp.ui:." \
-      #       --add-data "icons.qrc:." \
-      #       --add-data "icons_rc.py:." \
-      #       --add-data "login.py:." \
-      #       --add-data "$PYSIDE6_PLUGINS/platforms:PySide6/Qt/plugins/platforms" \
-      #       --add-data "$PYSIDE6_PLUGINS/imageformats:PySide6/Qt/plugins/imageformats" \
-      #       --hidden-import=paramiko \
-      #       --hidden-import=requests \
-      #       --hidden-import=cryptography \
-      #       --hidden-import=tzdata \
-      #       --hidden-import=PySide6.QtWidgets \
-      #       --hidden-import=PySide6.QtCore \
-      #       --hidden-import=PySide6.QtGui \
-      #       --hidden-import=PySide6.uic \
-      #       --hidden-import=PIL.Image \
-      #       --hidden-import=login \
-      #       --hidden-import=icons_rc \
-      #       --runtime-hook=runtime-hook.py \
-      #       app.py > pyinstaller.log 2>&1 || (echo "PyInstaller failed" && cat pyinstaller.log && exit 1)
-      #     echo "📁 dist/ contents:"
-      #     ls -lh dist
-      #     echo "PyInstaller build completed at $(date)"
-      #   shell: bash
-
-            # Build app with PyInstaller
-      # - name: Build App with PyInstaller
-      #   run: |
-      #     echo "🚀 Starting PyInstaller build at $(date)"
-      #     echo "🔍 Checking syntax of app.py..."
-      #     python -m py_compile app.py || (echo "❌ Syntax error in app.py" && exit 1)
-
-      #     echo "🔎 Finding PySide6 plugins..."
-      #     python -c "import PySide6, os; print(os.path.join(os.path.dirname(PySide6.__file__), 'Qt/plugins'))" > plugins_path.txt
-      #     export PYSIDE6_PLUGINS=$(cat plugins_path.txt)
-      #     echo "✅ PYSIDE6_PLUGINS=$PYSIDE6_PLUGINS"
-
-      #     ls -ld "$PYSIDE6_PLUGINS/platforms" || (echo "❌ Platforms directory not found" && exit 1)
-      #     ls -ld "$PYSIDE6_PLUGINS/imageformats" || (echo "❌ Imageformats directory not found" && exit 1)
-
-      #     echo "🧱 Running PyInstaller with full icons folder..."
-      #     python -m PyInstaller \
-      #       --log-level=DEBUG \
-      #       --noconfirm \
-      #       --windowed \
-      #       --onedir \
-      #       --name PremediaApp \
-      #       --icon=icons/premedia.icns \
-      #       --add-data "icons:icons" \
-      #       --add-data "cache/cache.json:cache" \
-      #       --add-data "terms.txt:." \
-      #       --add-data "license.txt:." \
-      #       --add-data "login.ui:." \
-      #       --add-data "premediaapp.ui:." \
-      #       --add-data "icons.qrc:." \
-      #       --add-data "icons_rc.py:." \
-      #       --add-data "login.py:." \
-      #       --add-data "$PYSIDE6_PLUGINS/platforms:PySide6/Qt/plugins/platforms" \
-      #       --add-data "$PYSIDE6_PLUGINS/imageformats:PySide6/Qt/plugins/imageformats" \
-      #       --hidden-import=paramiko \
-      #       --hidden-import=requests \
-      #       --hidden-import=cryptography \
-      #       --hidden-import=tzdata \
-      #       --hidden-import=PySide6.QtWidgets \
-      #       --hidden-import=PySide6.QtCore \
-      #       --hidden-import=PySide6.QtGui \
-      #       --hidden-import=PySide6.uic \
-      #       --hidden-import=PIL.Image \
-      #       --hidden-import=login \
-      #       --hidden-import=icons_rc \
-      #       --runtime-hook=runtime-hook.py \
-      #       app.py > pyinstaller.log 2>&1 || (echo "❌ PyInstaller failed" && cat pyinstaller.log && exit 1)
-
-      #     echo "📁 dist/ contents:"
-      #     ls -lh dist
-      #     echo "✅ PyInstaller build completed successfully at $(date)"
-      #   shell: bash
-
-
-      # - name: Build App with PyInstaller
-      #   run: |
-      #     echo "🚀 Starting PyInstaller build at $(date)"
-      #     python -m py_compile app.py || (echo "❌ Syntax error in app.py" && exit 1)
-
-      #     python -c "import PySide6, os; print(os.path.join(os.path.dirname(PySide6.__file__), 'Qt/plugins'))" > plugins_path.txt
-      #     export PYSIDE6_PLUGINS=$(cat plugins_path.txt)
-
-      #     LIBSSH2_PATH="$(brew --prefix libssh2)/lib/libssh2.dylib"
-      #     test -f "$LIBSSH2_PATH" || (echo "❌ libssh2.dylib not found" && exit 1)
-
-      #     python -m PyInstaller \
-      #       --log-level=DEBUG \
-      #       --noconfirm \
-      #       --windowed \
-      #       --onedir \
-      #       --name PremediaApp \
-      #       --osx-bundle-identifier com.vmg.premedia \
-      #       --icon=icons/premedia.icns \
-      #       --add-data "icons:icons" \
-      #       --add-data "cache/cache.json:cache" \
-      #       --add-data "terms.txt:." \
-      #       --add-data "license.txt:." \
-      #       --add-data "login.ui:." \
-      #       --add-data "premediaapp.ui:." \
-      #       --add-data "icons.qrc:." \
-      #       --add-data "icons_rc.py:." \
-      #       --add-data "login.py:." \
-      #       --add-data "$PYSIDE6_PLUGINS/platforms:PySide6/Qt/plugins/platforms" \
-      #       --add-data "$PYSIDE6_PLUGINS/imageformats:PySide6/Qt/plugins/imageformats" \
-      #       --add-binary "$LIBSSH2_PATH:." \
-      #       --hidden-import=ssh2 \
-      #       --hidden-import=ssh2.session \
-      #       --hidden-import=ssh2.sftp \
-      #       --hidden-import=ssh2.agent \
-      #       --hidden-import=paramiko \
-      #       --hidden-import=requests \
-      #       --hidden-import=cryptography \
-      #       --hidden-import=tzdata \
-      #       --hidden-import=PySide6.QtWidgets \
-      #       --hidden-import=PySide6.QtCore \
-      #       --hidden-import=PySide6.QtGui \
-      #       --hidden-import=PySide6.uic \
-      #       --hidden-import=PIL.Image \
-      #       --hidden-import=login \
-      #       --hidden-import=icons_rc \
-      #       --runtime-hook=runtime-hook.py \
-      #       app.py > pyinstaller.log 2>&1 || (echo "❌ PyInstaller failed" && cat pyinstaller.log && exit 1)
 
 
       - name: Build App with PyInstaller
@@ -397,6 +242,41 @@ jobs:
           path: plugins_path.txt
         if: always()
 
+      # 📂 Copy updater.sh into app bundle
+      - name: Copy updater.sh into app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP_PATH="dist/PremediaApp.app"
+          MACOS_DIR="$APP_PATH/Contents/MacOS"
+          SCRIPT_SRC="updater.sh"
+          SCRIPT_DST="$MACOS_DIR/updater.sh"
+
+          echo "🔍 Verifying app bundle exists..."
+          if [[ ! -d "$APP_PATH" ]]; then
+            echo "❌ ERROR: PremediaApp.app not found at $APP_PATH"
+            exit 1
+          fi
+
+          echo "🔍 Verifying updater.sh exists..."
+          if [[ ! -f "$SCRIPT_SRC" ]]; then
+            echo "❌ ERROR: updater.sh not found in repository root"
+            exit 1
+          fi
+
+          echo "📁 Ensuring MacOS directory exists..."
+          mkdir -p "$MACOS_DIR"
+
+          echo "📄 Copying updater.sh into app bundle..."
+          cp "$SCRIPT_SRC" "$SCRIPT_DST"
+
+          echo "🔒 Setting executable permission..."
+          chmod 755 "$SCRIPT_DST"
+
+          echo "✅ updater.sh installed successfully:"
+          ls -lh "$MACOS_DIR"
+
       # Sign app
       - name: Sign App
         run: codesign --deep --force --verbose --sign - dist/PremediaApp.app
@@ -428,6 +308,83 @@ jobs:
                    "PremediaApp" dist/PremediaApp.dmg
         shell: bash
 
+
+      # s3____generate_version_json_mac
+      - name: Update macOS section in version.json
+        shell: bash
+        run: |
+          set -e
+
+          echo "Downloading latest version.json from S3 (if exists)..."
+          aws s3 cp s3://vmg-premedia-22112023/application/drn/latest_version.json version.json \
+            || echo "version.json not found, using template"
+
+          if [ ! -f version.json ]; then
+            echo "Creating base version.json template"
+            cat > version.json <<'EOF'
+          {
+            "version": "1.2.1",
+            "release_notes": "Performance improvements and stability fixes",
+            "mandatory": false,
+            "windows": { "url": "", "sha256": "" },
+            "mac": { "url": "", "sha256": "" }
+          }
+          EOF
+          fi
+
+          MAC_URL="https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/macos/PremediaApp_v1.2.1.dmg"
+          MAC_SHA=$(shasum -a 256 dist/PremediaApp.dmg | awk '{print $1}')
+
+          echo "macOS SHA256: $MAC_SHA"
+
+          jq --arg url "$MAC_URL" --arg sha "$MAC_SHA" \
+            '.mac.url = $url | .mac.sha256 = $sha' \
+            version.json > version.tmp.json
+
+          mv version.tmp.json version.json
+          cat version.json
+
+          # Verify the update
+          if ! jq -e --arg url "$MAC_URL" --arg sha "$MAC_SHA" \
+            '.mac.url == $url and .mac.sha256 == $sha' version.json > /dev/null; then
+            echo "Failed to update mac section in version.json"
+            exit 1
+          fi
+
+      - name: ☁️ Upload macOS Build to S3
+        shell: bash
+        run: |
+          set -e
+
+          echo "🔐 Calculating macOS DMG SHA256..."
+          MAC_SHA=$(shasum -a 256 dist/PremediaApp.dmg | awk '{print $1}')
+          echo "macOS SHA256: $MAC_SHA"
+
+          echo "📝 Injecting macOS SHA into version.json..."
+          jq --arg sha "$MAC_SHA" \
+            '.mac.sha256 = $sha' \
+            version.json > version.tmp.json
+          mv version.tmp.json version.json
+
+          echo "☁️ Uploading macOS DMG..."
+          # Ensure aws CLI is installed and available
+          aws --version
+          aws s3 cp dist/PremediaApp.dmg \
+            s3://vmg-premedia-22112023/application/drn/macos/PremediaApp_v1.2.1.dmg \
+            --acl public-read
+
+          echo "☁️ Uploading latest_version.json..."
+          aws s3 cp version.json \
+            s3://vmg-premedia-22112023/application/drn/latest_version.json \
+            --cache-control "no-cache, max-age=0, must-revalidate"
+
+          echo "✅ macOS build uploaded successfully."
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ap-southeast-2
+
+
       # Upload DMG artifact
       - name: Upload DMG Artifact
         uses: actions/upload-artifact@v4
@@ -435,9 +392,7 @@ jobs:
           name: PremediaApp-macos-dmg
           path: dist/PremediaApp.dmg
           retention-days: 60
-
   
-
 
 
   build-windows:
@@ -795,6 +750,14 @@ jobs:
           }
         shell: powershell
 
+      # ✅ Install psutil for updater.py
+      - name: Install psutil (required for updater.exe)
+        run: |
+          echo "Installing psutil for updater build..."
+          python -m pip install psutil --no-cache-dir --force-reinstall --verbose
+          echo "✅ psutil installed successfully."
+          python -c "import psutil; print('psutil version:', psutil.__version__)"
+        shell: powershell
 
 
       - name: 🏗️ Build with PyInstaller
@@ -802,6 +765,52 @@ jobs:
           echo "Running PyInstaller with .spec at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
           & python -m PyInstaller app.spec --noconfirm --log-level=DEBUG | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/pyinstaller_output.log"
         shell: pwsh
+
+      #   # 📂 Copy sayhi.bat into dist folder
+      # - name: Copy sayhi.bat into build folder
+      #   run: |
+      #     echo "🔍 Checking if dist/PremediaApp exists..."
+      #     if (-not (Test-Path "dist\PremediaApp")) {
+      #       echo "📁 Folder not found. Creating dist/PremediaApp..."
+      #       New-Item -ItemType Directory -Force -Path "dist\PremediaApp" | Out-Null
+      #     }
+      #     echo "Copying sayhi.bat into dist/PremediaApp..."
+      #     Copy-Item -Path "sayhi.bat" -Destination "dist\PremediaApp\" -Force
+      #     echo "✅ sayhi.bat copied successfully."
+      #     dir dist\PremediaApp
+      #   shell: pwsh
+
+# -------------------------------------------------->
+      # ⚙️ Build updater.exe
+      - name: Build updater helper
+        run: |
+          echo "Building updater.exe..."
+          & python -m PyInstaller --onefile updater.py
+          echo "✅ updater.exe built successfully"
+        shell: pwsh
+
+      # 📦 Copy updater.exe into final app folder
+      - name: Copy updater.exe into build folder
+        run: |
+          echo "Copying updater.exe into dist/PremediaApp"
+          Copy-Item -Path "dist\updater.exe" -Destination "dist\PremediaApp\" -Force
+          echo "✅ updater.exe copied into build folder"
+          dir dist\PremediaApp
+        shell: pwsh
+
+      # 🧩 Verify updater presence
+      - name: Verify updater.exe included
+        run: |
+          if (-not (Test-Path "dist\PremediaApp\updater.exe")) {
+            echo "❌ updater.exe missing in dist folder!"
+            exit 1
+          } else {
+            echo "✅ updater.exe present in dist/PremediaApp"
+          }
+        shell: pwsh
+# ------------------------------------------------->
+
+
 
 
       # Upload PyInstaller log
@@ -861,26 +870,34 @@ jobs:
       # 🔒 SECURITY + INTEGRITY VERIFICATION ADDITION
       ##########################################
 
-      # 🧮 Step 1: Generate SHA256 checksum
-      - name: Generate SHA256 checksum
+      # 🧮 Step 1: Generate SHA256 checksum (force lowercase)
+      - name: Generate SHA256 checksum (lowercase)
+        id: gen_hash
+        shell: pwsh
         run: |
-          echo "Generating SHA256 checksum for PremediaApp-Setup.exe"
-          Get-FileHash Output/PremediaApp-Setup.exe -Algorithm SHA256 | Tee-Object -FilePath Output/PremediaApp-Setup.sha256
+          echo "Generating lowercase SHA256 checksum for PremediaApp-Setup.exe"
+          $hash = (Get-FileHash "Output/PremediaApp-Setup.exe" -Algorithm SHA256).Hash.ToLower()
+          echo "sha256=$hash" >> $env:GITHUB_ENV
+          echo $hash | Out-File -FilePath "Output/PremediaApp-Setup.sha256" -Encoding ascii
+          Write-Host "✅ SHA256 checksum (lowercase): $hash"
           Get-Content Output/PremediaApp-Setup.sha256
-        shell: powershell
 
       # 📜 Step 2: Verify source integrity
       - name: Verify source integrity
+        shell: pwsh
         run: |
           echo "Verifying that build matches latest commit"
           git rev-parse HEAD > latest_commit.txt
           echo "✅ Commit hash:"
           Get-Content latest_commit.txt
-        shell: powershell
 
       # 🔏 Step 3: Sign Executable (optional)
       - name: Sign Executable (optional)
         if: env.CODE_SIGN_CERT && env.CODE_SIGN_PASSWORD
+        shell: pwsh
+        env:
+          CODE_SIGN_CERT: ${{ secrets.WINDOWS_CODE_SIGN_CERT }}
+          CODE_SIGN_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGN_PASSWORD }}
         run: |
           echo "Starting code signing..."
           & "C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe" sign `
@@ -891,10 +908,6 @@ jobs:
             /fd sha256 `
             "Output/PremediaApp-Setup.exe"
           echo "✅ Code signing completed."
-        shell: powershell
-        env:
-          CODE_SIGN_CERT: ${{ secrets.WINDOWS_CODE_SIGN_CERT }}
-          CODE_SIGN_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGN_PASSWORD }}
 
       # 🧩 Step 4: Upload checksum
       - name: Upload checksum
@@ -905,6 +918,7 @@ jobs:
 
       # 🧰 Step 5: Antivirus scan (with detection check)
       - name: Run Windows Defender quick scan
+        shell: pwsh
         run: |
           echo "Running Windows Defender quick scan..."
           Start-MpScan -ScanType QuickScan
@@ -916,19 +930,19 @@ jobs:
           } else {
             echo "✅ No threats detected by Defender."
           }
-        shell: powershell
 
       # 🧪 Step 6: Sandbox execution test
       - name: Sandbox execution test
+        shell: pwsh
         run: |
           echo "Launching PremediaApp in sandbox mode for quick test..."
           Start-Process -FilePath "dist/PremediaApp/PremediaApp.exe" -ArgumentList "/testmode" -PassThru | Out-Null
           Start-Sleep -Seconds 5
           echo "✅ Application started successfully."
-        shell: powershell
 
       # 🧾 Step 7: Generate Release Notes
       - name: Generate Release Notes
+        shell: pwsh
         run: |
           echo "Creating release notes..."
           echo "PremediaApp Windows Installer Build" > Output/release_notes.txt
@@ -941,7 +955,76 @@ jobs:
           echo "Purpose: Official installer for PremediaApp" >> Output/release_notes.txt
           echo "Environment: Windows 10/11 x64" >> Output/release_notes.txt
           echo "Status: Digitally signed and verified" >> Output/release_notes.txt
-        shell: powershell
+
+      # 🧾 Step 8: Generate version.json automatically (lowercase hash)
+      # - name: Generate version.json
+      #   shell: pwsh
+      #   run: |
+      #     echo "Generating version.json for auto-update..."
+      #     $version = "1.2.1"
+      #     $hash = "${{ env.sha256 }}"   # ✅ Uses lowercase hash from Step 1
+      #     $json = @{
+      #       version = $version
+      #       windows_url = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/windows/PremediaApp_v$version.exe"
+      #       mac_url = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/macos/PremediaApp_v$version.dmg"
+      #       sha256 = $hash
+      #       release_notes = "Performance improvements and stability fixes"
+      #       mandatory = $false
+      #     } | ConvertTo-Json -Depth 3
+      #     $json | Out-File -FilePath version.json -Encoding utf8
+      #     Get-Content version.json
+
+      - name: Update Windows section in version.json
+        shell: pwsh
+        run: |
+          Write-Host "Downloading latest version.json from S3 (if exists)..."
+          aws s3 cp s3://vmg-premedia-22112023/application/drn/latest_version.json version.json `
+            || Write-Host "version.json not found, using template"
+
+          if (-not (Test-Path version.json)) {
+            Write-Host "Creating base version.json template"
+            $baseJson = @"
+            {
+              "version": "1.2.1",
+              "release_notes": "Performance improvements and stability fixes",
+              "mandatory": false,
+              "windows": { "url": "", "sha256": "" },
+              "mac": { "url": "", "sha256": "" }
+            }
+          "@
+                $baseJson | Out-File version.json -Encoding utf8
+              }
+
+              $winUrl = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/windows/PremediaApp_v1.2.1.exe"
+              $winSha = "${{ env.sha256 }}"
+
+              jq --arg url "$winUrl" --arg sha "$winSha" `
+                '.windows.url = $url | .windows.sha256 = $sha' `
+                version.json > version.tmp.json
+
+              Move-Item version.tmp.json version.json -Force
+              Get-Content version.json
+
+              # Verify the update
+              $content = Get-Content version.json -Raw | ConvertFrom-Json
+              if ($content.windows.url -ne $winUrl -or $content.windows.sha256 -ne $winSha) {
+                throw "Failed to update version.json correctly"
+              }
+
+
+      # ☁️ Step 9: Upload Windows Build to S3
+      - name: ☁️ Upload Windows Build to S3
+        shell: pwsh
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ap-southeast-2
+        run: |
+          echo "Uploading Windows EXE, changelog, and version metadata..."
+          aws s3 cp Output/PremediaApp-Setup.exe s3://vmg-premedia-22112023/application/drn/windows/PremediaApp_v1.2.1.exe --acl public-read
+          aws s3 cp Output/release_notes.txt s3://vmg-premedia-22112023/application/drn/changelogs/changelog_1.2.1.txt --acl public-read
+          aws s3 cp version.json s3://vmg-premedia-22112023/application/drn/latest_version.json --acl public-read --cache-control "no-cache, max-age=60"
+          echo "✅ Windows build uploaded successfully."
 
       - name: Upload release notes
         uses: actions/upload-artifact@v4
