@@ -4,6 +4,7 @@ import time
 import shutil
 import subprocess
 import psutil
+from datetime import datetime
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel,
@@ -13,26 +14,44 @@ from PySide6.QtCore import Qt, QThread, Signal
 
 
 # ==================================================
-# Utility: Kill running app safely
+# Logger (persistent file logging)
+# ==================================================
+LOG_FILE = os.path.join(os.getcwd(), "updater.log")
+
+
+def log(message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{timestamp}] {message}"
+    print(line)
+
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
+# ==================================================
+# Kill process safely
 # ==================================================
 def kill_process_by_path(exe_path: str, timeout=5):
     exe_name = os.path.basename(exe_path).lower()
+    log(f"Killing process: {exe_name}")
 
     for proc in psutil.process_iter(["pid", "name", "exe"]):
         try:
             if not proc.info["name"]:
                 continue
 
-            # match by name OR full path
             if (
                 proc.info["name"].lower() == exe_name
                 or (proc.info["exe"] and proc.info["exe"].lower() == exe_path.lower())
             ):
+                log(f"Terminating PID {proc.pid}")
                 proc.terminate()
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"Process terminate error: {e}")
 
-    # wait for termination
     start = time.time()
     while time.time() - start < timeout:
         still_running = False
@@ -41,25 +60,26 @@ def kill_process_by_path(exe_path: str, timeout=5):
                 if proc.info["name"] and proc.info["name"].lower() == exe_name:
                     still_running = True
                     break
-            except Exception:
+            except:
                 pass
 
         if not still_running:
+            log("Process terminated successfully")
             return
 
         time.sleep(0.5)
 
-    # force kill if still alive
+    log("Force killing remaining processes")
     for proc in psutil.process_iter(["name"]):
         try:
             if proc.info["name"] and proc.info["name"].lower() == exe_name:
                 proc.kill()
-        except Exception:
+        except:
             pass
 
 
 # ==================================================
-# Worker Thread
+# Worker
 # ==================================================
 class UpdateWorker(QThread):
     status = Signal(str)
@@ -71,6 +91,9 @@ class UpdateWorker(QThread):
         self.old_exe = os.path.abspath(old_exe)
 
     def validate(self):
+        log(f"NEW EXE: {self.new_exe}")
+        log(f"OLD EXE: {self.old_exe}")
+
         if not os.path.exists(self.new_exe):
             raise RuntimeError(f"New EXE not found: {self.new_exe}")
 
@@ -78,23 +101,28 @@ class UpdateWorker(QThread):
             raise RuntimeError(f"Invalid target EXE: {self.old_exe}")
 
     def atomic_replace(self):
-        target_dir = os.path.dirname(self.old_exe)
-        backup_path = self.old_exe + ".bak"
+        backup = self.old_exe + ".bak"
 
-        # backup old exe
+        log("Starting atomic replace")
+
         if os.path.exists(self.old_exe):
-            if os.path.exists(backup_path):
-                os.remove(backup_path)
-            os.rename(self.old_exe, backup_path)
+            log("Creating backup")
+            if os.path.exists(backup):
+                os.remove(backup)
+            os.rename(self.old_exe, backup)
 
-        # move new exe into place
+        log("Moving new EXE into place")
         shutil.move(self.new_exe, self.old_exe)
 
-        # cleanup backup (optional)
-        if os.path.exists(backup_path):
-            os.remove(backup_path)
+        log("Replace completed")
+
+        if os.path.exists(backup):
+            os.remove(backup)
+            log("Backup removed")
 
     def launch(self):
+        log(f"Launching: {self.old_exe}")
+
         subprocess.Popen(
             [self.old_exe],
             cwd=os.path.dirname(self.old_exe),
@@ -106,32 +134,33 @@ class UpdateWorker(QThread):
             self.status.emit("Validating update...")
             self.validate()
 
-            self.status.emit("Closing running application...")
+            self.status.emit("Closing application...")
             kill_process_by_path(self.old_exe)
 
             time.sleep(1)
 
-            self.status.emit("Replacing application files...")
+            self.status.emit("Replacing files...")
 
-            # retry logic for file lock
-            for attempt in range(3):
+            for i in range(3):
                 try:
                     self.atomic_replace()
                     break
-                except PermissionError:
+                except PermissionError as e:
+                    log(f"Retry {i+1} due to lock: {e}")
                     time.sleep(1)
-                    if attempt == 2:
+                    if i == 2:
                         raise
 
-            self.status.emit("Launching updated version...")
+            self.status.emit("Launching new version...")
             time.sleep(1)
 
             self.launch()
 
-            self.status.emit("Update completed successfully")
-            time.sleep(1)
+            self.status.emit("Update completed")
+            log("Update completed successfully")
 
         except Exception as e:
+            log(f"UPDATE FAILED: {str(e)}")
             self.status.emit(f"Update failed: {str(e)}")
 
         finally:
@@ -174,8 +203,10 @@ class UpdaterWindow(QWidget):
 # Entry
 # ==================================================
 def main():
+    log("=== UPDATER STARTED ===")
+
     if len(sys.argv) < 3:
-        print("Usage: updater.exe <new_exe_path> <installed_exe_path>")
+        log("Invalid arguments")
         sys.exit(1)
 
     new_exe = sys.argv[1]

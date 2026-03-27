@@ -1,8 +1,8 @@
 [Setup]
 AppId={{9ca9316f-48ec-47dd-ab0e-dbbb86de0a9f}}
 AppName=PremediaApp
-AppVersion=1.2.3
-AppVerName=PremediaApp 1.2.3
+AppVersion=1.2.2
+AppVerName=PremediaApp 1.2.2
 DefaultDirName={autopf}\PremediaApp
 DefaultGroupName=PremediaApp
 AllowNoIcons=yes
