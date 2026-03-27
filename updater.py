@@ -1,57 +1,9 @@
-# -------------->  old---> working 
-# import os
-# import sys
-# import time
-# import psutil
-# import subprocess
-
-# def kill_process_by_name(exe_name):
-#     """Terminate any running instance of the old app."""
-#     for proc in psutil.process_iter(["name", "pid"]):
-#         try:
-#             if exe_name.lower() in proc.info["name"].lower():
-#                 proc.terminate()
-#                 try:
-#                     proc.wait(timeout=5)
-#                 except psutil.TimeoutExpired:
-#                     proc.kill()
-#         except Exception:
-#             pass
-
-
-# def main():
-#     if len(sys.argv) < 3:
-#         print("Usage: updater.exe <new_exe_path> <old_exe_path>")
-#         sys.exit(1)
-
-#     new_exe_path = sys.argv[1]   # e.g. C:\Users\Deeran\AppData\Local\Temp\PremediaApp_v1.1.29.exe
-#     old_exe_path = sys.argv[2]   # e.g. C:\Users\Deeran\AppData\Local\PremediaApp\PremediaApp.exe
-#     exe_name = os.path.basename(old_exe_path)
-
-#     print(f"🔹 Closing old version ({exe_name}) ...")
-#     kill_process_by_name(exe_name)
-
-#     # small delay for OS to release file handles
-#     time.sleep(1)
-
-#     print(f"🚀 Launching new version from: {new_exe_path}")
-#     try:
-#         subprocess.Popen([new_exe_path], shell=False)
-#         print("✅ Update complete – running the new version (no reinstall).")
-#     except Exception as e:
-#         print(f"❌ Failed to launch new version: {e}")
-
-#     sys.exit(0)
-
-
-# if __name__ == "__main__":
-#     main()
-
 import os
 import sys
 import time
-import psutil
+import shutil
 import subprocess
+import psutil
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel,
@@ -61,51 +13,134 @@ from PySide6.QtCore import Qt, QThread, Signal
 
 
 # ==================================================
-# Update worker (runs in background)
+# Utility: Kill running app safely
 # ==================================================
+def kill_process_by_path(exe_path: str, timeout=5):
+    exe_name = os.path.basename(exe_path).lower()
 
-class UpdateWorker(QThread):
-    status = Signal(str)
+    for proc in psutil.process_iter(["pid", "name", "exe"]):
+        try:
+            if not proc.info["name"]:
+                continue
 
-    def __init__(self, new_exe, old_exe):
-        super().__init__()
-        self.new_exe = new_exe
-        self.old_exe = old_exe
+            # match by name OR full path
+            if (
+                proc.info["name"].lower() == exe_name
+                or (proc.info["exe"] and proc.info["exe"].lower() == exe_path.lower())
+            ):
+                proc.terminate()
+        except Exception:
+            pass
 
-    def kill_old_process(self):
-        exe_name = os.path.basename(self.old_exe)
-        self.status.emit(f"Closing {exe_name}...")
-
+    # wait for termination
+    start = time.time()
+    while time.time() - start < timeout:
+        still_running = False
         for proc in psutil.process_iter(["name"]):
             try:
-                if proc.info["name"] and exe_name.lower() in proc.info["name"].lower():
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=5)
-                    except psutil.TimeoutExpired:
-                        proc.kill()
+                if proc.info["name"] and proc.info["name"].lower() == exe_name:
+                    still_running = True
+                    break
             except Exception:
                 pass
 
+        if not still_running:
+            return
+
+        time.sleep(0.5)
+
+    # force kill if still alive
+    for proc in psutil.process_iter(["name"]):
+        try:
+            if proc.info["name"] and proc.info["name"].lower() == exe_name:
+                proc.kill()
+        except Exception:
+            pass
+
+
+# ==================================================
+# Worker Thread
+# ==================================================
+class UpdateWorker(QThread):
+    status = Signal(str)
+    finished_signal = Signal()
+
+    def __init__(self, new_exe, old_exe):
+        super().__init__()
+        self.new_exe = os.path.abspath(new_exe)
+        self.old_exe = os.path.abspath(old_exe)
+
+    def validate(self):
+        if not os.path.exists(self.new_exe):
+            raise RuntimeError(f"New EXE not found: {self.new_exe}")
+
+        if not self.old_exe.lower().endswith(".exe"):
+            raise RuntimeError(f"Invalid target EXE: {self.old_exe}")
+
+    def atomic_replace(self):
+        target_dir = os.path.dirname(self.old_exe)
+        backup_path = self.old_exe + ".bak"
+
+        # backup old exe
+        if os.path.exists(self.old_exe):
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+            os.rename(self.old_exe, backup_path)
+
+        # move new exe into place
+        shutil.move(self.new_exe, self.old_exe)
+
+        # cleanup backup (optional)
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+
+    def launch(self):
+        subprocess.Popen(
+            [self.old_exe],
+            cwd=os.path.dirname(self.old_exe),
+            close_fds=True
+        )
+
     def run(self):
         try:
-            self.kill_old_process()
+            self.status.emit("Validating update...")
+            self.validate()
+
+            self.status.emit("Closing running application...")
+            kill_process_by_path(self.old_exe)
+
             time.sleep(1)
 
-            self.status.emit("Launching new version...")
-            subprocess.Popen([self.new_exe], shell=False)
+            self.status.emit("Replacing application files...")
 
-            self.status.emit("Update completed")
+            # retry logic for file lock
+            for attempt in range(3):
+                try:
+                    self.atomic_replace()
+                    break
+                except PermissionError:
+                    time.sleep(1)
+                    if attempt == 2:
+                        raise
+
+            self.status.emit("Launching updated version...")
+            time.sleep(1)
+
+            self.launch()
+
+            self.status.emit("Update completed successfully")
             time.sleep(1)
 
         except Exception as e:
-            self.status.emit(f"Update failed: {e}")
+            self.status.emit(f"Update failed: {str(e)}")
+
+        finally:
+            self.finished_signal.emit()
 
 
 # ==================================================
 # UI
 # ==================================================
-
 class UpdaterWindow(QWidget):
     def __init__(self, new_exe, old_exe):
         super().__init__()
@@ -118,7 +153,7 @@ class UpdaterWindow(QWidget):
         self.label.setAlignment(Qt.AlignCenter)
 
         self.progress = QProgressBar()
-        self.progress.setRange(0, 0)  # indeterminate
+        self.progress.setRange(0, 0)
 
         layout = QVBoxLayout()
         layout.addWidget(self.label)
@@ -127,7 +162,7 @@ class UpdaterWindow(QWidget):
 
         self.worker = UpdateWorker(new_exe, old_exe)
         self.worker.status.connect(self.update_status)
-        self.worker.finished.connect(self.close)
+        self.worker.finished_signal.connect(self.close)
 
         self.worker.start()
 
@@ -136,11 +171,11 @@ class UpdaterWindow(QWidget):
 
 
 # ==================================================
-# Entry point
+# Entry
 # ==================================================
-
 def main():
     if len(sys.argv) < 3:
+        print("Usage: updater.exe <new_exe_path> <installed_exe_path>")
         sys.exit(1)
 
     new_exe = sys.argv[1]
