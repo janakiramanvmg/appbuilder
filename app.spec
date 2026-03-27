@@ -146,11 +146,11 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="PremediaApp",
-    debug=True,  # Keep True while testing; set False for final release
+    debug=False,  # Must be False for production — debug=True causes respawn error
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,  # False for GUI app
+    console=False,
     icon=icon_file,
 )
 
