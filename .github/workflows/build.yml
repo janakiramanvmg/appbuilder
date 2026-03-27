@@ -323,7 +323,7 @@ jobs:
             echo "Creating base version.json template"
             cat > version.json <<'EOF'
           {
-            "version": "1.2.2",
+            "version": "1.2.3",
             "release_notes": "Performance improvements and stability fixes",
             "mandatory": false,
             "windows": { "url": "", "sha256": "" },
@@ -332,7 +332,7 @@ jobs:
           EOF
           fi
 
-          MAC_URL="https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/macos/PremediaApp_v1.2.2.dmg"
+          MAC_URL="https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/macos/PremediaApp_v1.2.3.dmg"
           MAC_SHA=$(shasum -a 256 dist/PremediaApp.dmg | awk '{print $1}')
 
           echo "macOS SHA256: $MAC_SHA"
@@ -370,7 +370,7 @@ jobs:
           # Ensure aws CLI is installed and available
           aws --version
           aws s3 cp dist/PremediaApp.dmg \
-            s3://vmg-premedia-22112023/application/drn/macos/PremediaApp_v1.2.2.dmg \
+            s3://vmg-premedia-22112023/application/drn/macos/PremediaApp_v1.2.3.dmg \
             --acl public-read
 
           echo "☁️ Uploading latest_version.json..."
@@ -961,7 +961,7 @@ jobs:
       #   shell: pwsh
       #   run: |
       #     echo "Generating version.json for auto-update..."
-      #     $version = "1.2.2"
+      #     $version = "1.2.3"
       #     $hash = "${{ env.sha256 }}"   # ✅ Uses lowercase hash from Step 1
       #     $json = @{
       #       version = $version
@@ -985,7 +985,7 @@ jobs:
             Write-Host "Creating base version.json template"
             $baseJson = @"
             {
-              "version": "1.2.2",
+              "version": "1.2.3",
               "release_notes": "Performance improvements and stability fixes",
               "mandatory": false,
               "windows": { "url": "", "sha256": "" },
@@ -995,7 +995,7 @@ jobs:
                 $baseJson | Out-File version.json -Encoding utf8
               }
 
-              $winUrl = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/windows/PremediaApp_v1.2.2.exe"
+              $winUrl = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/windows/PremediaApp_v1.2.3.exe"
               $winSha = "${{ env.sha256 }}"
 
               jq --arg url "$winUrl" --arg sha "$winSha" `
@@ -1021,8 +1021,8 @@ jobs:
           AWS_DEFAULT_REGION: ap-southeast-2
         run: |
           echo "Uploading Windows EXE, changelog, and version metadata..."
-          aws s3 cp Output/PremediaApp-Setup.exe s3://vmg-premedia-22112023/application/drn/windows/PremediaApp_v1.2.2.exe --acl public-read
-          aws s3 cp Output/release_notes.txt s3://vmg-premedia-22112023/application/drn/changelogs/changelog_1.2.2.txt --acl public-read
+          aws s3 cp Output/PremediaApp-Setup.exe s3://vmg-premedia-22112023/application/drn/windows/PremediaApp_v1.2.3.exe --acl public-read
+          aws s3 cp Output/release_notes.txt s3://vmg-premedia-22112023/application/drn/changelogs/changelog_1.2.3.txt --acl public-read
           aws s3 cp version.json s3://vmg-premedia-22112023/application/drn/latest_version.json --acl public-read --cache-control "no-cache, max-age=60"
           echo "✅ Windows build uploaded successfully."
 
