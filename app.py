@@ -192,7 +192,7 @@ NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
 NAS_USERNAME = "irnasappprod"
 MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
 NAS_PATH = "softwaremedia/IR_prod/"
-APPVERSION = "1.2.3"
+APPVERSION = "1.2.2"
 
 # BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
 # NAS_IP = "192.168.1.145"
@@ -6459,19 +6459,55 @@ class PremediaApp(QApplication):
 # get_system_info()
 threading.Thread(target=get_system_info, daemon=True).start()
 
+# def run_updater(new_exe_path):
+#     """Launch the updater.exe with paths, then exit current app."""
+#     current_exe = sys.executable  # Path of the running PremediaApp.exe
+#     updater_path = os.path.join(os.path.dirname(current_exe), "updater.exe")
+
+#     if not os.path.exists(updater_path):
+#         print("❌ updater.exe missing")
+#         return
+
+#     print(f"🚀 Launching updater: {updater_path}")
+#     subprocess.Popen([updater_path, new_exe_path, current_exe], shell=False)
+#     os._exit(0)  # Hard exit to release file lock
+
 def run_updater(new_exe_path):
-    """Launch the updater.exe with paths, then exit current app."""
-    current_exe = sys.executable  # Path of the running PremediaApp.exe
+    import ctypes
+    import sys
+    import os
+
+    # ✅ Get installed EXE path
+    current_exe = os.path.abspath(sys.executable)
+
+    # ✅ Updater location
     updater_path = os.path.join(os.path.dirname(current_exe), "updater.exe")
 
+    # 🔍 DEBUG LOGS (MANDATORY)
+    print("========== UPDATE DEBUG ==========")
+    print("NEW EXE:", new_exe_path)
+    print("CURRENT EXE:", current_exe)
+    print("UPDATER PATH:", updater_path)
+    print("==================================")
+
     if not os.path.exists(updater_path):
-        print("❌ updater.exe missing")
+        print("❌ updater.exe not found")
         return
 
-    print(f"🚀 Launching updater: {updater_path}")
-    subprocess.Popen([updater_path, new_exe_path, current_exe], shell=False)
-    os._exit(0)  # Hard exit to release file lock
+    # ✅ FORCE ADMIN (CRITICAL FIX)
+    params = f'"{new_exe_path}" "{current_exe}"'
 
+    ctypes.windll.shell32.ShellExecuteW(
+        None,
+        "runas",          # 🔥 THIS FIXES YOUR ERROR
+        updater_path,
+        params,
+        None,
+        1
+    )
+
+    # ✅ HARD EXIT to release file lock
+    os._exit(0)
 
 
 api_process = None
