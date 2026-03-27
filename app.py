@@ -66,15 +66,15 @@ import pytz
 import shutil
 # Lazy import — keyring blocks on Windows credential store at import time
 keyring = None
-def _load_keyring():
-    global keyring
-    try:
-        import keyring as _kr
-        keyring = _kr
-    except Exception as e:
-        logger.warning(f"keyring unavailable: {e}")
+# def _load_keyring():
+#     global keyring
+#     try:
+#         import keyring as _kr
+#         keyring = _kr
+#     except Exception as e:
+#         logger.warning(f"keyring unavailable: {e}")
 
-threading.Thread(target=_load_keyring, daemon=True).start()
+# threading.Thread(target=_load_keyring, daemon=True).start()
 try:
     import imagecodecs
 except ImportError:
@@ -4255,21 +4255,27 @@ class LoginWorker(QObject):
             # Save credentials on background thread — win32cred can be slow
             def _save_keyring():
                 try:
-                    import win32cred as _wc
                     if _rememberme:
-                        _wc.CredWrite({
-                            'Type': _wc.CRED_TYPE_GENERIC,
-                            'TargetName': f"PremediaApp/{_username}",
-                            'CredentialBlob': _password,
-                            'Persist': _wc.CRED_PERSIST_LOCAL_MACHINE,
-                            'UserName': _username,
-                        }, 0)
+                        try:
+                            # Try win32cred first (Windows, no blocking)
+                            import win32cred as _wc
+                            _wc.CredWrite({
+                                'Type': _wc.CRED_TYPE_GENERIC,
+                                'TargetName': f"PremediaApp/{_username}",
+                                'CredentialBlob': _password,
+                                'Persist': _wc.CRED_PERSIST_LOCAL_MACHINE,
+                                'UserName': _username,
+                            }, 0)
+                        except ImportError:
+                            # Fallback — store in cache file only
+                            cache = load_cache()
+                            cache["saved_username"] = _username
+                            cache["saved_password"] = _password
+                            save_cache(cache)
                     else:
                         try:
-                            _wc.CredDelete(
-                                f"PremediaApp/{_username}",
-                                _wc.CRED_TYPE_GENERIC
-                            )
+                            import win32cred as _wc
+                            _wc.CredDelete(f"PremediaApp/{_username}", _wc.CRED_TYPE_GENERIC)
                         except Exception:
                             pass
                 except Exception as e:
@@ -4460,12 +4466,15 @@ class LoginDialog(QDialog):
                 # Load on background thread — keyring blocks on Windows
                 def _load_keyring_credentials(uname):
                     try:
-                        # pwd = keyring.get_password("PremediaApp", uname) if keyring else None
-                        
+                        pwd = None
                         try:
                             import win32cred as _wc
                             cred = _wc.CredRead(f"PremediaApp/{uname}", _wc.CRED_TYPE_GENERIC)
                             pwd = cred['CredentialBlob']
+                        except ImportError:
+                            # win32cred not available — fall back to cache
+                            cache = load_cache()
+                            pwd = cache.get("saved_password") or None
                         except Exception:
                             pwd = None
                         if pwd:
@@ -5114,8 +5123,11 @@ class PremediaApp(QApplication):
                         _wc.CRED_TYPE_GENERIC
                     )
                     saved_password = cred['CredentialBlob']
+                except ImportError:
+                    # win32cred not available in this build — use cache fallback
+                    saved_password = cache.get("saved_password") or None
                 except Exception:
-                    pass
+                    saved_password = None
 
                 if saved_password:
                     logger.debug("Attempting auto-login with saved credentials")
