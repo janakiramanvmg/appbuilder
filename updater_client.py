@@ -240,7 +240,8 @@ def check_for_update(current_version, exe_path):
         print("[Updater] Download URL:", download_url)
 
         # 🔹 Download update to unique temp file
-        tmp_file = tempfile.NamedTemporaryFile(delete=False).name
+        # tmp_file = tempfile.NamedTemporaryFile(delete=False).name
+        tmp_file = os.path.join(tempfile.gettempdir(), "PremediaApp_update.exe")
         print(f"[Updater] Downloading update...")
 
         with requests.get(download_url, stream=True, timeout=30) as resp:

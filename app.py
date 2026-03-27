@@ -192,7 +192,7 @@ NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
 NAS_USERNAME = "irnasappprod"
 MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
 NAS_PATH = "softwaremedia/IR_prod/"
-APPVERSION = "1.2.3"
+APPVERSION = "1.2.2"
 
 # BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
 # NAS_IP = "192.168.1.145"
@@ -6459,18 +6459,6 @@ class PremediaApp(QApplication):
 # get_system_info()
 threading.Thread(target=get_system_info, daemon=True).start()
 
-# def run_updater(new_exe_path):
-#     """Launch the updater.exe with paths, then exit current app."""
-#     current_exe = sys.executable  # Path of the running PremediaApp.exe
-#     updater_path = os.path.join(os.path.dirname(current_exe), "updater.exe")
-
-#     if not os.path.exists(updater_path):
-#         print("❌ updater.exe missing")
-#         return
-
-#     print(f"🚀 Launching updater: {updater_path}")
-#     subprocess.Popen([updater_path, new_exe_path, current_exe], shell=False)
-#     os._exit(0)  # Hard exit to release file lock
 import ctypes
 import sys
 
@@ -6479,7 +6467,7 @@ def run_updater(updater_path, new_exe, old_exe):
 
     result = ctypes.windll.shell32.ShellExecuteW(
         None,
-        "runas",   # 🔥 forces admin elevation
+        "runas",   # 🔥 forces admin
         updater_path,
         params,
         None,
