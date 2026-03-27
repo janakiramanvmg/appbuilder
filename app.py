@@ -6539,7 +6539,7 @@ if __name__ == "__main__":
     try:
         # 🔹 Step 1: Check for updates before launching GUI
         exe_path = sys.executable
-        # check_for_update(APPVERSION, exe_path)
+        check_for_update(APPVERSION, exe_path)
 
         # 🔹 Step 2: Launch your main GUI
         key = parse_custom_url()
