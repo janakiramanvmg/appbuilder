@@ -192,7 +192,7 @@ NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
 NAS_USERNAME = "irnasappprod"
 MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
 NAS_PATH = "softwaremedia/IR_prod/"
-APPVERSION = "1.2.3"
+APPVERSION = "1.2.2"
 
 # BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
 # NAS_IP = "192.168.1.145"
