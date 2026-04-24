@@ -316,7 +316,7 @@ jobs:
           set -e
 
           echo "Downloading latest version.json from S3 (if exists)..."
-          aws s3 cp s3://vmg-premedia-22112023/application/drn/latest_version.json version.json \
+          aws s3 cp s3://vmg-premedia-22112023/application_uat/drn/latest_version.json version.json \
             || echo "version.json not found, using template"
 
           if [ ! -f version.json ]; then
@@ -370,12 +370,12 @@ jobs:
           # Ensure aws CLI is installed and available
           aws --version
           aws s3 cp dist/PremediaApp.dmg \
-            s3://vmg-premedia-22112023/application/drn/macos/PremediaApp_v1.2.2.dmg \
+            s3://vmg-premedia-22112023/application_uat/drn/macos/PremediaApp_v1.2.2.dmg \
             --acl public-read
 
           echo "☁️ Uploading latest_version.json..."
           aws s3 cp version.json \
-            s3://vmg-premedia-22112023/application/drn/latest_version.json \
+            s3://vmg-premedia-22112023/application_uat/drn/latest_version.json \
             --cache-control "no-cache, max-age=0, must-revalidate"
 
           echo "✅ macOS build uploaded successfully."
@@ -978,7 +978,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Downloading latest version.json from S3 (if exists)..."
-          aws s3 cp s3://vmg-premedia-22112023/application/drn/latest_version.json version.json `
+          aws s3 cp s3://vmg-premedia-22112023/application_uat/drn/latest_version.json version.json `
             || Write-Host "version.json not found, using template"
 
           if (-not (Test-Path version.json)) {
@@ -1021,9 +1021,9 @@ jobs:
           AWS_DEFAULT_REGION: ap-southeast-2
         run: |
           echo "Uploading Windows EXE, changelog, and version metadata..."
-          aws s3 cp Output/PremediaApp-Setup.exe s3://vmg-premedia-22112023/application/drn/windows/PremediaApp_v1.2.2.exe --acl public-read
-          aws s3 cp Output/release_notes.txt s3://vmg-premedia-22112023/application/drn/changelogs/changelog_1.2.2.txt --acl public-read
-          aws s3 cp version.json s3://vmg-premedia-22112023/application/drn/latest_version.json --acl public-read --cache-control "no-cache, max-age=60"
+          aws s3 cp Output/PremediaApp-Setup.exe s3://vmg-premedia-22112023/application_uat/drn/windows/PremediaApp_v1.2.2.exe --acl public-read
+          aws s3 cp Output/release_notes.txt s3://vmg-premedia-22112023/application_uat/drn/changelogs/changelog_1.2.2.txt --acl public-read
+          aws s3 cp version.json s3://vmg-premedia-22112023/application_uat/drn/latest_version.json --acl public-read --cache-control "no-cache, max-age=60"
           echo "✅ Windows build uploaded successfully."
 
       - name: Upload release notes

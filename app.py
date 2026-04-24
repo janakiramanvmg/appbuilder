@@ -9,10 +9,10 @@ from updater_client import check_for_update
   # your current version
 
 from PySide6.QtGui import QIcon, QTextCursor, QAction, QCursor, QFont,QPixmap, QDesktopServices
-from PySide6.QtCore import QRunnable, QThreadPool, QEvent, QSize, QThread, QTimer, Qt, QObject, Signal, QMetaObject, Slot, QLockFile, QDir, QEventLoop, QUrl, Q_ARG, QMimeData
+from PySide6.QtCore import QRunnable, QThreadPool, QEvent, QSize, QThread, QTimer, Qt, QObject, Signal, QMetaObject, Slot, QLockFile, QDir, QEventLoop, QUrl, Q_ARG, QMimeData, QPropertyAnimation, QEvent
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkAccessManager, QNetworkRequest
 from login import Ui_Dialog
-from PySide6.QtWidgets import QLineEdit
+from PySide6.QtWidgets import QLineEdit, QGraphicsOpacityEffect
 
 import sys
 import logging
@@ -183,27 +183,27 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === Server and environment Pointing global variables ===
 
-BASE_DOMAIN = "https://app.vmgpremedia.com"
-NAS_IP = "192.168.1.145"
-NAS_PASSWORD = "D&*qmn012@12"
-NAS_PORT = 22
-NAS_SHARE = ""
-NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
-NAS_USERNAME = "irnasappprod"
-MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
-NAS_PATH = "softwaremedia/IR_prod/"
-APPVERSION = "1.2.2"
-
-# BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+# BASE_DOMAIN = "https://app.vmgpremedia.com"
 # NAS_IP = "192.168.1.145"
-# NAS_USERNAME = "irdev"
-# NAS_PASSWORD = "i#0f!L&+@s%^qc"
+# NAS_PASSWORD = "D&*qmn012@12"
 # NAS_PORT = 22
 # NAS_SHARE = ""
-# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
-# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
-# NAS_PATH = "softwaremedia/IR_uat/"
-# APPVERSION = "1.1.46(UAT)"
+# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
+# NAS_USERNAME = "irnasappprod"
+# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
+# NAS_PATH = "softwaremedia/IR_prod/"
+# APPVERSION = "1.2.2"
+
+BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+NAS_IP = "192.168.1.145"
+NAS_USERNAME = "irdev"
+NAS_PASSWORD = "i#0f!L&+@s%^qc"
+NAS_PORT = 22
+NAS_SHARE = ""
+NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
+MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
+NAS_PATH = "softwaremedia/IR_uat/"
+APPVERSION = "1.2.3(UAT)"
 
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -1794,7 +1794,7 @@ class FileWatcherWorker(QObject):
         filename = Path(dest_path).name
 
         transport = None
-
+        transfer_start_time = time.time()
         try:
             transport = paramiko.Transport((NAS_IP, NAS_PORT))
             transport.default_window_size = 2147483647
@@ -1892,6 +1892,18 @@ class FileWatcherWorker(QObject):
                 100,
                 True
             )
+
+            duration_seconds = time.time() - transfer_start_time   # ← ADD THIS
+            
+            # Save duration to cache
+            cache = load_cache()
+            meta = cache.get("downloaded_files_with_metadata", {}).get(spec_id)
+            if meta:
+                meta["api_response"]["transfer_duration"] = round(duration_seconds, 1)
+                save_cache(cache, significant_change=False)           # ← ADD THIS
+
+            self.download_progress.emit(spec_id, dest_path, filename, 100)
+            self.download_status_detail.emit(dest_path, "Download Completed", "download", 100, True)
 
         except Exception:
             self.download_progress.emit(
@@ -2058,6 +2070,19 @@ class FileWatcherWorker(QObject):
                         logger.warning(f"Could not close remote file handle: {rf_err}")
                     remote_file = None
 
+                # ---------- FINAL SUCCESS ----------
+                duration = time.time() - upload_start
+                final_speed = total_mb / duration if duration > 0 else 0.0
+
+                # Save duration to cache
+                cache = load_cache()
+                meta = cache.get("uploaded_files_with_metadata", {}).get(spec_id)
+                if meta:
+                    meta["api_response"]["transfer_duration"] = round(duration, 1)
+                    save_cache(cache, significant_change=False)           # ← ADD THIS
+
+                file_watcher.upload_progress.emit(spec_id, dest_path, filename, 100)
+                file_watcher.upload_status_detail.emit(dest_path, "Upload Completed", "upload", 100, True)
             finally:
                 # FIX: always close local file handle
                 try:
@@ -3116,6 +3141,286 @@ class ThumbnailWorker(QRunnable):
             logger.debug(f"[Thumbnail] Unexpected error: {e}")
 
 
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REPLACE the entire TransferNotificationPopup + TransferNotificationManager
+# classes with the following. Also update start_file_watcher() to use
+# the new NotificationOverlay.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TransferNotificationPopup(QFrame):
+    """Single notification card for one transfer."""
+
+    def __init__(self, spec_id: str, filename: str, action: str, parent=None):
+        super().__init__(parent)
+        self.spec_id = spec_id
+        self.action = action
+        self._done = False
+
+        self.setFixedWidth(320)
+        self.setObjectName("NotifCard")
+
+        is_upload = action == "upload"
+        accent = "#3b82f6" if is_upload else "#2ecc71"
+        icon  = "⬆️" if is_upload else "⬇️"
+        label = "Upload" if is_upload else "Download"
+
+        self.setStyleSheet(f"""
+            QFrame#NotifCard {{
+                background: #1e1e2e;
+                border: 1px solid #2a2a3e;
+                border-left: 4px solid {accent};
+                border-radius: 10px;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+
+        # ── Header ───────────────────────────────────────────────────────────
+        header = QHBoxLayout()
+        self.icon_lbl = QLabel(f"{icon} {label}")
+        self.icon_lbl.setStyleSheet(
+            f"color:{accent}; font-weight:bold; font-size:12px; background:transparent;"
+        )
+        self.status_lbl = QLabel("Starting...")
+        self.status_lbl.setStyleSheet(
+            "color:#888; font-size:11px; background:transparent;"
+        )
+        self.status_lbl.setAlignment(Qt.AlignRight)
+
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setFixedSize(18, 18)
+        self.close_btn.setStyleSheet("""
+            QPushButton { background:transparent; color:#555; border:none; font-size:11px; }
+            QPushButton:hover { color:#fff; }
+        """)
+        self.close_btn.clicked.connect(self._dismiss)
+
+        header.addWidget(self.icon_lbl)
+        header.addWidget(self.status_lbl, 1)
+        header.addWidget(self.close_btn)
+        layout.addLayout(header)
+
+        # ── Filename ──────────────────────────────────────────────────────────
+        self.file_lbl = QLabel(filename)
+        self.file_lbl.setStyleSheet(
+            "color:#ccc; font-size:11px; background:transparent;"
+        )
+        self.file_lbl.setWordWrap(True)
+        self.file_lbl.setMaximumWidth(290)
+        layout.addWidget(self.file_lbl)
+
+        # ── Progress bar ──────────────────────────────────────────────────────
+        self.bar = QProgressBar()
+        self.bar.setFixedHeight(5)
+        self.bar.setTextVisible(False)
+        self.bar.setRange(0, 100)
+        self.bar.setValue(0)
+        self.bar.setStyleSheet(f"""
+            QProgressBar {{ background:#2a2a3e; border-radius:2px; border:none; }}
+            QProgressBar::chunk {{ background:{accent}; border-radius:2px; }}
+        """)
+        layout.addWidget(self.bar)
+
+        # ── Percent label ─────────────────────────────────────────────────────
+        self.pct_lbl = QLabel("0%")
+        self.pct_lbl.setStyleSheet(
+            "color:#666; font-size:10px; background:transparent;"
+        )
+        self.pct_lbl.setAlignment(Qt.AlignRight)
+        layout.addWidget(self.pct_lbl)
+
+        # ── Auto-dismiss timer ────────────────────────────────────────────────
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setSingleShot(True)
+        self._auto_timer.timeout.connect(self._dismiss)
+
+        # ── Fade-in ───────────────────────────────────────────────────────────
+        self._opacity = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity)
+        self._anim = QPropertyAnimation(self._opacity, b"opacity")
+        self._anim.setDuration(300)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    def update_progress(self, percent: int, status_text: str = ""):
+        self.bar.setValue(percent)
+        self.pct_lbl.setText(f"{percent}%")
+        if status_text:
+            short = status_text.split(" • ")[0] if " • " in status_text else status_text
+            self.status_lbl.setText(short)
+
+    def mark_done(self, success: bool):
+        if self._done:
+            return
+        self._done = True
+        self.bar.setValue(100)
+        self.pct_lbl.setText("100%")
+        if success:
+            self.status_lbl.setText("✅ Completed")
+            self.status_lbl.setStyleSheet(
+                "color:#2ecc71; font-size:11px; background:transparent;"
+            )
+        else:
+            self.status_lbl.setText("❌ Failed")
+            self.status_lbl.setStyleSheet(
+                "color:#e74c3c; font-size:11px; background:transparent;"
+            )
+        self._auto_timer.start(4000)
+
+    # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _dismiss(self):
+        self._anim2 = QPropertyAnimation(self._opacity, b"opacity")
+        self._anim2.setDuration(250)
+        self._anim2.setStartValue(1.0)
+        self._anim2.setEndValue(0.0)
+        self._anim2.finished.connect(self._remove_self)
+        self._anim2.start()
+
+    def _remove_self(self):
+        manager = self.parent()
+        if manager and hasattr(manager, "_remove_popup"):
+            manager._remove_popup(self)
+        self.deleteLater()
+
+
+class TransferNotificationManager(QWidget):
+    """
+    Floating top-level overlay — always on top, bottom-right of the screen.
+
+    Key fixes vs the original:
+    • Uses Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint so the
+      overlay is always visible regardless of which window is focused.
+    • Does NOT depend on an anchor widget — anchors to the screen instead.
+    • setWindowOpacity(0.95) gives a slight transparency so it feels non-intrusive.
+    • A single _reposition() call on construction is all that's needed.
+    """
+
+    def __init__(self, parent=None):
+        # ── CRITICAL: pass None so this becomes a real top-level window ───────
+        super().__init__(None)
+
+        self._popups: dict = {}   # spec_id → TransferNotificationPopup
+
+        # ── Window flags: frameless, always-on-top tool window ────────────────
+        self.setWindowFlags(
+            Qt.Tool
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.X11BypassWindowManagerHint   # needed on some Linux WMs
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)  # never steal focus
+        self.setWindowOpacity(0.95)
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(8, 8, 8, 8)
+        self._layout.setSpacing(8)
+        self._layout.setAlignment(Qt.AlignBottom | Qt.AlignRight)
+
+        self._reposition()
+        self.show()
+        self.raise_()
+
+    # ── Geometry ──────────────────────────────────────────────────────────────
+
+    def _reposition(self):
+        """Anchor to the bottom-right corner of the primary screen."""
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()   # excludes taskbar
+
+        popup_w   = 340
+        margin    = 16
+        max_h     = min(600, available.height() - margin * 2)
+
+        x = available.right()  - popup_w - margin
+        y = available.bottom() - max_h   - margin
+
+        self.setGeometry(x, y, popup_w, max_h)
+
+    # ── Popup management ──────────────────────────────────────────────────────
+
+    def _get_or_create(self, spec_id: str, filename: str, action: str):
+        if spec_id not in self._popups:
+            popup = TransferNotificationPopup(spec_id, filename, action, parent=self)
+            self._popups[spec_id] = popup
+            self._layout.addWidget(popup)
+            popup.show()
+            self.raise_()           # keep overlay on top whenever a new card arrives
+        return self._popups[spec_id]
+
+    def _remove_popup(self, popup: TransferNotificationPopup):
+        spec_id = popup.spec_id
+        if spec_id in self._popups:
+            self._layout.removeWidget(popup)
+            del self._popups[spec_id]
+
+    # ── Slots ─────────────────────────────────────────────────────────────────
+
+    @Slot(str, str, str, int)
+    def on_download_progress(self, spec_id: str, file_path: str, filename: str, percent: int):
+        popup = self._get_or_create(spec_id, filename, "download")
+        popup.update_progress(percent)
+        if percent >= 100:
+            popup.mark_done(True)
+
+    @Slot(str, str, str, int, bool)
+    def on_download_status_detail(
+        self, file_path: str, text: str, action_type: str, percent: int, is_nas: bool
+    ):
+        if action_type != "download":
+            return
+        fname = Path(file_path).name
+        for popup in self._popups.values():
+            if popup.action == "download" and (
+                popup.file_lbl.text() == fname or file_path in popup.file_lbl.text()
+            ):
+                popup.update_progress(percent, text)
+                if "Failed" in text:
+                    popup.mark_done(False)
+                elif "Completed" in text:
+                    popup.mark_done(True)
+                break
+
+    @Slot(str, str, str, int)
+    def on_upload_progress(self, spec_id: str, file_path: str, filename: str, percent: int):
+        popup = self._get_or_create(spec_id, filename, "upload")
+        popup.update_progress(percent)
+        if percent >= 100:
+            popup.mark_done(True)
+
+    @Slot(str, str, str, int, bool)
+    def on_upload_status_detail(
+        self, file_path: str, text: str, action_type: str, percent: int, is_nas: bool
+    ):
+        if action_type != "upload":
+            return
+        fname = Path(file_path).name
+        for popup in self._popups.values():
+            if popup.action == "upload" and (
+                popup.file_lbl.text() == fname or file_path in popup.file_lbl.text()
+            ):
+                popup.update_progress(percent, text)
+                if "Failed" in text:
+                    popup.mark_done(False)
+                elif "Completed" in text:
+                    popup.mark_done(True)
+                break
+
+
+
+
 class CardWidget(QFrame):
     copyRequested = Signal(str)
     retryRequested = Signal(dict)
@@ -3154,17 +3459,32 @@ class CardWidget(QFrame):
         # Info
         info = QVBoxLayout()
         info.setSpacing(6)
-        self.project_lbl = QLabel(f"<b>Project:</b> {row_data.get('project_name', 'Loading...')}")
-        self.job_lbl = QLabel(f"<b>Job:</b> {row_data.get('job_name', 'Loading...')}")
-        self.file_lbl = QLabel(f"<b>File:</b> {row_data.get('file_name', 'Unknown')}")
-        self.date_lbl = QLabel(row_data.get("created_at", ""))
+        # self.project_lbl = QLabel(f"<b>Project:</b> {row_data.get('project_name', 'Loading...')}")
+        # self.job_lbl = QLabel(f"<b>Job:</b> {row_data.get('job_name', 'Loading...')}")
+        # self.file_lbl = QLabel(f"<b>File:</b> {row_data.get('file_name', 'Unknown')}")
+        # self.date_lbl = QLabel(self._format_date(row_data.get("created_at", "")))
+        # self.user_type_lbl = QLabel(f"<b>User Type:</b> {row_data.get('user_type', '')}")
+        # self.duration_lbl = QLabel(self._format_duration(row_data.get("transfer_duration")))
+        self.project_lbl = QLabel(f"🗂️  {row_data.get('project_name', 'Loading...')}")
+        self.job_lbl     = QLabel(f"💼  {row_data.get('job_name', 'Loading...')}")
+        self.file_lbl    = QLabel(f"📄  {row_data.get('file_name', 'Unknown')}")
+        self.user_type_lbl = QLabel(f"🎭  {row_data.get('user_type', '').upper()}")
+        self.date_lbl    = QLabel(f"🕐  {self._format_date(row_data.get('created_at', ''))}")
+        self.duration_lbl  = QLabel(self._format_duration(row_data.get("transfer_duration")))
+
+        self.duration_lbl.setWordWrap(True)
+        self.duration_lbl.setStyleSheet("color: #444;")
+        
         for lbl in (self.project_lbl, self.job_lbl, self.file_lbl, self.date_lbl):
             lbl.setWordWrap(True)
             lbl.setStyleSheet("color: #444;")
         info.addWidget(self.project_lbl)
         info.addWidget(self.job_lbl)
         info.addWidget(self.file_lbl)
+        info.addWidget(self.user_type_lbl)
         info.addWidget(self.date_lbl)
+        
+        info.addWidget(self.duration_lbl)
         main.addLayout(info, 1)
 
         # Right side
@@ -3261,10 +3581,22 @@ class CardWidget(QFrame):
     def update_row(self, new_row):
         self.row_data.update(new_row)
 
-        self.project_lbl.setText(f"<b>Project:</b> {new_row.get('project_name', 'Unknown')}")
-        self.job_lbl.setText(f"<b>Job:</b> {new_row.get('job_name', 'Unknown')}")
-        self.file_lbl.setText(f"<b>File:</b> {new_row.get('file_name', 'Unknown')}")
-        self.date_lbl.setText(new_row.get("created_at", ""))
+        # self.project_lbl.setText(f"<b>Project:</b> {new_row.get('project_name', 'Unknown')}")
+        # self.job_lbl.setText(f"<b>Job:</b> {new_row.get('job_name', 'Unknown')}")
+        # self.file_lbl.setText(f"<b>File:</b> {new_row.get('file_name', 'Unknown')}")
+        # self.date_lbl.setText(self._format_date(new_row.get("created_at", "")))
+        # self.user_type_lbl.setText(f"ROLE: {new_row.get('user_type', '')}")
+        # self.duration_lbl.setText(self._format_duration(new_row.get("transfer_duration")))
+
+
+
+        self.project_lbl.setText(f"🗂️  {new_row.get('project_name', 'Unknown')}")
+        self.job_lbl.setText(f"💼  {new_row.get('job_name', 'Unknown')}")
+        self.file_lbl.setText(f"📄  {new_row.get('file_name', 'Unknown')}")
+        self.date_lbl.setText(f"🕐  {self._format_date(new_row.get('created_at', ''))}")
+        self.user_type_lbl.setText(f"🎭  {new_row.get('user_type', '').upper()}")
+        self.duration_lbl.setText(self._format_duration(new_row.get("transfer_duration")))
+
 
         status = new_row.get("status", "Download Completed")
         self.status_lbl.setText(status)
@@ -3278,6 +3610,32 @@ class CardWidget(QFrame):
             self._load_thumbnail(new_row.get("thumbnail"))
 
         self._update_action_buttons(status)
+
+    @staticmethod
+    def _format_date(value) -> str:
+        try:
+            from datetime import datetime
+            return datetime.fromtimestamp(int(value)).strftime("%B %d %Y  %I:%M:%S %p")
+        except (ValueError, TypeError, OSError):
+            return str(value) if value else ""
+
+   
+    @staticmethod
+    def _format_duration(seconds) -> str:
+        try:
+            s = float(seconds)
+            if s <= 0:
+                return ""
+            h = int(s // 3600)
+            m = int((s % 3600) // 60)
+            sec = int(s % 60)
+            if h:
+                return f"⏱️  {h}h {m}m {sec}s"
+            if m:
+                return f"⏱️  {m}m {sec}s"
+            return f"⏱️  {sec}s"
+        except (TypeError, ValueError):
+            return ""
  
     
 
@@ -3330,7 +3688,8 @@ class FileDownloadListWindow(QDialog):
         self.load_files()
 
         # Connect signals
-        watcher = FileWatcherWorker.get_instance(parent=self)
+        # watcher = FileWatcherWorker.get_instance(parent=self)
+        watcher = FileWatcherWorker.get_instance()
         watcher.download_progress.connect(self.on_download_progress, Qt.QueuedConnection)
         watcher.download_status_detail.connect(self.on_download_status_detail, Qt.QueuedConnection)
         # Keep your existing update_file_list if needed
@@ -3370,9 +3729,11 @@ class FileDownloadListWindow(QDialog):
                 "file_name": Path(local_path).name,
                 "created_at": api.get("created_on", ""),
                 "local_path": local_path,
+                "user_type": api.get("user_type", ""),
+                "transfer_duration": api.get("transfer_duration"),
                 "status": status,
             })
-
+        rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         self._sync_cards(rows)
 
 
@@ -3418,6 +3779,8 @@ class FileDownloadListWindow(QDialog):
             if c.progress_bar.isVisible() and 0 < c.progress_bar.value() < 100
         ]
         completed = [c for c in all_cards if c not in active]
+
+        completed.sort(key=lambda c: c.row_data.get("created_at", ""), reverse=True)
 
         for card in active:
             self.cards_layout.addWidget(card)
@@ -3475,6 +3838,9 @@ class FileDownloadListWindow(QDialog):
                     card.job_lbl.setText(f"<b>Job:</b> {api['job_name']}")
                 if api.get("thumbnail"):
                     card._load_thumbnail(api["thumbnail"])
+                if api.get("user_type"):
+                    card.user_type_lbl.setText(f"🎭 {api['user_type']}")
+                card.row_data["user_type"] = api.get("user_type", "")
 
             card.row_data["_meta_loaded"] = True
 
@@ -3537,7 +3903,8 @@ class FileDownloadListWindow(QDialog):
             folder_path = str(Path(file_path).parent)
             system = platform.system()
             if system == "Windows":
-                subprocess.run(["explorer", folder_path], check=True)
+                # subprocess.run(["explorer", folder_path], check=True)
+                subprocess.Popen(["explorer", folder_path])
             elif system == "Darwin":
                 subprocess.run(["open", folder_path], check=True)
             elif system == "Linux":
@@ -3755,7 +4122,8 @@ class FileUploadListWindow(QDialog):
         self.load_files()
 
         # Connect signals
-        watcher = FileWatcherWorker.get_instance(parent=self)
+        # watcher = FileWatcherWorker.get_instance(parent=self)
+        watcher = FileWatcherWorker.get_instance()
         watcher.upload_progress.connect(self.on_upload_progress, Qt.QueuedConnection)
         watcher.upload_status_detail.connect(self.on_upload_status_detail, Qt.QueuedConnection)
 
@@ -3792,9 +4160,11 @@ class FileUploadListWindow(QDialog):
                 "file_name": Path(local_path).name,
                 "created_at": api.get("created_on", ""),
                 "local_path": local_path,
+                "user_type": api.get("user_type", ""),
+                "transfer_duration": api.get("transfer_duration"),
                 "status": status,
             })
-
+        rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         self._sync_cards(rows)
 
     def _sync_cards(self, rows):
@@ -3894,6 +4264,9 @@ class FileUploadListWindow(QDialog):
                     card.job_lbl.setText(f"<b>Job:</b> {api['job_name']}")
                 if api.get("thumbnail"):
                     card._load_thumbnail(api["thumbnail"])
+                if api.get("user_type"):                                        
+                    card.user_type_lbl.setText(f"🎭 {api['user_type']}")
+                card.row_data["user_type"] = api.get("user_type", "")
 
             card.row_data["_meta_loaded"] = True
 
@@ -3952,7 +4325,8 @@ class FileUploadListWindow(QDialog):
             folder_path = str(Path(file_path).parent)
             system = platform.system()
             if system == "Windows":
-                subprocess.run(["explorer", folder_path], check=True)
+                # subprocess.run(["explorer", folder_path], check=True)
+                subprocess.Popen(["explorer", folder_path])
             elif system == "Darwin":
                 subprocess.run(["open", folder_path], check=True)
             elif system == "Linux":
@@ -5555,11 +5929,44 @@ class PremediaApp(QApplication):
             # ✅ FIX: Start the poll timer ONLY after thread has started.
             #         Use thread.started signal to guarantee worker is live before
             #         any invokeMethod calls happen.
+            # def on_thread_started():
+            #     logger.info("FileWatcherWorker thread is live — starting poll timer")
+            #     app_signals.append_log.emit("[App] FileWatcherWorker thread live, poll timer starting")
+
+            #     # ✅ FIX: Safe poll timer with None guard (see _safe_invoke_watcher)
+            #     if getattr(self, "poll_timer", None):
+            #         try:
+            #             self.poll_timer.stop()
+            #         except Exception:
+            #             pass
+
+            #     self.poll_timer = QTimer(self)
+            #     self.poll_timer.timeout.connect(self._safe_invoke_watcher)
+            #     self.poll_timer.start(3000)  # 3 seconds
+
+            # self.file_watcher_thread.started.connect(on_thread_started)
+
+            # # Start the thread — worker is already inside it via moveToThread
+            # self.file_watcher_thread.start()
+
+            # logger.info("FileWatcherWorker thread started successfully")
+            # app_signals.append_log.emit("[App] FileWatcherWorker thread started successfully")
+
+            # # Watchdog timer (runs on main thread, just checks memory — safe)
+            # if getattr(self, "watchdog_timer", None):
+            #     try:
+            #         self.watchdog_timer.stop()
+            #     except Exception:
+            #         pass
+            # self.watchdog_timer = QTimer(self)
+            # self.watchdog_timer.timeout.connect(self.check_memory_usage)
+            # self.watchdog_timer.start(60000)  # every 60 seconds
+
+            # self.schedule_daily_restart(3, 0)
             def on_thread_started():
                 logger.info("FileWatcherWorker thread is live — starting poll timer")
                 app_signals.append_log.emit("[App] FileWatcherWorker thread live, poll timer starting")
 
-                # ✅ FIX: Safe poll timer with None guard (see _safe_invoke_watcher)
                 if getattr(self, "poll_timer", None):
                     try:
                         self.poll_timer.stop()
@@ -5568,17 +5975,57 @@ class PremediaApp(QApplication):
 
                 self.poll_timer = QTimer(self)
                 self.poll_timer.timeout.connect(self._safe_invoke_watcher)
-                self.poll_timer.start(3000)  # 3 seconds
+                self.poll_timer.start(3000)
 
+                # Fire first scan immediately without waiting 3s
+                QTimer.singleShot(500, self._safe_invoke_watcher)
+
+                # ── Notification Manager ──────────────────────────────────────
+                def _find_best_anchor():
+                    for w in QApplication.topLevelWidgets():
+                        try:
+                            if w.isVisible() and w.width() > 200:
+                                return w
+                        except RuntimeError:
+                            continue
+                    return getattr(self, "log_window", None)
+
+                anchor = _find_best_anchor()
+                if anchor is not None:
+                    if getattr(self, "notif_manager", None):
+                        try:
+                            self.notif_manager.hide()
+                            self.notif_manager.deleteLater()
+                        except Exception:
+                            pass
+
+                    self.notif_manager = TransferNotificationManager()   # no anchor needed
+
+                    watcher = self.file_watcher
+                    watcher.download_progress.connect(
+                        self.notif_manager.on_download_progress, Qt.QueuedConnection
+                    )
+                    watcher.download_status_detail.connect(
+                        self.notif_manager.on_download_status_detail, Qt.QueuedConnection
+                    )
+                    watcher.upload_progress.connect(
+                        self.notif_manager.on_upload_progress, Qt.QueuedConnection
+                    )
+                    watcher.upload_status_detail.connect(
+                        self.notif_manager.on_upload_status_detail, Qt.QueuedConnection
+                    )
+                    logger.info("[App] TransferNotificationManager connected")
+                    app_signals.append_log.emit("[App] TransferNotificationManager connected")
+                # ─────────────────────────────────────────────────────────────
+
+            # Connect and start the thread
             self.file_watcher_thread.started.connect(on_thread_started)
-
-            # Start the thread — worker is already inside it via moveToThread
             self.file_watcher_thread.start()
 
             logger.info("FileWatcherWorker thread started successfully")
             app_signals.append_log.emit("[App] FileWatcherWorker thread started successfully")
 
-            # Watchdog timer (runs on main thread, just checks memory — safe)
+            # Watchdog timer
             if getattr(self, "watchdog_timer", None):
                 try:
                     self.watchdog_timer.stop()
@@ -5586,13 +6033,16 @@ class PremediaApp(QApplication):
                     pass
             self.watchdog_timer = QTimer(self)
             self.watchdog_timer.timeout.connect(self.check_memory_usage)
-            self.watchdog_timer.start(60000)  # every 60 seconds
+            self.watchdog_timer.start(60000)
 
             self.schedule_daily_restart(3, 0)
 
         except Exception as e:
             self.handle_error("FileWatcher", f"Failed to start FileWatcherWorker: {str(e)}")
 
+
+            
+        # ─────────────────────────────────────────────────────────────────
 
     def _safe_invoke_watcher(self):
         """
