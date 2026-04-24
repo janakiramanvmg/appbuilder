@@ -3852,15 +3852,49 @@ class FileDownloadListWindow(QDialog):
 
 
 
+
     def on_download_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
         if action_type != "download":
             return
 
-        # Find card by local_path or filename
         for card in self.card_index.values():
             if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
                 card.update_status(text)
+
+                # ── NEW: refresh metadata from cache when transfer completes ──
+                if "Completed" in text or "Failed" in text:
+                    spec_id = card.row_data.get("spec_id")
+                    if spec_id:
+                        cache = load_cache()
+                        meta = cache.get("downloaded_files_with_metadata", {}).get(spec_id)
+                        if meta:
+                            api = meta.get("api_response", {})
+                            fresh_row = {
+                                "spec_id": str(spec_id),
+                                "thumbnail": api.get("thumbnail"),
+                                "project_name": api.get("project_name", card.row_data.get("project_name", "Unknown")),
+                                "job_name": api.get("job_name", card.row_data.get("job_name", "Unknown")),
+                                "file_name": Path(file_path).name,
+                                "created_at": api.get("created_on", card.row_data.get("created_at", "")),
+                                "local_path": file_path,
+                                "user_type": api.get("user_type", card.row_data.get("user_type", "")),
+                                "transfer_duration": api.get("transfer_duration"),
+                                "status": "Download Completed" if "Completed" in text else "Download Failed",
+                            }
+                            card.update_row(fresh_row)
                 break
+
+
+
+    # def on_download_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
+    #     if action_type != "download":
+    #         return
+
+    #     # Find card by local_path or filename
+    #     for card in self.card_index.values():
+    #         if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
+    #             card.update_status(text)
+    #             break
 
     def filter_cards(self, text: str = None):
         if text is None:
@@ -4276,15 +4310,52 @@ class FileUploadListWindow(QDialog):
             self.cards_layout.insertWidget(0, card)
             card._promoted = True
 
+
+
+
+
     def on_upload_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
         if action_type != "upload":
             return
 
-        # Find card by local_path or filename
         for card in self.card_index.values():
             if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
                 card.update_status(text)
+
+                # ── NEW: refresh metadata from cache when transfer completes ──
+                if "Completed" in text or "Failed" in text:
+                    spec_id = card.row_data.get("spec_id")
+                    if spec_id:
+                        cache = load_cache()
+                        meta = cache.get("uploaded_files_with_metadata", {}).get(spec_id)
+                        if meta:
+                            api = meta.get("api_response", {})
+                            fresh_row = {
+                                "spec_id": str(spec_id),
+                                "thumbnail": api.get("thumbnail"),
+                                "project_name": api.get("project_name", card.row_data.get("project_name", "Unknown")),
+                                "job_name": api.get("job_name", card.row_data.get("job_name", "Unknown")),
+                                "file_name": Path(file_path).name,
+                                "created_at": api.get("created_on", card.row_data.get("created_at", "")),
+                                "local_path": file_path,
+                                "user_type": api.get("user_type", card.row_data.get("user_type", "")),
+                                "transfer_duration": api.get("transfer_duration"),
+                                "status": "Upload Completed" if "Completed" in text else "Upload Failed",
+                            }
+                            card.update_row(fresh_row)
                 break
+
+
+
+    # def on_upload_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
+    #     if action_type != "upload":
+    #         return
+
+    #     # Find card by local_path or filename
+    #     for card in self.card_index.values():
+    #         if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
+    #             card.update_status(text)
+    #             break
 
     def filter_cards(self, text: str = None):
         if text is None:
@@ -4627,36 +4698,66 @@ class LoginWorker(QObject):
             _rememberme = self.rememberme
             self.success.emit(user_info, access_token)
             # Save credentials on background thread — win32cred can be slow
+            # After successful login, around line 1847
+            # Save credentials on background thread — win32cred can be slow
+            # In LoginWorker.run(), replace the _save_keyring function:
+
             def _save_keyring():
                 try:
+                    system = platform.system()
                     if _rememberme:
-                        try:
-                            # Try win32cred first (Windows, no blocking)
-                            import win32cred as _wc
-                            _wc.CredWrite({
-                                'Type': _wc.CRED_TYPE_GENERIC,
-                                'TargetName': f"PremediaApp/{_username}",
-                                'CredentialBlob': _password,
-                                'Persist': _wc.CRED_PERSIST_LOCAL_MACHINE,
-                                'UserName': _username,
-                            }, 0)
-                        except ImportError:
-                            # Fallback — store in cache file only
-                            cache = load_cache()
-                            cache["saved_username"] = _username
-                            cache["saved_password"] = _password
-                            save_cache(cache)
+                        if system == "Windows":
+                            try:
+                                import win32cred as _wc
+                                # win32cred expects the password as a str (it encodes to UTF-16-LE internally)
+                                _wc.CredWrite({
+                                    'Type': _wc.CRED_TYPE_GENERIC,
+                                    'TargetName': f"PremediaApp/{_username}",
+                                    'CredentialBlob': _password,   # pass str, NOT bytes
+                                    'Persist': _wc.CRED_PERSIST_LOCAL_MACHINE,
+                                    'UserName': _username,
+                                }, 0)
+                                logger.info(f"Saved credentials to Windows Credential Manager for {_username}")
+                                # Also save to cache as backup
+                                c = load_cache()
+                                c["saved_username"] = _username
+                                c["saved_password"] = _password
+                                save_cache(c)
+                            except ImportError:
+                                c = load_cache()
+                                c["saved_username"] = _username
+                                c["saved_password"] = _password
+                                save_cache(c)
+                                logger.info(f"win32cred unavailable, saved credentials to cache for {_username}")
+                            except Exception as e:
+                                logger.warning(f"win32cred write failed ({e}), falling back to cache")
+                                c = load_cache()
+                                c["saved_username"] = _username
+                                c["saved_password"] = _password
+                                save_cache(c)
+                        else:
+                            c = load_cache()
+                            c["saved_username"] = _username
+                            c["saved_password"] = _password
+                            save_cache(c)
+                            logger.info(f"Saved credentials to cache for {_username} (platform: {system})")
                     else:
-                        try:
-                            import win32cred as _wc
-                            _wc.CredDelete(f"PremediaApp/{_username}", _wc.CRED_TYPE_GENERIC)
-                        except Exception:
-                            pass
+                        c = load_cache()
+                        c["saved_username"] = ""
+                        c["saved_password"] = ""
+                        save_cache(c)
+                        
+                        if system == "Windows":
+                            try:
+                                import win32cred as _wc
+                                _wc.CredDelete(f"PremediaApp/{_username}", _wc.CRED_TYPE_GENERIC)
+                                logger.info(f"Deleted Windows credentials for {_username}")
+                            except Exception:
+                                pass
+                                
                 except Exception as e:
                     logger.warning(f"_save_keyring failed: {e}")
-
             threading.Thread(target=_save_keyring, daemon=True).start()
-
             app_signals.append_log.emit(f"[Login] Successful login for user: {self.username}")
             if self.status_bar:
                 self.status_bar.showMessage(f"Successful login for {self.username}")
@@ -4835,22 +4936,35 @@ class LoginDialog(QDialog):
             #     app_signals.append_log.emit("[Login] No saved credentials found in cache")
             #     self.status_bar.showMessage("No saved credentials found")
             # REPLACE the saved credentials block in LoginDialog.__init__:
+            # In LoginDialog.__init__, replace the _load_keyring_credentials block:
+
             saved_username = cache.get("saved_username")
             if saved_username:
-                # Load on background thread — keyring blocks on Windows
                 def _load_keyring_credentials(uname):
                     try:
                         pwd = None
-                        try:
-                            import win32cred as _wc
-                            cred = _wc.CredRead(f"PremediaApp/{uname}", _wc.CRED_TYPE_GENERIC)
-                            pwd = cred['CredentialBlob']
-                        except ImportError:
-                            # win32cred not available — fall back to cache
-                            cache = load_cache()
-                            pwd = cache.get("saved_password") or None
-                        except Exception:
-                            pwd = None
+                        system = platform.system()
+                        
+                        if system == "Windows":
+                            try:
+                                import win32cred as _wc
+                                cred = _wc.CredRead(f"PremediaApp/{uname}", _wc.CRED_TYPE_GENERIC)
+                                raw = cred['CredentialBlob']
+                                # win32cred returns bytes on Python 3 — decode to str
+                                if isinstance(raw, bytes):
+                                    pwd = raw.decode('utf-16-le').rstrip('\x00')
+                                else:
+                                    pwd = raw
+                            except ImportError:
+                                current_cache = load_cache()
+                                pwd = current_cache.get("saved_password") or None
+                            except Exception:
+                                current_cache = load_cache()
+                                pwd = current_cache.get("saved_password") or None
+                        else:
+                            current_cache = load_cache()
+                            pwd = current_cache.get("saved_password") or None
+
                         if pwd:
                             QMetaObject.invokeMethod(
                                 self, "_apply_saved_credentials",
@@ -4864,7 +4978,7 @@ class LoginDialog(QDialog):
                                 Qt.QueuedConnection
                             )
                     except Exception as e:
-                        logger.warning(f"keyring read failed: {e}")
+                        logger.warning(f"_load_keyring_credentials failed: {e}")
                         QMetaObject.invokeMethod(
                             self, "_no_saved_credentials",
                             Qt.QueuedConnection
@@ -4878,7 +4992,6 @@ class LoginDialog(QDialog):
                 ).start()
             else:
                 self.status_bar.showMessage("No saved credentials found")
-
 
 
             app_signals.update_status.connect(self.status_bar.showMessage, Qt.QueuedConnection)
