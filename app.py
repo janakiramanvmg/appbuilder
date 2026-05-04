@@ -183,27 +183,27 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === Server and environment Pointing global variables ===
 
-BASE_DOMAIN = "https://app.vmgpremedia.com"
-NAS_IP = "192.168.1.145"
-NAS_PASSWORD = "D&*qmn012@12"
-NAS_PORT = 22
-NAS_SHARE = ""
-NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
-NAS_USERNAME = "irnasappprod"
-MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
-NAS_PATH = "softwaremedia/IR_prod/"
-APPVERSION = "1.2.4"
-
-# BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+# BASE_DOMAIN = "https://app.vmgpremedia.com"
 # NAS_IP = "192.168.1.145"
-# NAS_USERNAME = "irdev"
-# NAS_PASSWORD = "i#0f!L&+@s%^qc"
+# NAS_PASSWORD = "D&*qmn012@12"
 # NAS_PORT = 22
 # NAS_SHARE = ""
-# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
-# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
-# NAS_PATH = "softwaremedia/IR_uat/"
-# APPVERSION = "1.2.3(UAT)"
+# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
+# NAS_USERNAME = "irnasappprod"
+# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
+# NAS_PATH = "softwaremedia/IR_prod/"
+# APPVERSION = "1.2.4"
+
+BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+NAS_IP = "192.168.1.145"
+NAS_USERNAME = "irdev"
+NAS_PASSWORD = "i#0f!L&+@s%^qc"
+NAS_PORT = 22
+NAS_SHARE = ""
+NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
+MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
+NAS_PATH = "softwaremedia/IR_uat/"
+APPVERSION = "1.2.3(UAT)"
 
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -1756,6 +1756,10 @@ class FileWatcherWorker(QObject):
         print(".....................................................................")
         if not file_path:
             self.alert_notification.emit("ERROR (MD2)", "File does not exist on NAS")
+            self.alert_notification.emit(
+                "Download Error",
+                "The file path is missing or empty.\n\nThis file does not exist on the NAS server. Please contact your administrator."
+            )
             raise ValueError("Empty file_path in item")
             # show_alert_notification("ERROR (MD2)", "Please check Nas Connection.")
             # # QMessageBox.warning(None, "ERROR (MD2)", "Please check Nas Connection.")
@@ -1949,7 +1953,10 @@ class FileWatcherWorker(QObject):
             save_cache(cache, significant_change=True)
             update_download_upload_metadata(task_id, "failed")
             self.alert_notification.emit("Error (U1)", "Upload failed try again.")
-
+            self.alert_notification.emit(
+                "Upload Error",
+                f"File not found on disk:\n{src_path}\n\nPlease ensure the file exists before uploading."
+            )
             file_watcher.upload_progress.emit(spec_id, dest_path, filename, 0)
             file_watcher.upload_status_detail.emit(
                 dest_path, "Upload Failed", "upload", 0, True
@@ -2228,7 +2235,8 @@ class FileWatcherWorker(QObject):
     
     
     @Slot(str, str, str, str, bool, bool)
-    def perform_file_transfer(self,src_path: str,dest_path: str,action_type: str,item,is_nas_src: bool,is_nas_dest: bool):
+    # def perform_file_transfer(self,src_path: str,dest_path: str,action_type: str,item,is_nas_src: bool,is_nas_dest: bool):
+    def perform_file_transfer(self, src_path: str, dest_path: str, action_type: str, item, is_nas_src: bool, is_nas_dest: bool, is_final_attempt: bool = True):
     # def perform_file_transfer(self, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
 
         # ============================================================
@@ -2335,6 +2343,11 @@ class FileWatcherWorker(QObject):
                 if not os.path.exists(dest_path):
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Failed"
                     save_cache(cache, significant_change=True)
+                    if is_final_attempt:
+                        self.alert_notification.emit(
+                            "Download Error",
+                            f"Downloaded file was not found on disk:\n{dest_path}\n\nThe transfer may have been incomplete."
+                        )
                     raise FileNotFoundError(f"{status_prefix} file not found: {dest_path}")
 
                 cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
@@ -2375,6 +2388,11 @@ class FileWatcherWorker(QObject):
                 if not os.path.exists(src_path):
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Source Missing"
                     save_cache(cache, significant_change=True)
+                    if is_final_attempt:
+                        self.alert_notification.emit(
+                            "Upload Error",
+                            f"Source file not found on your computer:\n{src_path}\n\nPlease verify the file exists and try again."
+                        )
                     raise FileNotFoundError(f"Source file does not exist: {src_path}")
 
                 # Check if file is accessible
@@ -2697,11 +2715,14 @@ class FileWatcherWorker(QObject):
                     try:
                         result = future.result()
                         updates.append(result['update'])
+                        # ── Mark as processed regardless of success/failure ──
+                        # Without this, failed tasks are never added to processed_tasks
+                        # and the poll loop keeps re-picking them up every 3 seconds,
+                        # causing infinite retry loops and repeated popups.
+                        with self._lock:
+                            self.processed_tasks[result['task_key']] = time.time()
                         if result['success']:
                             completed_tasks += 1
-                            with self._lock:
-                                # self.processed_tasks.add(result['task_key'])
-                                self.processed_tasks[result['task_key']] = time.time()
                         else:
                             failed_tasks += 1
                     except Exception as e:
@@ -2743,6 +2764,7 @@ class FileWatcherWorker(QObject):
                 app_signals.append_log.emit(f"[API Scan] Initiating download: {file_name}")
                 app_signals.update_file_list.emit(local_path, f"{action_type} Queued", action_type, 0, not is_online)
                 for attempt in range(max_download_retries):
+                    is_final_attempt = (attempt == max_download_retries - 1)
                     try:
                         if not is_online:
                             with sftp_semaphore:  # Limit concurrent SFTP connections
@@ -2779,9 +2801,10 @@ class FileWatcherWorker(QObject):
                 app_signals.append_log.emit(f"[API Scan] Initiating upload: {file_name}")
                 app_signals.update_file_list.emit(local_path, f"{action_type} Queued", action_type, 0, not is_online)
                 for attempt in range(max_download_retries):
+                    is_final_attempt = (attempt == max_download_retries - 1)
                     try:
                         if not is_online:
-                            with sftp_semaphore:  # Limit concurrent SFTP connections
+                            with sftp_semaphore:
                                 client_name = item.get("client_name", "").strip().replace(" ", "_") or None
                                 project_name = item.get("project_name", item.get("name", "")).strip().replace(" ", "_") or None
                                 if not client_name or not project_name:
@@ -2798,7 +2821,8 @@ class FileWatcherWorker(QObject):
                                         client_name = client_name or "default_client"
                                         project_name = project_name or "default_project"
                                 original_nas_path = item.get('file_path', file_path)
-                                self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online)
+                                # self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online)
+                                self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online, is_final_attempt)
                                 self.log_update.emit(f"[API Scan] Upload successful: {local_path} to {original_nas_path}, task_id: {task_id}")
                                 return {
                                     'update': (local_path, "Upload Completed (Original)", action_type, 100, not is_online),
@@ -2806,7 +2830,8 @@ class FileWatcherWorker(QObject):
                                     'success': True
                                 }
                         else:
-                            self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online)
+                            # self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online)
+                            self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online, is_final_attempt)
                             self.log_update.emit(f"[API Scan] Upload successful: {local_path} to {file_path}, task_id: {task_id}")
                             return {
                                 'update': (local_path, "Upload Completed (Original)", action_type, 100, not is_online),
@@ -2849,12 +2874,26 @@ class FileWatcherWorker(QObject):
             self.log_update.emit(f"[API Scan] Connectivity check failed: {str(e)}")
             return False
 
-    def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
+    # def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
+    # def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=True):
+    #     task_id = str(item.get('id', ''))
+    #     original_filename = Path(src_path).name
+    #     update_download_upload_metadata(task_id, "in progress")
+    #     try:
+    #         self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest)
+    #         self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {original_filename}", dest_path, 100)
+    #         self.download_status_detail.emit(dest_path, f"{action_type} Completed (Task {task_id}): {original_filename}", action_type, 10, True)
+    #     except Exception as e:
+    #         logger.error(f"Progress error for {action_type} (Task {task_id}): {str(e)}")
+    #         self.log_update.emit(f"[App] Progress update: {action_type} Failed (Task {task_id}): {original_filename}")
+    #         raise
+
+    def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=True):
         task_id = str(item.get('id', ''))
         original_filename = Path(src_path).name
         update_download_upload_metadata(task_id, "in progress")
         try:
-            self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest)
+            self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=is_final_attempt)
             self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {original_filename}", dest_path, 100)
             self.download_status_detail.emit(dest_path, f"{action_type} Completed (Task {task_id}): {original_filename}", action_type, 10, True)
         except Exception as e:
