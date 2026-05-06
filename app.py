@@ -134,12 +134,12 @@ def _show_already_running_popup(app_name: str):
             app = QApplication(sys.argv)
             owns_app = True
 
-        QMessageBox.warning(
-            None,
-            f"{app_name} Already Running",
-            f"{app_name} is already running on your machine. Only one instance is allowed.",
-        )
-
+        # QMessageBox.warning(
+        #     None,
+        #     f"{app_name} Already Running",
+        #     f"{app_name} is already running on your machine. Only one instance is allowed.",
+        # )
+        show_alert(f"{app_name} Already Running", f"{app_name} is already running on your machine. Only one instance is allowed.", QMessageBox.Warning)
         if owns_app:
             app.quit()
 
@@ -390,6 +390,46 @@ class AppSignals(QObject):
     update_timer_status = Signal(str)
 
 app_signals = AppSignals()
+
+
+
+def show_alert(title: str, message: str, icon=QMessageBox.Warning, parent=None):
+    """
+    Shows a QMessageBox that always raises to the front and steals focus.
+    Safe to call from the main thread only (use Qt.QueuedConnection from workers).
+    """
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(message)
+    msg.setIcon(icon)
+
+    # ── FIX: WindowType and WindowState cannot be OR'd together in PySide6 ──
+    # Set window flags (WindowType flags only)
+    msg.setWindowFlags(
+        msg.windowFlags()
+        | Qt.WindowType.Window
+        | Qt.WindowType.WindowStaysOnTopHint
+    )
+    # Set window state separately (WindowState flags only)
+    msg.setWindowState(Qt.WindowState.WindowActive)
+
+    msg.setAttribute(Qt.WA_ShowWithoutActivating, False)
+
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            msg.show()
+            hwnd = int(msg.winId())
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+
+    msg.raise_()
+    msg.activateWindow()
+    msg.show()
+    msg.raise_()
+    msg.activateWindow()
+    return msg.exec()
 
 # === Custom Log Handler ===
 class LogWindowHandler(logging.Handler):
@@ -3966,7 +4006,8 @@ class FileDownloadListWindow(QDialog):
         except Exception as e:
             error_msg = f"Failed to open {Path(file_path).name} in Photoshop: {e}"
             logger.error(error_msg)
-            QMessageBox.critical(self, "Photoshop Error", error_msg)
+            # QMessageBox.critical(self, "Photoshop Error", error_msg)
+            show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
 
 
 
@@ -4005,12 +4046,13 @@ class FileDownloadListWindow(QDialog):
         mime.setUrls([QUrl.fromLocalFile(str(path))])
 
         clipboard.setMimeData(mime)
-
-        QMessageBox.information(
-            self,
-            "Copied",
-            f"File path copied to clipboard:\n{path}"
-        )
+        msg = f"File path copied to clipboard:\n{path}"
+        show_alert("Copied", msg, QMessageBox.Information)
+        # QMessageBox.information(
+        #     self,
+        #     "Copied",
+        #     f"File path copied to clipboard:\n{path}"
+        # )
 
 
 
@@ -4426,7 +4468,8 @@ class FileUploadListWindow(QDialog):
         except Exception as e:
             error_msg = f"Failed to open {Path(file_path).name} in Photoshop: {e}"
             logger.error(error_msg)
-            QMessageBox.critical(self, "Photoshop Error", error_msg)
+            # QMessageBox.critical(self, "Photoshop Error", error_msg)
+            show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
 
 
     def open_folder(self, file_path):
@@ -4464,12 +4507,13 @@ class FileUploadListWindow(QDialog):
         mime.setUrls([QUrl.fromLocalFile(str(path))])
 
         clipboard.setMimeData(mime)
-
-        QMessageBox.information(
-            self,
-            "Copied",
-            f"File path copied to clipboard:\n{path}"
-        )
+        msg = f"File path copied to clipboard:\n{path}"
+        show_alert("Copied", msg, QMessageBox.Information)
+        # QMessageBox.information(
+        #     self,
+        #     "Copied",
+        #     f"File path copied to clipboard:\n{path}"
+        # )
 
     def retry_file_process(self, row_data: dict):
         logger.info("========== UPLOAD RETRY START ==========")
@@ -4566,6 +4610,7 @@ class LoginWorker(QObject):
     user_in_use = Signal(str)
     proceed = None
     switch_login = False
+
     def __init__(self, username, password, remember_me, tray_icon, status_bar, switch_login):
         super().__init__()
         self.username = username
@@ -4574,64 +4619,71 @@ class LoginWorker(QObject):
         self.tray_icon = tray_icon
         self.status_bar = status_bar
         self.switch_login = switch_login
-        
+
+    def _set_status(self, message: str):
+        """
+        Safely update the status bar — guards against the widget being
+        deleted by Qt before the background thread finishes.
+        """
+        try:
+            if self.status_bar is not None:
+                self.status_bar.showMessage(message)
+        except RuntimeError:
+            # Qt already deleted the C++ object — silently ignore
+            pass
+        except Exception as e:
+            logger.debug(f"[LoginWorker] Status bar update skipped: {e}")
+
     def run(self):
         try:
             print("inside_logworker")
             logger.debug("Starting LoginWorker.run")
             app_signals.append_log.emit("[Login] Starting LoginWorker.run")
-            logger.debug(f"OAuth request data: {{\n"
-                        f"  grant_type: password,\n"
-                        f"  username: {self.username},\n"
-                        f"  password: {'*' * len(self.password)},\n"
-                        f"  client_id: hZBc4VyhUSQgZobyjdVH7ZPk4WRey2BIjqws_UxF5cM,\n"
-                        f"  client_secret: crazy-cloud,\n"
-                        f"  scope: pm_client\n}}")
-            
+
             if self.status_bar is None:
                 logger.warning("Status bar is None, cannot update message")
-            else:
-                self.status_bar.showMessage("Requesting access token...")
             
-            # Create a new session for thread safety
+            self._set_status("Requesting access token...")
+
             session = requests.Session()
             payload = {
-                    "grant_type": "password",
-                    "username": self.username,
-                    "password": self.password,
-                    "client_id": "hZBc4VyhUSQgZobyjdVH7ZPk4WRey2BIjqws_UxF5cM",
-                    "client_secret": "crazy-cloud",
-                    "scope": "pm_client",
-                    "details": USER_SYSTEM_INFO.get("details", {}),
-                    "machine_id": USER_SYSTEM_INFO.get("encoded_mac", ""),
-                    "mac_address": USER_SYSTEM_INFO.get("mac_address", ""),
-                    "add_mac": 1 if self.switch_login else 0
+                "grant_type": "password",
+                "username": self.username,
+                "password": self.password,
+                "client_id": "hZBc4VyhUSQgZobyjdVH7ZPk4WRey2BIjqws_UxF5cM",
+                "client_secret": "crazy-cloud",
+                "scope": "pm_client",
+                "details": USER_SYSTEM_INFO.get("details", {}),
+                "machine_id": USER_SYSTEM_INFO.get("encoded_mac", ""),
+                "mac_address": USER_SYSTEM_INFO.get("mac_address", ""),
+                "add_mac": 1 if self.switch_login else 0
+            }
 
-                }
-            print(f"payload of login {payload}")
             token_resp = session.post(
                 OAUTH_URL,
-                data = payload,
+                data=payload,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
-                verify=False,  # Enable SSL verification
+                verify=False,
                 timeout=60
             )
             self.switch_login = False
-            
-            logger.debug(f"Token response raw: {token_resp.text}")
+
             app_signals.api_call_status.emit(
                 OAUTH_URL,
                 f"Status: {token_resp.status_code}, Response: {token_resp.text}",
                 token_resp.status_code
             )
-            app_signals.append_log.emit(f"[Login] Token API response: {token_resp.status_code}, {token_resp.text}")
-            print(f"token_resp.status_code ======== {token_resp.text}")
+            app_signals.append_log.emit(
+                f"[Login] Token API response: {token_resp.status_code}, {token_resp.text}"
+            )
+
             if token_resp.status_code == 403:
                 self.user_in_use.emit("user_already_logged_in")
                 QThread.currentThread().quit()
                 return
-            if self.status_bar:
-                self.status_bar.showMessage(f"Token API response: {token_resp.status_code}")
+
+            self._set_status(f"Token API response: {token_resp.status_code}")
+
             if token_resp.status_code in (400, 401):
                 try:
                     error_details = token_resp.json()
@@ -4640,65 +4692,58 @@ class LoginWorker(QObject):
                     error_msg = f"Bad request: {token_resp.text}"
                 logger.error(f"Token API error: {error_msg}")
                 raise Exception(error_msg)
+
             token_resp.raise_for_status()
             token_data = token_resp.json()
-            logger.debug(f"Token response JSON: {token_data}")
             access_token = token_data.get("access_token")
             if not access_token:
                 raise Exception("No access token received in response")
 
-            if self.status_bar:
-                self.status_bar.showMessage("Fetching user info...")
+            self._set_status("Fetching user info...")
+
             info_resp = session.get(
                 f"{BASE_DOMAIN}/api/user/getinfo?emailid={self.username}",
                 headers={"Authorization": f"Bearer {access_token}"},
                 verify=False,
                 timeout=60
             )
-            logger.debug(f"User info response raw: {info_resp.text}")
             app_signals.api_call_status.emit(
                 f"{BASE_DOMAIN}/api/user/getinfo?emailid={self.username}",
                 f"Status: {info_resp.status_code}, Response: {info_resp.text}",
                 info_resp.status_code
             )
-            app_signals.append_log.emit(f"[Login] User info API response: {info_resp.status_code}, {info_resp.text}")
-            if self.status_bar:
-                self.status_bar.showMessage(f"User info API response: {info_resp.status_code}")
+            app_signals.append_log.emit(
+                f"[Login] User info API response: {info_resp.status_code}"
+            )
+            self._set_status(f"User info API response: {info_resp.status_code}")
             info_resp.raise_for_status()
             user_info = info_resp.json()
 
-            if self.status_bar:
-                self.status_bar.showMessage("Fetching user data...")
+            self._set_status("Fetching user data...")
+
             user_resp = session.get(
                 f"{BASE_DOMAIN}/jsonapi/user/user?filter[name]={self.username}",
                 headers={"Authorization": f"Bearer {access_token}"},
                 verify=False,
                 timeout=60
             )
-            logger.debug(f"User data response raw: {user_resp.text}")
             app_signals.api_call_status.emit(
                 f"{BASE_DOMAIN}/jsonapi/user/user?filter[name]={self.username}",
                 f"Status: {user_resp.status_code}, Response: {user_resp.text}",
                 user_resp.status_code
             )
-            app_signals.append_log.emit(f"[Login] User data API response: {user_resp.status_code}, {user_resp.text}")
-            if self.status_bar:
-                self.status_bar.showMessage(f"User data API response: {user_resp.status_code}")
+            app_signals.append_log.emit(
+                f"[Login] User data API response: {user_resp.status_code}"
+            )
+            self._set_status(f"User data API response: {user_resp.status_code}")
             user_resp.raise_for_status()
             user_data = user_resp.json()
 
-            cache = load_cache() or {}  # Handle case where load_cache returns None
-            logger.debug(f"Loaded cache: {cache}")
-            print(f"Loaded cacheaaa: {cache}")
+            cache = load_cache() or {}
             cached_user = cache.get("user")
             cached_token = cache.get("token")
 
-            # if not load_cache() or self.username != load_cache().get("user"):
-
-            # If new user or cache empty → save cache
             if not cached_user or self.username != cached_user:
-                logger.debug("New user login or cache empty. Saving full cache data.")
-       
                 cache_data = {
                     "token": access_token,
                     "user": self.username,
@@ -4715,31 +4760,17 @@ class LoginWorker(QObject):
                     "cached_at": datetime.now(ZoneInfo("UTC")).isoformat()
                 }
                 save_cache(cache_data)
-                logger.debug(f"Cache saved: {cache_data}")
                 app_signals.append_log.emit(f"[Login] Cache saved for user: {self.username}")
-                
+
             elif self.username == cached_user and not cached_token:
-                # Same user but token empty → only update token
-                logger.debug("Same user re-login detected. Updating token only.")
                 cache["token"] = access_token
                 cache["cached_at"] = datetime.now(ZoneInfo("UTC")).isoformat()
                 save_cache(cache)
-                logger.debug(f"[Login] Token updated for user: {self.username}")
 
-            # start_local_api()   # START local api server
-            
-            logger.debug("Emitting success signal")
-            
-             # Save/delete keyring credentials on background thread
-            # keyring blocks on Windows credential store
             _username = self.username
             _password = self.password
             _rememberme = self.rememberme
             self.success.emit(user_info, access_token)
-            # Save credentials on background thread — win32cred can be slow
-            # After successful login, around line 1847
-            # Save credentials on background thread — win32cred can be slow
-            # In LoginWorker.run(), replace the _save_keyring function:
 
             def _save_keyring():
                 try:
@@ -4748,16 +4779,13 @@ class LoginWorker(QObject):
                         if system == "Windows":
                             try:
                                 import win32cred as _wc
-                                # win32cred expects the password as a str (it encodes to UTF-16-LE internally)
                                 _wc.CredWrite({
                                     'Type': _wc.CRED_TYPE_GENERIC,
                                     'TargetName': f"PremediaApp/{_username}",
-                                    'CredentialBlob': _password,   # pass str, NOT bytes
+                                    'CredentialBlob': _password,
                                     'Persist': _wc.CRED_PERSIST_LOCAL_MACHINE,
                                     'UserName': _username,
                                 }, 0)
-                                logger.info(f"Saved credentials to Windows Credential Manager for {_username}")
-                                # Also save to cache as backup
                                 c = load_cache()
                                 c["saved_username"] = _username
                                 c["saved_password"] = _password
@@ -4767,7 +4795,6 @@ class LoginWorker(QObject):
                                 c["saved_username"] = _username
                                 c["saved_password"] = _password
                                 save_cache(c)
-                                logger.info(f"win32cred unavailable, saved credentials to cache for {_username}")
                             except Exception as e:
                                 logger.warning(f"win32cred write failed ({e}), falling back to cache")
                                 c = load_cache()
@@ -4779,64 +4806,54 @@ class LoginWorker(QObject):
                             c["saved_username"] = _username
                             c["saved_password"] = _password
                             save_cache(c)
-                            logger.info(f"Saved credentials to cache for {_username} (platform: {system})")
                     else:
                         c = load_cache()
                         c["saved_username"] = ""
                         c["saved_password"] = ""
                         save_cache(c)
-                        
                         if system == "Windows":
                             try:
                                 import win32cred as _wc
                                 _wc.CredDelete(f"PremediaApp/{_username}", _wc.CRED_TYPE_GENERIC)
-                                logger.info(f"Deleted Windows credentials for {_username}")
                             except Exception:
                                 pass
-                                
                 except Exception as e:
                     logger.warning(f"_save_keyring failed: {e}")
+
             threading.Thread(target=_save_keyring, daemon=True).start()
             app_signals.append_log.emit(f"[Login] Successful login for user: {self.username}")
-            if self.status_bar:
-                self.status_bar.showMessage(f"Successful login for {self.username}")
-
+            self._set_status(f"Successful login for {self.username}")
 
         except requests.exceptions.SSLError as e:
             error_msg = f"SSL error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            if self.status_bar:
-                self.status_bar.showMessage(error_msg)
+            self._set_status(error_msg)
         except requests.exceptions.ConnectionError as e:
             error_msg = f"Connection error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            if self.status_bar:
-                self.status_bar.showMessage(error_msg)
+            self._set_status(error_msg)
         except requests.exceptions.Timeout as e:
             error_msg = f"Request timed out: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            if self.status_bar:
-                self.status_bar.showMessage(error_msg)
+            self._set_status(error_msg)
         except requests.exceptions.RequestException as e:
             error_msg = f"Network error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            if self.status_bar:
-                self.status_bar.showMessage(error_msg)
+            self._set_status(error_msg)
         except Exception as e:
             error_msg = f"Login error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            if self.status_bar:
-                self.status_bar.showMessage(error_msg)
+            self._set_status(error_msg)
         
         
     
@@ -5053,7 +5070,8 @@ class LoginDialog(QDialog):
         except Exception as e:
             logger.error(f"Failed to initialize LoginDialog: {e}")
             app_signals.append_log.emit(f"[Login] Failed to initialize LoginDialog: {str(e)}")
-            QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
+            # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
+            show_alert("Initialization Error",  f"Failed to initialize login dialog: {str(e)}", QMessageBox.Critical)
             raise
 
 
@@ -5199,7 +5217,8 @@ class LoginDialog(QDialog):
             logger.error(f"Progress dialog error: {e}")
             app_signals.append_log.emit(f"[Login] Failed: Progress dialog error - {str(e)}")
             self.status_bar.showMessage(f"Progress error: {str(e)}")
-            QMessageBox.critical(self, "Progress Error", f"Progress dialog error: {str(e)}")
+            # QMessageBox.critical(self, "Progress Error", f"Progress dialog error: {str(e)}")
+            show_alert("Progress Error", f"Progress dialog error: {str(e)}", QMessageBox.Critical)
 
     def handle_login(self):
         try:
@@ -5210,7 +5229,8 @@ class LoginDialog(QDialog):
             app_signals.append_log.emit(f"[Login] Attempting login with username: {username}")
             self.status_bar.showMessage(f"Attempting login for {username}")
             if not username or not password:
-                QMessageBox.warning(self, "Input Error", "Please enter both username and password.")
+                show_alert("Input Error", "Please enter both username and password.", QMessageBox.Warning)
+                # QMessageBox.warning(self, "Input Error", "Please enter both username and password.")
                 app_signals.append_log.emit("[Login] Failed: Missing username or password")
                 self.status_bar.showMessage("Missing username or password")
                 return
@@ -5222,7 +5242,8 @@ class LoginDialog(QDialog):
             self.status_bar.showMessage(f"Login error: {str(e)}")
             if self.progress:
                 self.progress.close()
-            QMessageBox.critical(self, "Login Error", f"Login error: {str(e)}")
+            show_alert("Login Error",  f"Login error: {str(e)}", QMessageBox.Critical)
+            # QMessageBox.critical(self, "Login Error", f"Login error: {str(e)}")
 
     def perform_login(self, username, password):
         try:
@@ -5265,58 +5286,94 @@ class LoginDialog(QDialog):
                 # QApplication.processEvents()
                 logger.debug("Progress dialog closed in perform_login error handler")
                 app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
-            QMessageBox.critical(self, "Login Error", f"Login thread error: {str(e)}")
+            # QMessageBox.critical(self, "Login Error", f"Login thread error: {str(e)}")
+            show_alert("Title", "message", QMessageBox.Critical)
 
     def cleanup_progress(self):
         try:
             if self.progress and self.progress.isVisible():
                 self.progress.close()
-                # QApplication.processEvents()
                 logger.debug("Progress dialog closed in cleanup_progress")
                 app_signals.append_log.emit("[Login] Progress dialog closed in cleanup_progress")
+        except RuntimeError:
+            # Qt already deleted the C++ progress dialog object — ignore safely
+            self.progress = None
         except Exception as e:
             logger.error(f"Error in cleanup_progress: {str(e)}")
             app_signals.append_log.emit(f"[Login] Failed: Error in cleanup_progress - {str(e)}")
 
-    def validate_account_already_inuse(self):
-        print("in validate_account_already_inuse")
+    # def validate_account_already_inuse(self):
+    #     print("in validate_account_already_inuse")
 
+    #     msg_box = QMessageBox(self)
+    #     msg_box.setWindowTitle("Account In Use")
+    #     msg_box.setText("You are already logged in on another device.\nDo you want to switch this session here?")
+    #     msg_box.setIcon(QMessageBox.Warning)
+    #     switch_btn = msg_box.addButton("Switch Here", QMessageBox.AcceptRole)
+    #     cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+    #     # Apply red color only to Cancel button
+    #     switch_btn.setStyleSheet("""
+    #         QPushButton {
+    #             color: white;
+    #             border-radius: 4px;
+    #             padding: 2px;
+    #         }
+    #     """)
+    #     cancel_btn.setStyleSheet("""
+    #         QPushButton {
+    #             background-color: #d32f2f;   /* Red background */
+    #             color: white;
+    #             border-radius: 4px;
+    #             padding: 2px;
+    #         }
+    #     """)
+
+
+    #     # --- Block here until user clicks ---
+    #     msg_box.exec()
+
+    #     if msg_box.clickedButton() == switch_btn:
+    #         print("User chose to switch session.")
+    #         self.switch_login = True
+    #     else:
+    #         print("User cancelled.")
+    #         self.switch_login = False
+    #     print(f"self.LoginDialog_USERNAME={self.LoginDialog_USERNAME}===self.LoginDialog_PASSWORD{self.LoginDialog_PASSWORD}")
+    #     if self.switch_login:
+    #         self.perform_login(self.LoginDialog_USERNAME, self.LoginDialog_PASSWORD)
+
+
+
+    def validate_account_already_inuse(self):
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Account In Use")
-        msg_box.setText("You are already logged in on another device.\nDo you want to switch this session here?")
+        msg_box.setText(
+            "You are already logged in on another device.\n"
+            "Do you want to switch this session here?"
+        )
         msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setWindowFlags(
+        msg_box.windowFlags()
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        msg_box.setWindowState(Qt.WindowState.WindowActive)
+        msg_box.setAttribute(Qt.WA_ShowWithoutActivating, False)
+
         switch_btn = msg_box.addButton("Switch Here", QMessageBox.AcceptRole)
         cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
-        # Apply red color only to Cancel button
-        switch_btn.setStyleSheet("""
-            QPushButton {
-                color: white;
-                border-radius: 4px;
-                padding: 2px;
-            }
-        """)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #d32f2f;   /* Red background */
-                color: white;
-                border-radius: 4px;
-                padding: 2px;
-            }
-        """)
+        switch_btn.setStyleSheet("QPushButton { color: white; border-radius: 4px; padding: 2px; }")
+        cancel_btn.setStyleSheet(
+            "QPushButton { background-color: #d32f2f; color: white; border-radius: 4px; padding: 2px; }"
+        )
 
-
-        # --- Block here until user clicks ---
+        msg_box.raise_()
+        msg_box.activateWindow()
         msg_box.exec()
 
-        if msg_box.clickedButton() == switch_btn:
-            print("User chose to switch session.")
-            self.switch_login = True
-        else:
-            print("User cancelled.")
-            self.switch_login = False
-        print(f"self.LoginDialog_USERNAME={self.LoginDialog_USERNAME}===self.LoginDialog_PASSWORD{self.LoginDialog_PASSWORD}")
+        self.switch_login = (msg_box.clickedButton() == switch_btn)
         if self.switch_login:
             self.perform_login(self.LoginDialog_USERNAME, self.LoginDialog_PASSWORD)
+
  
     def on_login_success(self, user_info: dict, token: str):
         try:
@@ -5338,7 +5395,8 @@ class LoginDialog(QDialog):
                 app_signals.append_log.emit("[Login] Progress dialog closed")
             
             # Show success message
-            QMessageBox.information(self, "Login Success", f"Successfully logged in as {user_name}")
+            # QMessageBox.information(self, "Login Success", f"Successfully logged in as {user_name}")
+            show_alert("Login Success",  f"Successfully logged in as {user_name}", QMessageBox.Information)
             
             self.accept()
             app_signals.update_status.emit("Logged in successfully")
@@ -5354,7 +5412,8 @@ class LoginDialog(QDialog):
                 QApplication.processEvents()
                 logger.debug("Progress dialog closed in on_login_success error handler")
                 app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
-            QMessageBox.critical(self, "Login Error", f"Error handling login success: {str(e)}")
+            # QMessageBox.critical(self, "Login Error", f"Error handling login success: {str(e)}")
+            show_alert("Login Error", f"Error handling login success: {str(e)}", QMessageBox.Critical)
 
 
 
@@ -5443,7 +5502,8 @@ class LoginDialog(QDialog):
                 app_signals.append_log.emit("[Login] Progress dialog closed")
 
             # Show error popup
-            QMessageBox.critical(self, "Login Error", str(error))
+            # QMessageBox.critical(self, "Login Error", str(error))
+            show_alert("Login Error", str(error), QMessageBox.Critical)
 
             # Set logged-out state and re-show login
             if hasattr(self, 'app') and self.app:
@@ -5565,7 +5625,8 @@ class PremediaApp(QApplication):
                 logger.error(f"Failed to initialize LoginDialog: {e}")
                 app_signals.append_log.emit(f"[Init] Failed to initialize LoginDialog: {str(e)}")
                 self.login_dialog = None
-                QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
+                # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
+                show_alert("Initialization Error",  f"Failed to initialize login dialog: {str(e)}", QMessageBox.Critical)
                 self.cleanup_and_quit()
                 return
 
@@ -5678,7 +5739,8 @@ class PremediaApp(QApplication):
                 app_signals.update_status.emit(f"Initialization error: {str(e)}")
                 self.show_login()
             else:
-                QMessageBox.critical(None, "Initialization Error", f"Failed to initialize application: {str(e)}")
+                # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize application: {str(e)}")
+                show_alert("Initialization Error", f"Failed to initialize application: {str(e)}", QMessageBox.Critical)
             self.cleanup_and_quit()
 
     def event(self, event):
@@ -5734,8 +5796,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in handle_tray_icon_activated: {e}")
             app_signals.append_log.emit(f"[Tray] Failed: Error handling tray icon activation - {str(e)}")
             app_signals.update_status.emit(f"Error handling tray icon activation: {str(e)}")
-            QMessageBox.critical(None, "Tray Icon Error", f"Error handling tray icon activation: {str(e)}")
-
+            # QMessageBox.critical(None, "Tray Icon Error", f"Error handling tray icon activation: {str(e)}")
+            show_alert("Tray Icon Error", f"Error handling tray icon activation: {str(e)}", QMessageBox.Critical)
 
 
     def update_tray_menu(self):
@@ -5925,7 +5987,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error updating tray menu: {e}\n{traceback.format_exc()}")
             app_signals.append_log.emit(f"[Tray] Failed to update tray menu: {str(e)}")
             app_signals.update_status.emit(f"Failed to update tray menu: {str(e)}")
-            QMessageBox.critical(None, "Tray Menu Error", f"Failed to update tray menu: {str(e)}")
+            # QMessageBox.critical(None, "Tray Menu Error", f"Failed to update tray menu: {str(e)}")
+            show_alert("Tray Menu Error", f"Failed to update tray menu: {str(e)}", QMessageBox.Critical)
 
     def is_file_watcher_running(self):
         """Safely check if the file watcher thread is running."""
@@ -6328,14 +6391,16 @@ class PremediaApp(QApplication):
         app_signals.append_log.emit(f"[{context}] Failed: {str(error)}")
         app_signals.update_status.emit(f"{context} error: {str(error)}")
         if show_dialog:
-            QMessageBox.critical(None, f"{context} Error", f"{context} error: {str(error)}")
+            # QMessageBox.critical(None, f"{context} Error", f"{context} error: {str(error)}")
+            show_alert(f"{context} Error",  f"{context} error: {str(error)}", QMessageBox.Critical)
 
 
     def cleanup_and_quit(self):
         if IS_APP_ACTIVE_UPLOAD_DOWNLOAD:
             print(f"Skip log out: {IS_APP_ACTIVE_UPLOAD_DOWNLOAD}")
             # Show success message
-            QMessageBox.information(None, "Action blocked", "An upload/download is currently in progress. Try again once it is complete.")
+            # QMessageBox.information(None, "Action blocked", "An upload/download is currently in progress. Try again once it is complete.")
+            show_alert("Action blocked", "An upload/download is currently in progress. Try again once it is complete.", QMessageBox.Information)
             return
 
         try:
@@ -6416,11 +6481,16 @@ class PremediaApp(QApplication):
 
     def logout(self):
         if IS_APP_ACTIVE_UPLOAD_DOWNLOAD:
-            QMessageBox.information(
-                None,
+            # QMessageBox.information(
+            #     None,
+            #     "Action blocked",
+            #     "An upload/download is currently in progress. "
+            #     "Try again once it is complete."
+            # )
+            show_alert(
                 "Action blocked",
-                "An upload/download is currently in progress. "
-                "Try again once it is complete."
+                "An upload/download is currently in progress. Try again once it is complete.",
+                QMessageBox.Information
             )
             print(f"Skip log out: {IS_APP_ACTIVE_UPLOAD_DOWNLOAD}")
             return
@@ -6556,7 +6626,8 @@ class PremediaApp(QApplication):
                 logger.warning(f"Cache file does not exist: {cache_file}")
                 app_signals.append_log.emit(f"[Cache] Cache file does not exist: {cache_file}")
                 app_signals.update_status.emit("Cache file does not exist")
-                QMessageBox.warning(None, "Cache Error", f"Cache file does not exist:\n{cache_file}")
+                # QMessageBox.warning(None, "Cache Error", f"Cache file does not exist:\n{cache_file}")
+                show_alert("Cache Error", f"Cache file does not exist:\n{cache_file}", QMessageBox.Warning)
                 return
 
             # Verify file is readable
@@ -6564,7 +6635,8 @@ class PremediaApp(QApplication):
                 logger.warning(f"Cache file is not a valid file: {cache_file}")
                 app_signals.append_log.emit(f"[Cache] Invalid file: {cache_file}")
                 app_signals.update_status.emit("Invalid cache file")
-                QMessageBox.warning(None, "Cache Error", f"Invalid cache file:\n{cache_file}")
+                # QMessageBox.warning(None, "Cache Error", f"Invalid cache file:\n{cache_file}")
+                show_alert("Cache Error", f"Invalid cache file:\n{cache_file}", QMessageBox.Warning)
                 return
 
             # Read and beautify file content
@@ -6612,12 +6684,14 @@ class PremediaApp(QApplication):
             logger.error(f"IO error opening cache file: {e}\n{traceback.format_exc()}")
             app_signals.append_log.emit(f"[Cache] Failed: IO error - {str(e)}")
             app_signals.update_status.emit(f"Error opening cache file: {str(e)}")
-            QMessageBox.critical(None, "Cache Error", f"Failed to open cache file:\n{str(e)}")
+            # QMessageBox.critical(None, "Cache Error", f"Failed to open cache file:\n{str(e)}")
+            show_alert("Cache Error",f"Failed to open cache file:\n{str(e)}", QMessageBox.Critical)
         except Exception as e:
             logger.error(f"Unexpected error opening cache file: {e}\n{traceback.format_exc()}")
             app_signals.append_log.emit(f"[Cache] Failed: Unexpected error - {str(e)}")
             app_signals.update_status.emit("Unexpected error")
-            QMessageBox.critical(None, "Cache Error", f"Unexpected error opening cache file:\n{str(e)}")
+            # QMessageBox.critical(None, "Cache Error", f"Unexpected error opening cache file:\n{str(e)}")
+            show_alert("Cache Error",f"Unexpected error opening cache file:\n{str(e)}", QMessageBox.Critical)
 
     def clear_cache(self):
         global IS_APP_ACTIVE_UPLOAD_DOWNLOAD
@@ -6665,14 +6739,16 @@ class PremediaApp(QApplication):
                 app_signals.update_status.emit("Cache cleared successfully")
 
                 # ✅ Show success dialog
-                QMessageBox.information(None, "Cache Cleared", "Cache cleared successfully!")
+                # QMessageBox.information(None, "Cache Cleared", "Cache cleared successfully!")
+                show_alert("Cache Cleared", "Cache cleared successfully!", QMessageBox.Critical)
 
                 self.show_login()
             except Exception as e:
                 print(f"Error clearing cache: {e}")
                 app_signals.append_log.emit(f"[Cache] Failed: Error clearing cache - {str(e)}")
                 app_signals.update_status.emit(f"Error clearing cache: {str(e)}")
-                QMessageBox.critical(None, "Cache Error", f"Failed to clear cache: {str(e)}")
+                # QMessageBox.critical(None, "Cache Error", f"Failed to clear cache: {str(e)}")
+                show_alert("Cache Cleared", f"Failed to clear cache: {str(e)}", QMessageBox.Critical)
         else:
             app_signals.append_log.emit("[Cache] Cache clear cancelled by user")
             logger.info("Cache clear cancelled by user")
@@ -6756,7 +6832,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_login: {e}")
             app_signals.append_log.emit(f"[Login] Failed: Error opening login dialog - {str(e)}")
             app_signals.update_status.emit(f"Error opening login dialog: {str(e)}")
-            QMessageBox.critical(None, "Login Error", f"Failed to open login dialog: {str(e)}")
+            # QMessageBox.critical(None, "Login Error", f"Failed to open login dialog: {str(e)}")
+            show_alert("Login Error", f"Failed to open login dialog: {str(e)}", QMessageBox.Critical)
 
 
     def show_logs(self):
@@ -6775,7 +6852,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_logs: {e}")
             app_signals.append_log.emit(f"[Log] Failed: Error opening log window - {str(e)}")
             app_signals.update_status.emit(f"Error opening log window: {str(e)}")
-            QMessageBox.critical(self, "Log Error", f"Failed to open log window: {str(e)}")
+            # QMessageBox.critical(self, "Log Error", f"Failed to open log window: {str(e)}")
+            show_alert("Log Error", f"Failed to open log window: {str(e)}", QMessageBox.Critical)
 
     def show_downloaded_files(self):
         try:
@@ -6793,7 +6871,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_downloaded_files: {e}")
             app_signals.append_log.emit(f"[Files] Failed: Error showing downloaded files - {str(e)}")
             app_signals.update_status.emit(f"Error showing downloaded files: {str(e)}")
-            QMessageBox.critical(self, "Files Error", f"Failed to show downloaded files: {str(e)}")
+            # QMessageBox.critical(self, "Files Error", f"Failed to show downloaded files: {str(e)}")
+            show_alert("Files Error", f"Failed to show downloaded files: {str(e)}", QMessageBox.Critical)
 
     def show_uploaded_files(self):
         try:
@@ -6811,7 +6890,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_uploaded_files: {e}")
             app_signals.append_log.emit(f"[Files] Failed: Error showing uploaded files - {str(e)}")
             app_signals.update_status.emit(f"Error showing uploaded files: {str(e)}")
-            QMessageBox.critical(self, "Files Error", f"Failed to show uploaded files: {str(e)}")
+            # QMessageBox.critical(self, "Files Error", f"Failed to show uploaded files: {str(e)}")
+            show_alert("Files Error", f"Failed to show uploaded files: {str(e)}", QMessageBox.Critical)
 
     def convert_to_jpg_and_psd(self, src_path, dest_dir):
         try:
@@ -6833,7 +6913,8 @@ class PremediaApp(QApplication):
             logger.error(f"File conversion thread error: {e}")
             app_signals.append_log.emit(f"[Conversion] Failed: File conversion thread error - {str(e)}")
             app_signals.update_status.emit(f"File conversion thread error: {str(e)}")
-            QMessageBox.critical(self, "Conversion Error", f"File conversion thread error: {str(e)}")
+            # QMessageBox.critical(self, "Conversion Error", f"File conversion thread error: {str(e)}")
+            show_alert("Conversion Error", f"File conversion thread error: {str(e)}", QMessageBox.Critical)
 
     def on_conversion_finished(self, jpg_path, psd_path, basename):
         try:
@@ -6849,7 +6930,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in on_conversion_finished: {e}")
             app_signals.append_log.emit(f"[Conversion] Failed: Conversion error - {str(e)}")
             app_signals.update_status.emit(f"Conversion error: {str(e)}")
-            QMessageBox.critical(self, "Conversion Error", f"Conversion error: {str(e)}")
+            # QMessageBox.critical(self, "Conversion Error", f"Conversion error: {str(e)}")
+            show_alert("Conversion Error", f"Conversion error: {str(e)}", QMessageBox.Critical)
 
     def on_conversion_error(self, error, basename):
         try:
@@ -6860,7 +6942,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in on_conversion_error: {e}")
             app_signals.append_log.emit(f"[Conversion] Failed: Error handling conversion error - {str(e)}")
             app_signals.update_status.emit(f"Error handling conversion error: {str(e)}")
-            QMessageBox.critical(self, "Conversion Error", f"Error handling conversion error: {str(e)}")
+            # QMessageBox.critical(self, "Conversion Error", f"Error handling conversion error: {str(e)}")
+            show_alert("Conversion Error", f"Error handling conversion error: {str(e)}", QMessageBox.Critical)
 
     def open_with_photoshop(self, file_path):
         try:
@@ -6920,14 +7003,16 @@ class PremediaApp(QApplication):
                 logger.warning(error_msg)
                 app_signals.append_log.emit(f"[Photoshop] {error_msg}")
                 app_signals.update_status.emit(error_msg)
-                QMessageBox.critical(self, "Photoshop Error", error_msg)
+                # QMessageBox.critical(self, "Photoshop Error", error_msg)
+                show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
                 return
             if not Path(file_path).is_file():
                 error_msg = f"File not found: {file_path}"
                 logger.error(error_msg)
                 app_signals.append_log.emit(f"[Photoshop] {error_msg}")
                 app_signals.update_status.emit(error_msg)
-                QMessageBox.critical(self, "Photoshop Error", error_msg)
+                # QMessageBox.critical(self, "Photoshop Error", error_msg)
+                show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
                 return
             if system == "Darwin":
                 subprocess.run(["open", "-a", photoshop_path, file_path], check=True)
@@ -6941,7 +7026,8 @@ class PremediaApp(QApplication):
             logger.error(error_msg)
             app_signals.append_log.emit(f"[Photoshop] {error_msg}")
             app_signals.update_status.emit(error_msg)
-            QMessageBox.critical(self, "Photoshop Error", error_msg)
+            # QMessageBox.critical(self, "Photoshop Error", error_msg)
+            show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
 
     def update_progress(self, value: int):
         try:
@@ -6955,20 +7041,36 @@ class PremediaApp(QApplication):
             logger.error(f"Error in update_progress: {e}")
             app_signals.append_log.emit(f"[App] Error in update_progress: {str(e)}")
             
+    # @Slot(str, str)
+    # def _show_worker_alert(self, title: str, message: str):
+    #     """
+    #     Receives alert_notification signals from FileWatcherWorker (background thread)
+    #     and shows the dialog safely on the main thread via Qt.QueuedConnection.
+    #     """
+    #     QMessageBox.warning(None, title, message)
+
     @Slot(str, str)
     def _show_worker_alert(self, title: str, message: str):
-        """
-        Receives alert_notification signals from FileWatcherWorker (background thread)
-        and shows the dialog safely on the main thread via Qt.QueuedConnection.
-        """
-        QMessageBox.warning(None, title, message)
+        msg = QMessageBox(None)
+        msg.setWindowTitle(title)
+        msg.setText(message)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowFlags(
+            msg.windowFlags()
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        msg.setWindowState(Qt.WindowState.WindowActive)
+        msg.setAttribute(Qt.WA_ShowWithoutActivating, False)
+        msg.raise_()
+        msg.activateWindow()
+        msg.exec()
 
     def post_login_processes(self):
         """
         Called ONLY after a successful manual login from LoginDialog.
         NOT called during __init__ auto-login — start_file_watcher() handles that.
         """
-        global FILE_WATCHER_RUNNING
+        global FILE_WATCHER_RUNNING_show_worker_alert
         try:
             cache = load_cache()
             token = cache.get("token", "")
