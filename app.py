@@ -323,6 +323,7 @@ CACHE_FILE = get_cache_file_path()
 CACHE_DAYS = 10
 API_URL = f"{BASE_DOMAIN}/api/ir_production/get/projectList?business=image_retouching"
 DOWNLOAD_UPLOAD_API = f"{BASE_DOMAIN}/api/get_download_upload/submission"
+FILE_FORMAT_API = f"{BASE_DOMAIN}/api/file-formats"
 OAUTH_URL = f"{BASE_DOMAIN}/oauth/token"
 USER_VALIDATE_URL = f"{BASE_DOMAIN}/api/user/validate"
 API_URL_CREATE = f"{BASE_DOMAIN}/api/nas_create/creative"
@@ -1154,6 +1155,26 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
 
     return {"error": "Failed after retries"}
 
+def get_file_types_from_api(client_id):
+    api_url = f"{FILE_FORMAT_API}?uid={client_id}"
+    try:
+        cache = load_cache()
+        token = cache.get('token', '')
+        headers = {"Authorization": f"Bearer {token}"}
+        format_response = HTTP_SESSION.get(api_url, headers=headers, verify=False, timeout=60)
+        try:
+            response_data = format_response.json()
+            print(response_data)
+            # print(f"=============Priority extension=============={response_data}========")
+
+            if response_data:
+                return response_data
+            else: False
+        except:
+            False
+    except:
+        return False
+
 # ===================== image convertion logic =====================
 
 def sanitize_filename(filename):
@@ -1978,6 +1999,7 @@ class FileWatcherWorker(QObject):
     def _upload_to_nas(self, src_path, dest_path, item):
         task_id = item.get("id", "")
         spec_id = str(item.get("spec_id"))
+        # client_id = str(item.get("client_id"))
 
         metadata_key = "uploaded_files_with_metadata"
         cache = load_cache()
@@ -1987,8 +2009,37 @@ class FileWatcherWorker(QObject):
 
         src_path = Path(src_path)
         filename = src_path.name
+        # allowed_types = get_file_types_from_api(client_id)
+        # matched_file = None
+        # matched_ext = None
+        # first_prior = False
+        
+        # #for ext in allowed_types:
+        # for ind, ext in enumerate(allowed_types):
+        #     alt_path = src_path.with_suffix(f".{ext}")
 
-        if not src_path.exists():
+        #     if alt_path.exists():
+        #         first_prior = ind == 0
+        #         matched_file = alt_path
+        #         matched_ext = ext
+        #         break
+
+        # print("=============matched_file======================")
+        # print(matched_file)
+        # print(first_prior)
+        # print("=============matched_file======================")
+
+
+        # if matched_file:
+        #     print("========INTO Matched File=====matched_file======================")
+        #     src_path = matched_file
+        #     filename = src_path.name
+        #     if not first_prior:
+        #         #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
+        #         self.alert_notification.emit("File Format Alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}")            
+        # else:
+        if not src_path.exists(): 
+            print("========INTO File Not Found=====matched_file======================")
             cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
             save_cache(cache, significant_change=True)
             update_download_upload_metadata(task_id, "failed")
@@ -2002,9 +2053,18 @@ class FileWatcherWorker(QObject):
                 dest_path, "Upload Failed", "upload", 0, True
             )
             raise FileNotFoundError(f"Source file does not exist: {src_path}")
-
-        dest_path = item.get("file_path", dest_path)
-        dest_dir = os.path.dirname(dest_path)
+        
+        print("========Continue upload=====matched_file======================")
+        # dest_path = item.get("file_path", dest_path)
+        # if matched_ext:
+        #     dest_path = str(Path(dest_path).with_suffix(f".{matched_ext}"))
+        #dest_dir = os.path.dirname(dest_path)
+        dest_path = dest_path.replace("\\", "/")
+        dest_dir = os.path.dirname(dest_path).replace("\\", "/")
+        print("=============dest_dir======================")
+        print(dest_dir)
+        print(dest_path)
+        print("=============dest_dir======================")
 
         sock = None
         session = None
@@ -2446,8 +2506,49 @@ class FileWatcherWorker(QObject):
 
                 # Upload to NAS or HTTP
                 if is_nas_dest:
-                    self._upload_to_nas(src_path, dest_path, item)
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
+                    client_id = str(item.get("client_id"))
+                    allowed_types = get_file_types_from_api(client_id)
+                    matched_file = None
+                    matched_ext = None
+                    first_prior = False
+                    try:
+                        #for ext in allowed_types:
+                        for ind, ext in enumerate(allowed_types):
+                            # alt_path = src_path.with_suffix(f".{ext}")
+                            alt_path = Path(src_path).with_suffix(f".{ext}")
+
+                            if alt_path.exists():
+                                first_prior = ind == 0
+                                matched_file = alt_path
+                                matched_ext = ext
+                                break
+                        # print(f"=====matched_file================{matched_file}======")
+                        if matched_file:
+                            src_path = matched_file
+                            # filename = src_path.name
+                            if not first_prior:
+                                #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
+                                self.alert_notification.emit("File Format Alert", f"Prefered format: {allowed_types[0].upper()}, Currently uploading {matched_ext.upper()} file.")            
+                        else:
+                            self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
+                            cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
+                            save_cache(cache, significant_change=True)
+                            raise NotImplementedError("HTTP upload not implemented")
+
+                        dest_path = item.get("file_path", dest_path)
+                        if matched_ext:
+                            dest_path = str(Path(dest_path).with_suffix(f".{matched_ext}"))
+                        #dest_dir = os.path.dirname(dest_path)
+                        dest_path = dest_path.replace("\\", "/")
+
+                        self._upload_to_nas(src_path, dest_path, item)
+                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
+                    except Exception as e:
+                        self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
+                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
+                        save_cache(cache, significant_change=True)
+                        raise NotImplementedError("HTTP upload not implemented")
+
                 else:
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
                     save_cache(cache, significant_change=True)
@@ -2929,6 +3030,10 @@ class FileWatcherWorker(QObject):
     #         raise
 
     def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=True):
+        print("================item===================================")
+        print(item)
+        print("=================item=========================================")
+
         task_id = str(item.get('id', ''))
         original_filename = Path(src_path).name
         update_download_upload_metadata(task_id, "in progress")
