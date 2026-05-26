@@ -1155,8 +1155,8 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
 
     return {"error": "Failed after retries"}
 
-def get_file_types_from_api(client_id):
-    api_url = f"{FILE_FORMAT_API}?uid={client_id}"
+def get_file_types_from_api(job_id):
+    api_url = f"{FILE_FORMAT_API}?job_id={job_id}"
     try:
         cache = load_cache()
         token = cache.get('token', '')
@@ -2485,6 +2485,7 @@ class FileWatcherWorker(QObject):
             # Handle Upload / Replace
             # ------------------------------
             elif action_type.lower() in ("upload", "replace"):
+                # print(f"======into Upload-replace==========={src_path}====")
                 if not os.path.exists(src_path):
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Source Missing"
                     save_cache(cache, significant_change=True)
@@ -2506,8 +2507,8 @@ class FileWatcherWorker(QObject):
 
                 # Upload to NAS or HTTP
                 if is_nas_dest:
-                    client_id = str(item.get("client_id"))
-                    allowed_types = get_file_types_from_api(client_id)
+                    job_id = str(item.get("job_id"))
+                    allowed_types = get_file_types_from_api(job_id)
                     matched_file = None
                     matched_ext = None
                     first_prior = False
