@@ -1155,8 +1155,8 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
 
     return {"error": "Failed after retries"}
 
-def get_file_types_from_api(client_id):
-    api_url = f"{FILE_FORMAT_API}?uid={client_id}"
+def get_file_types_from_api(job_id):
+    api_url = f"{FILE_FORMAT_API}?job_id={job_id}"
     try:
         cache = load_cache()
         token = cache.get('token', '')
@@ -1173,6 +1173,7 @@ def get_file_types_from_api(client_id):
         except:
             False
     except:
+        print(f"=============API GET FORMAT FAILS=============={response_data}========")
         return False
 
 # ===================== image convertion logic =====================
@@ -2485,29 +2486,11 @@ class FileWatcherWorker(QObject):
             # Handle Upload / Replace
             # ------------------------------
             elif action_type.lower() in ("upload", "replace"):
-                if not os.path.exists(src_path):
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Source Missing"
-                    save_cache(cache, significant_change=True)
-                    if is_final_attempt:
-                        self.alert_notification.emit(
-                            "Upload Error",
-                            "Completed files are not available. Please upload them manually."
-                        )
-                    raise FileNotFoundError(f"Source file does not exist: {src_path}")
-
-                # Check if file is accessible
-                try:
-                    with open(src_path, 'rb') as f:
-                        f.read(1)
-                except (PermissionError, IOError):
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} File In Use"
-                    save_cache(cache, significant_change=True)
-                    raise RuntimeError(f"File {src_path} is currently in use by another application.")
-
                 # Upload to NAS or HTTP
+                # print(f"======into Upload-replace==========={src_path}====")
                 if is_nas_dest:
-                    client_id = str(item.get("client_id"))
-                    allowed_types = get_file_types_from_api(client_id)
+                    job_id = str(item.get("job_id"))
+                    allowed_types = get_file_types_from_api(job_id)
                     matched_file = None
                     matched_ext = None
                     first_prior = False
@@ -2544,7 +2527,7 @@ class FileWatcherWorker(QObject):
                         self._upload_to_nas(src_path, dest_path, item)
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
                     except Exception as e:
-                        self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
+                        # self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
                         save_cache(cache, significant_change=True)
                         raise NotImplementedError("HTTP upload not implemented")
@@ -2553,6 +2536,27 @@ class FileWatcherWorker(QObject):
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
                     save_cache(cache, significant_change=True)
                     raise NotImplementedError("HTTP upload not implemented")
+                
+                if not os.path.exists(src_path):
+                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Source Missing"
+                    save_cache(cache, significant_change=True)
+                    if is_final_attempt:
+                        self.alert_notification.emit(
+                            "Upload Error",
+                            "Completed files are not available. Please upload them manually."
+                        )
+                    raise FileNotFoundError(f"Source file does not exist: {src_path}")
+
+                # Check if file is accessible
+                try:
+                    with open(src_path, 'rb') as f:
+                        f.read(1)
+                except (PermissionError, IOError):
+                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} File In Use"
+                    save_cache(cache, significant_change=True)
+                    raise RuntimeError(f"File {src_path} is currently in use by another application.")
+
+                
 
                 save_cache(cache, significant_change=True)
                 update_download_upload_metadata(task_id, "completed")
