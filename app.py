@@ -2513,7 +2513,7 @@ class FileWatcherWorker(QObject):
                                 #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
                                 self.alert_notification.emit("File Format Alert", f"Prefered format: {allowed_types[0].upper()}, Currently uploading {matched_ext.upper()} file.")            
                         else:
-                            self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
+                            self.alert_notification.emit("ERROR", f"1No completed file found in target folder. upload the file manually.")            
                             cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
                             save_cache(cache, significant_change=True)
                             raise NotImplementedError("HTTP upload not implemented")
@@ -2527,7 +2527,7 @@ class FileWatcherWorker(QObject):
                         self._upload_to_nas(src_path, dest_path, item)
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
                     except Exception as e:
-                        # self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
+                        self.alert_notification.emit("ERROR", f"2No completed file found in target folder. upload the file manually.")            
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
                         save_cache(cache, significant_change=True)
                         raise NotImplementedError("HTTP upload not implemented")
