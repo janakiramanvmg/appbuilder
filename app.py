@@ -183,27 +183,27 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === Server and environment Pointing global variables ===
 
-# BASE_DOMAIN = "https://app.vmgpremedia.com"
-# NAS_IP = "192.168.1.145"
-# NAS_PASSWORD = "D&*qmn012@12"
-# NAS_PORT = 22
-# NAS_SHARE = ""
-# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_USERNAME = "irnasappprod"
-# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_PATH = "softwaremedia/IR_prod/"
-# APPVERSION = "1.2.5"
-
-BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+BASE_DOMAIN = "https://app.vmgpremedia.com"
 NAS_IP = "192.168.1.145"
-NAS_USERNAME = "irdev"
-NAS_PASSWORD = "i#0f!L&+@s%^qc"
+NAS_PASSWORD = "D&*qmn012@12"
 NAS_PORT = 22
 NAS_SHARE = ""
-NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
-MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
-NAS_PATH = "softwaremedia/IR_uat/"
-APPVERSION = "1.2.5(UAT)"
+NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
+NAS_USERNAME = "irnasappprod"
+MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
+NAS_PATH = "softwaremedia/IR_prod/"
+APPVERSION = "1.2.6"
+
+# BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+# NAS_IP = "192.168.1.145"
+# NAS_USERNAME = "irdev"
+# NAS_PASSWORD = "i#0f!L&+@s%^qc"
+# NAS_PORT = 22
+# NAS_SHARE = ""
+# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
+# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
+# NAS_PATH = "softwaremedia/IR_uat/"
+# APPVERSION = "1.2.6(UAT)"
 
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -2513,7 +2513,8 @@ class FileWatcherWorker(QObject):
                                 #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
                                 self.alert_notification.emit("File Format Alert", f"Prefered format: {allowed_types[0].upper()}, Currently uploading {matched_ext.upper()} file.")            
                         else:
-                            self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
+                            if is_final_attempt:
+                                self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
                             cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
                             save_cache(cache, significant_change=True)
                             raise NotImplementedError("HTTP upload not implemented")
@@ -2527,7 +2528,7 @@ class FileWatcherWorker(QObject):
                         self._upload_to_nas(src_path, dest_path, item)
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
                     except Exception as e:
-                        # self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
+                        # self.alert_notification.emit("ERROR", f"2No completed file found in target folder. upload the file manually.")            
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
                         save_cache(cache, significant_change=True)
                         raise NotImplementedError("HTTP upload not implemented")
