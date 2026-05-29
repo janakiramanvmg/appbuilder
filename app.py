@@ -170,6 +170,7 @@ except ImportError as e:
     logging.error(f"Failed to import traceback module: {e}")
     traceback = None  # Fallback to None if import fails
 
+
 # At the top of the file, ensure all imports are explicit
 try:
     from PIL import Image
