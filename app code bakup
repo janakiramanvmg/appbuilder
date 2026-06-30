@@ -9,10 +9,10 @@ from updater_client import check_for_update
   # your current version
 
 from PySide6.QtGui import QIcon, QTextCursor, QAction, QCursor, QFont,QPixmap, QDesktopServices
-from PySide6.QtCore import QRunnable, QThreadPool, QEvent, QSize, QThread, QTimer, Qt, QObject, Signal, QMetaObject, Slot, QLockFile, QDir, QEventLoop, QUrl, Q_ARG, QMimeData, QPropertyAnimation, QEvent
+from PySide6.QtCore import QRunnable, QThreadPool, QEvent, QSize, QThread, QTimer, Qt, QObject, Signal, QMetaObject, Slot, QLockFile, QDir, QEventLoop, QUrl, Q_ARG, QMimeData
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkAccessManager, QNetworkRequest
 from login import Ui_Dialog
-from PySide6.QtWidgets import QLineEdit, QGraphicsOpacityEffect
+from PySide6.QtWidgets import QLineEdit
 
 import sys
 import logging
@@ -134,12 +134,12 @@ def _show_already_running_popup(app_name: str):
             app = QApplication(sys.argv)
             owns_app = True
 
-        # QMessageBox.warning(
-        #     None,
-        #     f"{app_name} Already Running",
-        #     f"{app_name} is already running on your machine. Only one instance is allowed.",
-        # )
-        show_alert(f"{app_name} Already Running", f"{app_name} is already running on your machine. Only one instance is allowed.", QMessageBox.Warning)
+        QMessageBox.warning(
+            None,
+            f"{app_name} Already Running",
+            f"{app_name} is already running on your machine. Only one instance is allowed.",
+        )
+
         if owns_app:
             app.quit()
 
@@ -170,7 +170,6 @@ except ImportError as e:
     logging.error(f"Failed to import traceback module: {e}")
     traceback = None  # Fallback to None if import fails
 
-
 # At the top of the file, ensure all imports are explicit
 try:
     from PIL import Image
@@ -184,27 +183,27 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === Server and environment Pointing global variables ===
 
-# BASE_DOMAIN = "https://app.vmgpremedia.com"
-# NAS_IP = "192.168.1.145"
-# NAS_PASSWORD = "D&*qmn012@12"
-# NAS_PORT = 22
-# NAS_SHARE = ""
-# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_USERNAME = "irnasappprod"
-# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_PATH = "softwaremedia/IR_prod/"
-# APPVERSION = "1.2.6"
-
-BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+BASE_DOMAIN = "https://app.vmgpremedia.com"
 NAS_IP = "192.168.1.145"
-NAS_USERNAME = "irdev"
-NAS_PASSWORD = "i#0f!L&+@s%^qc"
+NAS_PASSWORD = "D&*qmn012@12"
 NAS_PORT = 22
 NAS_SHARE = ""
-NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
-MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
-NAS_PATH = "softwaremedia/IR_uat/"
-APPVERSION = "1.2.6(UAT)"
+NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
+NAS_USERNAME = "irnasappprod"
+MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
+NAS_PATH = "softwaremedia/IR_prod/"
+APPVERSION = "1.2.2"
+
+# BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+# NAS_IP = "192.168.1.145"
+# NAS_USERNAME = "irdev"
+# NAS_PASSWORD = "i#0f!L&+@s%^qc"
+# NAS_PORT = 22
+# NAS_SHARE = ""
+# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
+# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
+# NAS_PATH = "softwaremedia/IR_uat/"
+# APPVERSION = "1.1.46(UAT)"
 
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -324,7 +323,6 @@ CACHE_FILE = get_cache_file_path()
 CACHE_DAYS = 10
 API_URL = f"{BASE_DOMAIN}/api/ir_production/get/projectList?business=image_retouching"
 DOWNLOAD_UPLOAD_API = f"{BASE_DOMAIN}/api/get_download_upload/submission"
-FILE_FORMAT_API = f"{BASE_DOMAIN}/api/file-formats"
 OAUTH_URL = f"{BASE_DOMAIN}/oauth/token"
 USER_VALIDATE_URL = f"{BASE_DOMAIN}/api/user/validate"
 API_URL_CREATE = f"{BASE_DOMAIN}/api/nas_create/creative"
@@ -392,46 +390,6 @@ class AppSignals(QObject):
     update_timer_status = Signal(str)
 
 app_signals = AppSignals()
-
-
-
-def show_alert(title: str, message: str, icon=QMessageBox.Warning, parent=None):
-    """
-    Shows a QMessageBox that always raises to the front and steals focus.
-    Safe to call from the main thread only (use Qt.QueuedConnection from workers).
-    """
-    msg = QMessageBox(parent)
-    msg.setWindowTitle(title)
-    msg.setText(message)
-    msg.setIcon(icon)
-
-    # ── FIX: WindowType and WindowState cannot be OR'd together in PySide6 ──
-    # Set window flags (WindowType flags only)
-    msg.setWindowFlags(
-        msg.windowFlags()
-        | Qt.WindowType.Window
-        | Qt.WindowType.WindowStaysOnTopHint
-    )
-    # Set window state separately (WindowState flags only)
-    msg.setWindowState(Qt.WindowState.WindowActive)
-
-    msg.setAttribute(Qt.WA_ShowWithoutActivating, False)
-
-    if platform.system() == "Windows":
-        try:
-            import ctypes
-            msg.show()
-            hwnd = int(msg.winId())
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
-        except Exception:
-            pass
-
-    msg.raise_()
-    msg.activateWindow()
-    msg.show()
-    msg.raise_()
-    msg.activateWindow()
-    return msg.exec()
 
 # === Custom Log Handler ===
 class LogWindowHandler(logging.Handler):
@@ -1005,21 +963,6 @@ MAX_RETRIES = 10
 RETRY_BACKOFF = 2  # seconds
 TIMEOUT = 1000  # seconds
 
-import socket
-import time
-
-def wait_for_vpn():
-
-    while True:
-
-        try:
-            socket.create_connection(("8.8.8.8",53),3)
-            print("VPN Reconnected")
-            return
-
-        except:
-            print("Waiting for VPN...")
-            time.sleep(5)
 
 def call_api(api_url, payload, local_file_path=None):
     logger.info("+++++++++++++++++++++++++++++++ Posting operator upload ++++++++++++++++++++++++++++++")
@@ -1170,27 +1113,6 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
             time.sleep(delay)
 
     return {"error": "Failed after retries"}
-
-def get_file_types_from_api(job_id):
-    api_url = f"{FILE_FORMAT_API}?job_id={job_id}"
-    try:
-        cache = load_cache()
-        token = cache.get('token', '')
-        headers = {"Authorization": f"Bearer {token}"}
-        format_response = HTTP_SESSION.get(api_url, headers=headers, verify=False, timeout=60)
-        try:
-            response_data = format_response.json()
-            print(response_data)
-            # print(f"=============Priority extension=============={response_data}========")
-
-            if response_data:
-                return response_data
-            else: False
-        except:
-            False
-    except:
-        print(f"=============API GET FORMAT FAILS=============={response_data}========")
-        return False
 
 # ===================== image convertion logic =====================
 
@@ -1834,10 +1756,6 @@ class FileWatcherWorker(QObject):
         print(".....................................................................")
         if not file_path:
             self.alert_notification.emit("ERROR (MD2)", "File does not exist on NAS")
-            self.alert_notification.emit(
-                "Download Error",
-                "The file path is missing or empty.\n\nThis file does not exist on the NAS server. Please contact your administrator."
-            )
             raise ValueError("Empty file_path in item")
             # show_alert_notification("ERROR (MD2)", "Please check Nas Connection.")
             # # QMessageBox.warning(None, "ERROR (MD2)", "Please check Nas Connection.")
@@ -2016,7 +1934,6 @@ class FileWatcherWorker(QObject):
     def _upload_to_nas(self, src_path, dest_path, item):
         task_id = item.get("id", "")
         spec_id = str(item.get("spec_id"))
-        # client_id = str(item.get("client_id"))
 
         metadata_key = "uploaded_files_with_metadata"
         cache = load_cache()
@@ -2026,62 +1943,21 @@ class FileWatcherWorker(QObject):
 
         src_path = Path(src_path)
         filename = src_path.name
-        # allowed_types = get_file_types_from_api(client_id)
-        # matched_file = None
-        # matched_ext = None
-        # first_prior = False
-        
-        # #for ext in allowed_types:
-        # for ind, ext in enumerate(allowed_types):
-        #     alt_path = src_path.with_suffix(f".{ext}")
 
-        #     if alt_path.exists():
-        #         first_prior = ind == 0
-        #         matched_file = alt_path
-        #         matched_ext = ext
-        #         break
-
-        # print("=============matched_file======================")
-        # print(matched_file)
-        # print(first_prior)
-        # print("=============matched_file======================")
-
-
-        # if matched_file:
-        #     print("========INTO Matched File=====matched_file======================")
-        #     src_path = matched_file
-        #     filename = src_path.name
-        #     if not first_prior:
-        #         #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
-        #         self.alert_notification.emit("File Format Alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}")            
-        # else:
-        if not src_path.exists(): 
-            print("========INTO File Not Found=====matched_file======================")
+        if not src_path.exists():
             cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
             save_cache(cache, significant_change=True)
             update_download_upload_metadata(task_id, "failed")
             self.alert_notification.emit("Error (U1)", "Upload failed try again.")
-            self.alert_notification.emit(
-                "Upload Error",
-                f"File not found on disk:\n{src_path}\n\nPlease ensure the file exists before uploading."
-            )
+
             file_watcher.upload_progress.emit(spec_id, dest_path, filename, 0)
             file_watcher.upload_status_detail.emit(
                 dest_path, "Upload Failed", "upload", 0, True
             )
             raise FileNotFoundError(f"Source file does not exist: {src_path}")
-        
-        print("========Continue upload=====matched_file======================")
-        # dest_path = item.get("file_path", dest_path)
-        # if matched_ext:
-        #     dest_path = str(Path(dest_path).with_suffix(f".{matched_ext}"))
-        #dest_dir = os.path.dirname(dest_path)
-        dest_path = dest_path.replace("\\", "/")
-        dest_dir = os.path.dirname(dest_path).replace("\\", "/")
-        print("=============dest_dir======================")
-        print(dest_dir)
-        print(dest_path)
-        print("=============dest_dir======================")
+
+        dest_path = item.get("file_path", dest_path)
+        dest_dir = os.path.dirname(dest_path)
 
         sock = None
         session = None
@@ -2136,39 +2012,12 @@ class FileWatcherWorker(QObject):
             try:
                 remote_file = sftp.open(dest_path, flags, 0o644)
                 try:
-                    # while True:
-                    #     data = local_file.read(chunk_size)
-                    #     if not data:
-                    #         break
-
-                    #     remote_file.write(data)
-                    #     transferred += len(data)
                     while True:
-
                         data = local_file.read(chunk_size)
-
                         if not data:
                             break
 
-                        success = False
-
-                        while not success:
-
-                            try:
-
-                                remote_file.write(data)
-
-                                success = True
-
-                            except Exception as e:
-
-                                print("VPN disconnected :", e)
-
-                                wait_for_vpn()
-
-                                raise Exception("Reconnect upload")
-                                
-
+                        remote_file.write(data)
                         transferred += len(data)
 
                         # ---- Throttling ----
@@ -2379,8 +2228,7 @@ class FileWatcherWorker(QObject):
     
     
     @Slot(str, str, str, str, bool, bool)
-    # def perform_file_transfer(self,src_path: str,dest_path: str,action_type: str,item,is_nas_src: bool,is_nas_dest: bool):
-    def perform_file_transfer(self, src_path: str, dest_path: str, action_type: str, item, is_nas_src: bool, is_nas_dest: bool, is_final_attempt: bool = True):
+    def perform_file_transfer(self,src_path: str,dest_path: str,action_type: str,item,is_nas_src: bool,is_nas_dest: bool):
     # def perform_file_transfer(self, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
 
         # ============================================================
@@ -2487,11 +2335,6 @@ class FileWatcherWorker(QObject):
                 if not os.path.exists(dest_path):
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Failed"
                     save_cache(cache, significant_change=True)
-                    if is_final_attempt:
-                        self.alert_notification.emit(
-                            "Download Error",
-                            f"Downloaded file was not found on disk:\n{dest_path}\n\nThe transfer may have been incomplete."
-                        )
                     raise FileNotFoundError(f"{status_prefix} file not found: {dest_path}")
 
                 cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
@@ -2529,66 +2372,9 @@ class FileWatcherWorker(QObject):
             # Handle Upload / Replace
             # ------------------------------
             elif action_type.lower() in ("upload", "replace"):
-                # Upload to NAS or HTTP
-                # print(f"======into Upload-replace==========={src_path}====")
-                if is_nas_dest:
-                    job_id = str(item.get("job_id"))
-                    allowed_types = get_file_types_from_api(job_id)
-                    matched_file = None
-                    matched_ext = None
-                    first_prior = False
-                    try:
-                        #for ext in allowed_types:
-                        for ind, ext in enumerate(allowed_types):
-                            # alt_path = src_path.with_suffix(f".{ext}")
-                            alt_path = Path(src_path).with_suffix(f".{ext}")
-
-                            if alt_path.exists():
-                                first_prior = ind == 0
-                                matched_file = alt_path
-                                matched_ext = ext
-                                break
-                        # print(f"=====matched_file================{matched_file}======")
-                        if matched_file:
-                            src_path = matched_file
-                            # filename = src_path.name
-                            if not first_prior:
-                                #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
-                                self.alert_notification.emit("File Format Alert", f"Prefered format: {allowed_types[0].upper()}, Currently uploading {matched_ext.upper()} file.")            
-                        else:
-                            if is_final_attempt:
-                                self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
-                            cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
-                            save_cache(cache, significant_change=True)
-                            raise NotImplementedError("HTTP upload not implemented")
-
-                        dest_path = item.get("file_path", dest_path)
-                        if matched_ext:
-                            dest_path = str(Path(dest_path).with_suffix(f".{matched_ext}"))
-                        #dest_dir = os.path.dirname(dest_path)
-                        dest_path = dest_path.replace("\\", "/")
-
-                        self._upload_to_nas(src_path, dest_path, item)
-                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
-                    except Exception as e:
-                        # self.alert_notification.emit("ERROR", f"2No completed file found in target folder. upload the file manually.")            
-                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
-                        save_cache(cache, significant_change=True)
-                        raise NotImplementedError("HTTP upload not implemented")
-
-                else:
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
-                    save_cache(cache, significant_change=True)
-                    raise NotImplementedError("HTTP upload not implemented")
-                
                 if not os.path.exists(src_path):
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Source Missing"
                     save_cache(cache, significant_change=True)
-                    if is_final_attempt:
-                        self.alert_notification.emit(
-                            "Upload Error",
-                            "Completed files are not available. Please upload them manually."
-                        )
                     raise FileNotFoundError(f"Source file does not exist: {src_path}")
 
                 # Check if file is accessible
@@ -2600,7 +2386,14 @@ class FileWatcherWorker(QObject):
                     save_cache(cache, significant_change=True)
                     raise RuntimeError(f"File {src_path} is currently in use by another application.")
 
-                
+                # Upload to NAS or HTTP
+                if is_nas_dest:
+                    self._upload_to_nas(src_path, dest_path, item)
+                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
+                else:
+                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
+                    save_cache(cache, significant_change=True)
+                    raise NotImplementedError("HTTP upload not implemented")
 
                 save_cache(cache, significant_change=True)
                 update_download_upload_metadata(task_id, "completed")
@@ -2904,14 +2697,11 @@ class FileWatcherWorker(QObject):
                     try:
                         result = future.result()
                         updates.append(result['update'])
-                        # ── Mark as processed regardless of success/failure ──
-                        # Without this, failed tasks are never added to processed_tasks
-                        # and the poll loop keeps re-picking them up every 3 seconds,
-                        # causing infinite retry loops and repeated popups.
-                        with self._lock:
-                            self.processed_tasks[result['task_key']] = time.time()
                         if result['success']:
                             completed_tasks += 1
+                            with self._lock:
+                                # self.processed_tasks.add(result['task_key'])
+                                self.processed_tasks[result['task_key']] = time.time()
                         else:
                             failed_tasks += 1
                     except Exception as e:
@@ -2953,7 +2743,6 @@ class FileWatcherWorker(QObject):
                 app_signals.append_log.emit(f"[API Scan] Initiating download: {file_name}")
                 app_signals.update_file_list.emit(local_path, f"{action_type} Queued", action_type, 0, not is_online)
                 for attempt in range(max_download_retries):
-                    is_final_attempt = (attempt == max_download_retries - 1)
                     try:
                         if not is_online:
                             with sftp_semaphore:  # Limit concurrent SFTP connections
@@ -2990,10 +2779,9 @@ class FileWatcherWorker(QObject):
                 app_signals.append_log.emit(f"[API Scan] Initiating upload: {file_name}")
                 app_signals.update_file_list.emit(local_path, f"{action_type} Queued", action_type, 0, not is_online)
                 for attempt in range(max_download_retries):
-                    is_final_attempt = (attempt == max_download_retries - 1)
                     try:
                         if not is_online:
-                            with sftp_semaphore:
+                            with sftp_semaphore:  # Limit concurrent SFTP connections
                                 client_name = item.get("client_name", "").strip().replace(" ", "_") or None
                                 project_name = item.get("project_name", item.get("name", "")).strip().replace(" ", "_") or None
                                 if not client_name or not project_name:
@@ -3010,8 +2798,7 @@ class FileWatcherWorker(QObject):
                                         client_name = client_name or "default_client"
                                         project_name = project_name or "default_project"
                                 original_nas_path = item.get('file_path', file_path)
-                                # self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online)
-                                self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online, is_final_attempt)
+                                self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online)
                                 self.log_update.emit(f"[API Scan] Upload successful: {local_path} to {original_nas_path}, task_id: {task_id}")
                                 return {
                                     'update': (local_path, "Upload Completed (Original)", action_type, 100, not is_online),
@@ -3019,8 +2806,7 @@ class FileWatcherWorker(QObject):
                                     'success': True
                                 }
                         else:
-                            # self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online)
-                            self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online, is_final_attempt)
+                            self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online)
                             self.log_update.emit(f"[API Scan] Upload successful: {local_path} to {file_path}, task_id: {task_id}")
                             return {
                                 'update': (local_path, "Upload Completed (Original)", action_type, 100, not is_online),
@@ -3063,30 +2849,12 @@ class FileWatcherWorker(QObject):
             self.log_update.emit(f"[API Scan] Connectivity check failed: {str(e)}")
             return False
 
-    # def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
-    # def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=True):
-    #     task_id = str(item.get('id', ''))
-    #     original_filename = Path(src_path).name
-    #     update_download_upload_metadata(task_id, "in progress")
-    #     try:
-    #         self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest)
-    #         self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {original_filename}", dest_path, 100)
-    #         self.download_status_detail.emit(dest_path, f"{action_type} Completed (Task {task_id}): {original_filename}", action_type, 10, True)
-    #     except Exception as e:
-    #         logger.error(f"Progress error for {action_type} (Task {task_id}): {str(e)}")
-    #         self.log_update.emit(f"[App] Progress update: {action_type} Failed (Task {task_id}): {original_filename}")
-    #         raise
-
-    def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=True):
-        print("================item===================================")
-        print(item)
-        print("=================item=========================================")
-
+    def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
         task_id = str(item.get('id', ''))
         original_filename = Path(src_path).name
         update_download_upload_metadata(task_id, "in progress")
         try:
-            self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=is_final_attempt)
+            self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest)
             self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {original_filename}", dest_path, 100)
             self.download_status_detail.emit(dest_path, f"{action_type} Completed (Task {task_id}): {original_filename}", action_type, 10, True)
         except Exception as e:
@@ -3373,286 +3141,6 @@ class ThumbnailWorker(QRunnable):
             logger.debug(f"[Thumbnail] Unexpected error: {e}")
 
 
-
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# REPLACE the entire TransferNotificationPopup + TransferNotificationManager
-# classes with the following. Also update start_file_watcher() to use
-# the new NotificationOverlay.
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-class TransferNotificationPopup(QFrame):
-    """Single notification card for one transfer."""
-
-    def __init__(self, spec_id: str, filename: str, action: str, parent=None):
-        super().__init__(parent)
-        self.spec_id = spec_id
-        self.action = action
-        self._done = False
-
-        self.setFixedWidth(320)
-        self.setObjectName("NotifCard")
-
-        is_upload = action == "upload"
-        accent = "#3b82f6" if is_upload else "#2ecc71"
-        icon  = "⬆️" if is_upload else "⬇️"
-        label = "Upload" if is_upload else "Download"
-
-        self.setStyleSheet(f"""
-            QFrame#NotifCard {{
-                background: #1e1e2e;
-                border: 1px solid #2a2a3e;
-                border-left: 4px solid {accent};
-                border-radius: 10px;
-            }}
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(6)
-
-        # ── Header ───────────────────────────────────────────────────────────
-        header = QHBoxLayout()
-        self.icon_lbl = QLabel(f"{icon} {label}")
-        self.icon_lbl.setStyleSheet(
-            f"color:{accent}; font-weight:bold; font-size:12px; background:transparent;"
-        )
-        self.status_lbl = QLabel("Starting...")
-        self.status_lbl.setStyleSheet(
-            "color:#888; font-size:11px; background:transparent;"
-        )
-        self.status_lbl.setAlignment(Qt.AlignRight)
-
-        self.close_btn = QPushButton("✕")
-        self.close_btn.setFixedSize(18, 18)
-        self.close_btn.setStyleSheet("""
-            QPushButton { background:transparent; color:#555; border:none; font-size:11px; }
-            QPushButton:hover { color:#fff; }
-        """)
-        self.close_btn.clicked.connect(self._dismiss)
-
-        header.addWidget(self.icon_lbl)
-        header.addWidget(self.status_lbl, 1)
-        header.addWidget(self.close_btn)
-        layout.addLayout(header)
-
-        # ── Filename ──────────────────────────────────────────────────────────
-        self.file_lbl = QLabel(filename)
-        self.file_lbl.setStyleSheet(
-            "color:#ccc; font-size:11px; background:transparent;"
-        )
-        self.file_lbl.setWordWrap(True)
-        self.file_lbl.setMaximumWidth(290)
-        layout.addWidget(self.file_lbl)
-
-        # ── Progress bar ──────────────────────────────────────────────────────
-        self.bar = QProgressBar()
-        self.bar.setFixedHeight(5)
-        self.bar.setTextVisible(False)
-        self.bar.setRange(0, 100)
-        self.bar.setValue(0)
-        self.bar.setStyleSheet(f"""
-            QProgressBar {{ background:#2a2a3e; border-radius:2px; border:none; }}
-            QProgressBar::chunk {{ background:{accent}; border-radius:2px; }}
-        """)
-        layout.addWidget(self.bar)
-
-        # ── Percent label ─────────────────────────────────────────────────────
-        self.pct_lbl = QLabel("0%")
-        self.pct_lbl.setStyleSheet(
-            "color:#666; font-size:10px; background:transparent;"
-        )
-        self.pct_lbl.setAlignment(Qt.AlignRight)
-        layout.addWidget(self.pct_lbl)
-
-        # ── Auto-dismiss timer ────────────────────────────────────────────────
-        self._auto_timer = QTimer(self)
-        self._auto_timer.setSingleShot(True)
-        self._auto_timer.timeout.connect(self._dismiss)
-
-        # ── Fade-in ───────────────────────────────────────────────────────────
-        self._opacity = QGraphicsOpacityEffect(self)
-        self.setGraphicsEffect(self._opacity)
-        self._anim = QPropertyAnimation(self._opacity, b"opacity")
-        self._anim.setDuration(300)
-        self._anim.setStartValue(0.0)
-        self._anim.setEndValue(1.0)
-        self._anim.start()
-
-    # ── Public API ────────────────────────────────────────────────────────────
-
-    def update_progress(self, percent: int, status_text: str = ""):
-        self.bar.setValue(percent)
-        self.pct_lbl.setText(f"{percent}%")
-        if status_text:
-            short = status_text.split(" • ")[0] if " • " in status_text else status_text
-            self.status_lbl.setText(short)
-
-    def mark_done(self, success: bool):
-        if self._done:
-            return
-        self._done = True
-        self.bar.setValue(100)
-        self.pct_lbl.setText("100%")
-        if success:
-            self.status_lbl.setText("✅ Completed")
-            self.status_lbl.setStyleSheet(
-                "color:#2ecc71; font-size:11px; background:transparent;"
-            )
-        else:
-            self.status_lbl.setText("❌ Failed")
-            self.status_lbl.setStyleSheet(
-                "color:#e74c3c; font-size:11px; background:transparent;"
-            )
-        self._auto_timer.start(4000)
-
-    # ── Internal ──────────────────────────────────────────────────────────────
-
-    def _dismiss(self):
-        self._anim2 = QPropertyAnimation(self._opacity, b"opacity")
-        self._anim2.setDuration(250)
-        self._anim2.setStartValue(1.0)
-        self._anim2.setEndValue(0.0)
-        self._anim2.finished.connect(self._remove_self)
-        self._anim2.start()
-
-    def _remove_self(self):
-        manager = self.parent()
-        if manager and hasattr(manager, "_remove_popup"):
-            manager._remove_popup(self)
-        self.deleteLater()
-
-
-class TransferNotificationManager(QWidget):
-    """
-    Floating top-level overlay — always on top, bottom-right of the screen.
-
-    Key fixes vs the original:
-    • Uses Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint so the
-      overlay is always visible regardless of which window is focused.
-    • Does NOT depend on an anchor widget — anchors to the screen instead.
-    • setWindowOpacity(0.95) gives a slight transparency so it feels non-intrusive.
-    • A single _reposition() call on construction is all that's needed.
-    """
-
-    def __init__(self, parent=None):
-        # ── CRITICAL: pass None so this becomes a real top-level window ───────
-        super().__init__(None)
-
-        self._popups: dict = {}   # spec_id → TransferNotificationPopup
-
-        # ── Window flags: frameless, always-on-top tool window ────────────────
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.X11BypassWindowManagerHint   # needed on some Linux WMs
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WA_ShowWithoutActivating, True)  # never steal focus
-        self.setWindowOpacity(0.95)
-
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(8, 8, 8, 8)
-        self._layout.setSpacing(8)
-        self._layout.setAlignment(Qt.AlignBottom | Qt.AlignRight)
-
-        self._reposition()
-        self.show()
-        self.raise_()
-
-    # ── Geometry ──────────────────────────────────────────────────────────────
-
-    def _reposition(self):
-        """Anchor to the bottom-right corner of the primary screen."""
-        screen = QApplication.primaryScreen()
-        if screen is None:
-            return
-        available = screen.availableGeometry()   # excludes taskbar
-
-        popup_w   = 340
-        margin    = 16
-        max_h     = min(600, available.height() - margin * 2)
-
-        x = available.right()  - popup_w - margin
-        y = available.bottom() - max_h   - margin
-
-        self.setGeometry(x, y, popup_w, max_h)
-
-    # ── Popup management ──────────────────────────────────────────────────────
-
-    def _get_or_create(self, spec_id: str, filename: str, action: str):
-        if spec_id not in self._popups:
-            popup = TransferNotificationPopup(spec_id, filename, action, parent=self)
-            self._popups[spec_id] = popup
-            self._layout.addWidget(popup)
-            popup.show()
-            self.raise_()           # keep overlay on top whenever a new card arrives
-        return self._popups[spec_id]
-
-    def _remove_popup(self, popup: TransferNotificationPopup):
-        spec_id = popup.spec_id
-        if spec_id in self._popups:
-            self._layout.removeWidget(popup)
-            del self._popups[spec_id]
-
-    # ── Slots ─────────────────────────────────────────────────────────────────
-
-    @Slot(str, str, str, int)
-    def on_download_progress(self, spec_id: str, file_path: str, filename: str, percent: int):
-        popup = self._get_or_create(spec_id, filename, "download")
-        popup.update_progress(percent)
-        if percent >= 100:
-            popup.mark_done(True)
-
-    @Slot(str, str, str, int, bool)
-    def on_download_status_detail(
-        self, file_path: str, text: str, action_type: str, percent: int, is_nas: bool
-    ):
-        if action_type != "download":
-            return
-        fname = Path(file_path).name
-        for popup in self._popups.values():
-            if popup.action == "download" and (
-                popup.file_lbl.text() == fname or file_path in popup.file_lbl.text()
-            ):
-                popup.update_progress(percent, text)
-                if "Failed" in text:
-                    popup.mark_done(False)
-                elif "Completed" in text:
-                    popup.mark_done(True)
-                break
-
-    @Slot(str, str, str, int)
-    def on_upload_progress(self, spec_id: str, file_path: str, filename: str, percent: int):
-        popup = self._get_or_create(spec_id, filename, "upload")
-        popup.update_progress(percent)
-        if percent >= 100:
-            popup.mark_done(True)
-
-    @Slot(str, str, str, int, bool)
-    def on_upload_status_detail(
-        self, file_path: str, text: str, action_type: str, percent: int, is_nas: bool
-    ):
-        if action_type != "upload":
-            return
-        fname = Path(file_path).name
-        for popup in self._popups.values():
-            if popup.action == "upload" and (
-                popup.file_lbl.text() == fname or file_path in popup.file_lbl.text()
-            ):
-                popup.update_progress(percent, text)
-                if "Failed" in text:
-                    popup.mark_done(False)
-                elif "Completed" in text:
-                    popup.mark_done(True)
-                break
-
-
-
-
 class CardWidget(QFrame):
     copyRequested = Signal(str)
     retryRequested = Signal(dict)
@@ -3700,7 +3188,7 @@ class CardWidget(QFrame):
         self.project_lbl = QLabel(f"🗂️  {row_data.get('project_name', 'Loading...')}")
         self.job_lbl     = QLabel(f"💼  {row_data.get('job_name', 'Loading...')}")
         self.file_lbl    = QLabel(f"📄  {row_data.get('file_name', 'Unknown')}")
-        self.user_type_lbl = QLabel(f"🎭  {row_data.get('user_type', '').upper()}")
+        self.user_type_lbl = QLabel(f"🎭  {row_data.get('user_type', '')}")
         self.date_lbl    = QLabel(f"🕐  {self._format_date(row_data.get('created_at', ''))}")
         self.duration_lbl  = QLabel(self._format_duration(row_data.get("transfer_duration")))
 
@@ -3826,7 +3314,7 @@ class CardWidget(QFrame):
         self.job_lbl.setText(f"💼  {new_row.get('job_name', 'Unknown')}")
         self.file_lbl.setText(f"📄  {new_row.get('file_name', 'Unknown')}")
         self.date_lbl.setText(f"🕐  {self._format_date(new_row.get('created_at', ''))}")
-        self.user_type_lbl.setText(f"🎭  {new_row.get('user_type', '').upper()}")
+        self.user_type_lbl.setText(f"🎭  {new_row.get('user_type', '')}")
         self.duration_lbl.setText(self._format_duration(new_row.get("transfer_duration")))
 
 
@@ -3920,8 +3408,7 @@ class FileDownloadListWindow(QDialog):
         self.load_files()
 
         # Connect signals
-        # watcher = FileWatcherWorker.get_instance(parent=self)
-        watcher = FileWatcherWorker.get_instance()
+        watcher = FileWatcherWorker.get_instance(parent=self)
         watcher.download_progress.connect(self.on_download_progress, Qt.QueuedConnection)
         watcher.download_status_detail.connect(self.on_download_status_detail, Qt.QueuedConnection)
         # Keep your existing update_file_list if needed
@@ -4084,49 +3571,15 @@ class FileDownloadListWindow(QDialog):
 
 
 
-
     def on_download_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
         if action_type != "download":
             return
 
+        # Find card by local_path or filename
         for card in self.card_index.values():
             if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
                 card.update_status(text)
-
-                # ── NEW: refresh metadata from cache when transfer completes ──
-                if "Completed" in text or "Failed" in text:
-                    spec_id = card.row_data.get("spec_id")
-                    if spec_id:
-                        cache = load_cache()
-                        meta = cache.get("downloaded_files_with_metadata", {}).get(spec_id)
-                        if meta:
-                            api = meta.get("api_response", {})
-                            fresh_row = {
-                                "spec_id": str(spec_id),
-                                "thumbnail": api.get("thumbnail"),
-                                "project_name": api.get("project_name", card.row_data.get("project_name", "Unknown")),
-                                "job_name": api.get("job_name", card.row_data.get("job_name", "Unknown")),
-                                "file_name": Path(file_path).name,
-                                "created_at": api.get("created_on", card.row_data.get("created_at", "")),
-                                "local_path": file_path,
-                                "user_type": api.get("user_type", card.row_data.get("user_type", "")),
-                                "transfer_duration": api.get("transfer_duration"),
-                                "status": "Download Completed" if "Completed" in text else "Download Failed",
-                            }
-                            card.update_row(fresh_row)
                 break
-
-
-
-    # def on_download_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
-    #     if action_type != "download":
-    #         return
-
-    #     # Find card by local_path or filename
-    #     for card in self.card_index.values():
-    #         if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
-    #             card.update_status(text)
-    #             break
 
     def filter_cards(self, text: str = None):
         if text is None:
@@ -4159,8 +3612,7 @@ class FileDownloadListWindow(QDialog):
         except Exception as e:
             error_msg = f"Failed to open {Path(file_path).name} in Photoshop: {e}"
             logger.error(error_msg)
-            # QMessageBox.critical(self, "Photoshop Error", error_msg)
-            show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
+            QMessageBox.critical(self, "Photoshop Error", error_msg)
 
 
 
@@ -4170,8 +3622,7 @@ class FileDownloadListWindow(QDialog):
             folder_path = str(Path(file_path).parent)
             system = platform.system()
             if system == "Windows":
-                # subprocess.run(["explorer", folder_path], check=True)
-                subprocess.Popen(["explorer", folder_path])
+                subprocess.run(["explorer", folder_path], check=True)
             elif system == "Darwin":
                 subprocess.run(["open", folder_path], check=True)
             elif system == "Linux":
@@ -4199,13 +3650,12 @@ class FileDownloadListWindow(QDialog):
         mime.setUrls([QUrl.fromLocalFile(str(path))])
 
         clipboard.setMimeData(mime)
-        msg = f"File path copied to clipboard:\n{path}"
-        show_alert("Copied", msg, QMessageBox.Information)
-        # QMessageBox.information(
-        #     self,
-        #     "Copied",
-        #     f"File path copied to clipboard:\n{path}"
-        # )
+
+        QMessageBox.information(
+            self,
+            "Copied",
+            f"File path copied to clipboard:\n{path}"
+        )
 
 
 
@@ -4390,8 +3840,7 @@ class FileUploadListWindow(QDialog):
         self.load_files()
 
         # Connect signals
-        # watcher = FileWatcherWorker.get_instance(parent=self)
-        watcher = FileWatcherWorker.get_instance()
+        watcher = FileWatcherWorker.get_instance(parent=self)
         watcher.upload_progress.connect(self.on_upload_progress, Qt.QueuedConnection)
         watcher.upload_status_detail.connect(self.on_upload_status_detail, Qt.QueuedConnection)
 
@@ -4544,52 +3993,15 @@ class FileUploadListWindow(QDialog):
             self.cards_layout.insertWidget(0, card)
             card._promoted = True
 
-
-
-
-
     def on_upload_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
         if action_type != "upload":
             return
 
+        # Find card by local_path or filename
         for card in self.card_index.values():
             if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
                 card.update_status(text)
-
-                # ── NEW: refresh metadata from cache when transfer completes ──
-                if "Completed" in text or "Failed" in text:
-                    spec_id = card.row_data.get("spec_id")
-                    if spec_id:
-                        cache = load_cache()
-                        meta = cache.get("uploaded_files_with_metadata", {}).get(spec_id)
-                        if meta:
-                            api = meta.get("api_response", {})
-                            fresh_row = {
-                                "spec_id": str(spec_id),
-                                "thumbnail": api.get("thumbnail"),
-                                "project_name": api.get("project_name", card.row_data.get("project_name", "Unknown")),
-                                "job_name": api.get("job_name", card.row_data.get("job_name", "Unknown")),
-                                "file_name": Path(file_path).name,
-                                "created_at": api.get("created_on", card.row_data.get("created_at", "")),
-                                "local_path": file_path,
-                                "user_type": api.get("user_type", card.row_data.get("user_type", "")),
-                                "transfer_duration": api.get("transfer_duration"),
-                                "status": "Upload Completed" if "Completed" in text else "Upload Failed",
-                            }
-                            card.update_row(fresh_row)
                 break
-
-
-
-    # def on_upload_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
-    #     if action_type != "upload":
-    #         return
-
-    #     # Find card by local_path or filename
-    #     for card in self.card_index.values():
-    #         if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
-    #             card.update_status(text)
-    #             break
 
     def filter_cards(self, text: str = None):
         if text is None:
@@ -4621,8 +4033,7 @@ class FileUploadListWindow(QDialog):
         except Exception as e:
             error_msg = f"Failed to open {Path(file_path).name} in Photoshop: {e}"
             logger.error(error_msg)
-            # QMessageBox.critical(self, "Photoshop Error", error_msg)
-            show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
+            QMessageBox.critical(self, "Photoshop Error", error_msg)
 
 
     def open_folder(self, file_path):
@@ -4631,8 +4042,7 @@ class FileUploadListWindow(QDialog):
             folder_path = str(Path(file_path).parent)
             system = platform.system()
             if system == "Windows":
-                # subprocess.run(["explorer", folder_path], check=True)
-                subprocess.Popen(["explorer", folder_path])
+                subprocess.run(["explorer", folder_path], check=True)
             elif system == "Darwin":
                 subprocess.run(["open", folder_path], check=True)
             elif system == "Linux":
@@ -4660,13 +4070,12 @@ class FileUploadListWindow(QDialog):
         mime.setUrls([QUrl.fromLocalFile(str(path))])
 
         clipboard.setMimeData(mime)
-        msg = f"File path copied to clipboard:\n{path}"
-        show_alert("Copied", msg, QMessageBox.Information)
-        # QMessageBox.information(
-        #     self,
-        #     "Copied",
-        #     f"File path copied to clipboard:\n{path}"
-        # )
+
+        QMessageBox.information(
+            self,
+            "Copied",
+            f"File path copied to clipboard:\n{path}"
+        )
 
     def retry_file_process(self, row_data: dict):
         logger.info("========== UPLOAD RETRY START ==========")
@@ -4763,7 +4172,6 @@ class LoginWorker(QObject):
     user_in_use = Signal(str)
     proceed = None
     switch_login = False
-
     def __init__(self, username, password, remember_me, tray_icon, status_bar, switch_login):
         super().__init__()
         self.username = username
@@ -4772,71 +4180,64 @@ class LoginWorker(QObject):
         self.tray_icon = tray_icon
         self.status_bar = status_bar
         self.switch_login = switch_login
-
-    def _set_status(self, message: str):
-        """
-        Safely update the status bar — guards against the widget being
-        deleted by Qt before the background thread finishes.
-        """
-        try:
-            if self.status_bar is not None:
-                self.status_bar.showMessage(message)
-        except RuntimeError:
-            # Qt already deleted the C++ object — silently ignore
-            pass
-        except Exception as e:
-            logger.debug(f"[LoginWorker] Status bar update skipped: {e}")
-
+        
     def run(self):
         try:
             print("inside_logworker")
             logger.debug("Starting LoginWorker.run")
             app_signals.append_log.emit("[Login] Starting LoginWorker.run")
-
+            logger.debug(f"OAuth request data: {{\n"
+                        f"  grant_type: password,\n"
+                        f"  username: {self.username},\n"
+                        f"  password: {'*' * len(self.password)},\n"
+                        f"  client_id: hZBc4VyhUSQgZobyjdVH7ZPk4WRey2BIjqws_UxF5cM,\n"
+                        f"  client_secret: crazy-cloud,\n"
+                        f"  scope: pm_client\n}}")
+            
             if self.status_bar is None:
                 logger.warning("Status bar is None, cannot update message")
+            else:
+                self.status_bar.showMessage("Requesting access token...")
             
-            self._set_status("Requesting access token...")
-
+            # Create a new session for thread safety
             session = requests.Session()
             payload = {
-                "grant_type": "password",
-                "username": self.username,
-                "password": self.password,
-                "client_id": "hZBc4VyhUSQgZobyjdVH7ZPk4WRey2BIjqws_UxF5cM",
-                "client_secret": "crazy-cloud",
-                "scope": "pm_client",
-                "details": USER_SYSTEM_INFO.get("details", {}),
-                "machine_id": USER_SYSTEM_INFO.get("encoded_mac", ""),
-                "mac_address": USER_SYSTEM_INFO.get("mac_address", ""),
-                "add_mac": 1 if self.switch_login else 0
-            }
+                    "grant_type": "password",
+                    "username": self.username,
+                    "password": self.password,
+                    "client_id": "hZBc4VyhUSQgZobyjdVH7ZPk4WRey2BIjqws_UxF5cM",
+                    "client_secret": "crazy-cloud",
+                    "scope": "pm_client",
+                    "details": USER_SYSTEM_INFO.get("details", {}),
+                    "machine_id": USER_SYSTEM_INFO.get("encoded_mac", ""),
+                    "mac_address": USER_SYSTEM_INFO.get("mac_address", ""),
+                    "add_mac": 1 if self.switch_login else 0
 
+                }
+            print(f"payload of login {payload}")
             token_resp = session.post(
                 OAUTH_URL,
-                data=payload,
+                data = payload,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
-                verify=False,
+                verify=False,  # Enable SSL verification
                 timeout=60
             )
             self.switch_login = False
-
+            
+            logger.debug(f"Token response raw: {token_resp.text}")
             app_signals.api_call_status.emit(
                 OAUTH_URL,
                 f"Status: {token_resp.status_code}, Response: {token_resp.text}",
                 token_resp.status_code
             )
-            app_signals.append_log.emit(
-                f"[Login] Token API response: {token_resp.status_code}, {token_resp.text}"
-            )
-
+            app_signals.append_log.emit(f"[Login] Token API response: {token_resp.status_code}, {token_resp.text}")
+            print(f"token_resp.status_code ======== {token_resp.text}")
             if token_resp.status_code == 403:
                 self.user_in_use.emit("user_already_logged_in")
                 QThread.currentThread().quit()
                 return
-
-            self._set_status(f"Token API response: {token_resp.status_code}")
-
+            if self.status_bar:
+                self.status_bar.showMessage(f"Token API response: {token_resp.status_code}")
             if token_resp.status_code in (400, 401):
                 try:
                     error_details = token_resp.json()
@@ -4845,58 +4246,65 @@ class LoginWorker(QObject):
                     error_msg = f"Bad request: {token_resp.text}"
                 logger.error(f"Token API error: {error_msg}")
                 raise Exception(error_msg)
-
             token_resp.raise_for_status()
             token_data = token_resp.json()
+            logger.debug(f"Token response JSON: {token_data}")
             access_token = token_data.get("access_token")
             if not access_token:
                 raise Exception("No access token received in response")
 
-            self._set_status("Fetching user info...")
-
+            if self.status_bar:
+                self.status_bar.showMessage("Fetching user info...")
             info_resp = session.get(
                 f"{BASE_DOMAIN}/api/user/getinfo?emailid={self.username}",
                 headers={"Authorization": f"Bearer {access_token}"},
                 verify=False,
                 timeout=60
             )
+            logger.debug(f"User info response raw: {info_resp.text}")
             app_signals.api_call_status.emit(
                 f"{BASE_DOMAIN}/api/user/getinfo?emailid={self.username}",
                 f"Status: {info_resp.status_code}, Response: {info_resp.text}",
                 info_resp.status_code
             )
-            app_signals.append_log.emit(
-                f"[Login] User info API response: {info_resp.status_code}"
-            )
-            self._set_status(f"User info API response: {info_resp.status_code}")
+            app_signals.append_log.emit(f"[Login] User info API response: {info_resp.status_code}, {info_resp.text}")
+            if self.status_bar:
+                self.status_bar.showMessage(f"User info API response: {info_resp.status_code}")
             info_resp.raise_for_status()
             user_info = info_resp.json()
 
-            self._set_status("Fetching user data...")
-
+            if self.status_bar:
+                self.status_bar.showMessage("Fetching user data...")
             user_resp = session.get(
                 f"{BASE_DOMAIN}/jsonapi/user/user?filter[name]={self.username}",
                 headers={"Authorization": f"Bearer {access_token}"},
                 verify=False,
                 timeout=60
             )
+            logger.debug(f"User data response raw: {user_resp.text}")
             app_signals.api_call_status.emit(
                 f"{BASE_DOMAIN}/jsonapi/user/user?filter[name]={self.username}",
                 f"Status: {user_resp.status_code}, Response: {user_resp.text}",
                 user_resp.status_code
             )
-            app_signals.append_log.emit(
-                f"[Login] User data API response: {user_resp.status_code}"
-            )
-            self._set_status(f"User data API response: {user_resp.status_code}")
+            app_signals.append_log.emit(f"[Login] User data API response: {user_resp.status_code}, {user_resp.text}")
+            if self.status_bar:
+                self.status_bar.showMessage(f"User data API response: {user_resp.status_code}")
             user_resp.raise_for_status()
             user_data = user_resp.json()
 
-            cache = load_cache() or {}
+            cache = load_cache() or {}  # Handle case where load_cache returns None
+            logger.debug(f"Loaded cache: {cache}")
+            print(f"Loaded cacheaaa: {cache}")
             cached_user = cache.get("user")
             cached_token = cache.get("token")
 
+            # if not load_cache() or self.username != load_cache().get("user"):
+
+            # If new user or cache empty → save cache
             if not cached_user or self.username != cached_user:
+                logger.debug("New user login or cache empty. Saving full cache data.")
+       
                 cache_data = {
                     "token": access_token,
                     "user": self.username,
@@ -4913,100 +4321,98 @@ class LoginWorker(QObject):
                     "cached_at": datetime.now(ZoneInfo("UTC")).isoformat()
                 }
                 save_cache(cache_data)
+                logger.debug(f"Cache saved: {cache_data}")
                 app_signals.append_log.emit(f"[Login] Cache saved for user: {self.username}")
-
+                
             elif self.username == cached_user and not cached_token:
+                # Same user but token empty → only update token
+                logger.debug("Same user re-login detected. Updating token only.")
                 cache["token"] = access_token
                 cache["cached_at"] = datetime.now(ZoneInfo("UTC")).isoformat()
                 save_cache(cache)
+                logger.debug(f"[Login] Token updated for user: {self.username}")
 
+            # start_local_api()   # START local api server
+            
+            logger.debug("Emitting success signal")
+            
+             # Save/delete keyring credentials on background thread
+            # keyring blocks on Windows credential store
             _username = self.username
             _password = self.password
             _rememberme = self.rememberme
             self.success.emit(user_info, access_token)
-
+            # Save credentials on background thread — win32cred can be slow
             def _save_keyring():
                 try:
-                    system = platform.system()
                     if _rememberme:
-                        if system == "Windows":
-                            try:
-                                import win32cred as _wc
-                                _wc.CredWrite({
-                                    'Type': _wc.CRED_TYPE_GENERIC,
-                                    'TargetName': f"PremediaApp/{_username}",
-                                    'CredentialBlob': _password,
-                                    'Persist': _wc.CRED_PERSIST_LOCAL_MACHINE,
-                                    'UserName': _username,
-                                }, 0)
-                                c = load_cache()
-                                c["saved_username"] = _username
-                                c["saved_password"] = _password
-                                save_cache(c)
-                            except ImportError:
-                                c = load_cache()
-                                c["saved_username"] = _username
-                                c["saved_password"] = _password
-                                save_cache(c)
-                            except Exception as e:
-                                logger.warning(f"win32cred write failed ({e}), falling back to cache")
-                                c = load_cache()
-                                c["saved_username"] = _username
-                                c["saved_password"] = _password
-                                save_cache(c)
-                        else:
-                            c = load_cache()
-                            c["saved_username"] = _username
-                            c["saved_password"] = _password
-                            save_cache(c)
+                        try:
+                            # Try win32cred first (Windows, no blocking)
+                            import win32cred as _wc
+                            _wc.CredWrite({
+                                'Type': _wc.CRED_TYPE_GENERIC,
+                                'TargetName': f"PremediaApp/{_username}",
+                                'CredentialBlob': _password,
+                                'Persist': _wc.CRED_PERSIST_LOCAL_MACHINE,
+                                'UserName': _username,
+                            }, 0)
+                        except ImportError:
+                            # Fallback — store in cache file only
+                            cache = load_cache()
+                            cache["saved_username"] = _username
+                            cache["saved_password"] = _password
+                            save_cache(cache)
                     else:
-                        c = load_cache()
-                        c["saved_username"] = ""
-                        c["saved_password"] = ""
-                        save_cache(c)
-                        if system == "Windows":
-                            try:
-                                import win32cred as _wc
-                                _wc.CredDelete(f"PremediaApp/{_username}", _wc.CRED_TYPE_GENERIC)
-                            except Exception:
-                                pass
+                        try:
+                            import win32cred as _wc
+                            _wc.CredDelete(f"PremediaApp/{_username}", _wc.CRED_TYPE_GENERIC)
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.warning(f"_save_keyring failed: {e}")
 
             threading.Thread(target=_save_keyring, daemon=True).start()
+
             app_signals.append_log.emit(f"[Login] Successful login for user: {self.username}")
-            self._set_status(f"Successful login for {self.username}")
+            if self.status_bar:
+                self.status_bar.showMessage(f"Successful login for {self.username}")
+
 
         except requests.exceptions.SSLError as e:
             error_msg = f"SSL error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            self._set_status(error_msg)
+            if self.status_bar:
+                self.status_bar.showMessage(error_msg)
         except requests.exceptions.ConnectionError as e:
             error_msg = f"Connection error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            self._set_status(error_msg)
+            if self.status_bar:
+                self.status_bar.showMessage(error_msg)
         except requests.exceptions.Timeout as e:
             error_msg = f"Request timed out: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            self._set_status(error_msg)
+            if self.status_bar:
+                self.status_bar.showMessage(error_msg)
         except requests.exceptions.RequestException as e:
             error_msg = f"Network error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            self._set_status(error_msg)
+            if self.status_bar:
+                self.status_bar.showMessage(error_msg)
         except Exception as e:
             error_msg = f"Login error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            self._set_status(error_msg)
+            if self.status_bar:
+                self.status_bar.showMessage(error_msg)
         
         
     
@@ -5145,35 +4551,22 @@ class LoginDialog(QDialog):
             #     app_signals.append_log.emit("[Login] No saved credentials found in cache")
             #     self.status_bar.showMessage("No saved credentials found")
             # REPLACE the saved credentials block in LoginDialog.__init__:
-            # In LoginDialog.__init__, replace the _load_keyring_credentials block:
-
             saved_username = cache.get("saved_username")
             if saved_username:
+                # Load on background thread — keyring blocks on Windows
                 def _load_keyring_credentials(uname):
                     try:
                         pwd = None
-                        system = platform.system()
-                        
-                        if system == "Windows":
-                            try:
-                                import win32cred as _wc
-                                cred = _wc.CredRead(f"PremediaApp/{uname}", _wc.CRED_TYPE_GENERIC)
-                                raw = cred['CredentialBlob']
-                                # win32cred returns bytes on Python 3 — decode to str
-                                if isinstance(raw, bytes):
-                                    pwd = raw.decode('utf-16-le').rstrip('\x00')
-                                else:
-                                    pwd = raw
-                            except ImportError:
-                                current_cache = load_cache()
-                                pwd = current_cache.get("saved_password") or None
-                            except Exception:
-                                current_cache = load_cache()
-                                pwd = current_cache.get("saved_password") or None
-                        else:
-                            current_cache = load_cache()
-                            pwd = current_cache.get("saved_password") or None
-
+                        try:
+                            import win32cred as _wc
+                            cred = _wc.CredRead(f"PremediaApp/{uname}", _wc.CRED_TYPE_GENERIC)
+                            pwd = cred['CredentialBlob']
+                        except ImportError:
+                            # win32cred not available — fall back to cache
+                            cache = load_cache()
+                            pwd = cache.get("saved_password") or None
+                        except Exception:
+                            pwd = None
                         if pwd:
                             QMetaObject.invokeMethod(
                                 self, "_apply_saved_credentials",
@@ -5187,7 +4580,7 @@ class LoginDialog(QDialog):
                                 Qt.QueuedConnection
                             )
                     except Exception as e:
-                        logger.warning(f"_load_keyring_credentials failed: {e}")
+                        logger.warning(f"keyring read failed: {e}")
                         QMetaObject.invokeMethod(
                             self, "_no_saved_credentials",
                             Qt.QueuedConnection
@@ -5201,6 +4594,7 @@ class LoginDialog(QDialog):
                 ).start()
             else:
                 self.status_bar.showMessage("No saved credentials found")
+
 
 
             app_signals.update_status.connect(self.status_bar.showMessage, Qt.QueuedConnection)
@@ -5223,8 +4617,7 @@ class LoginDialog(QDialog):
         except Exception as e:
             logger.error(f"Failed to initialize LoginDialog: {e}")
             app_signals.append_log.emit(f"[Login] Failed to initialize LoginDialog: {str(e)}")
-            # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
-            show_alert("Initialization Error",  f"Failed to initialize login dialog: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
             raise
 
 
@@ -5370,8 +4763,7 @@ class LoginDialog(QDialog):
             logger.error(f"Progress dialog error: {e}")
             app_signals.append_log.emit(f"[Login] Failed: Progress dialog error - {str(e)}")
             self.status_bar.showMessage(f"Progress error: {str(e)}")
-            # QMessageBox.critical(self, "Progress Error", f"Progress dialog error: {str(e)}")
-            show_alert("Progress Error", f"Progress dialog error: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(self, "Progress Error", f"Progress dialog error: {str(e)}")
 
     def handle_login(self):
         try:
@@ -5382,8 +4774,7 @@ class LoginDialog(QDialog):
             app_signals.append_log.emit(f"[Login] Attempting login with username: {username}")
             self.status_bar.showMessage(f"Attempting login for {username}")
             if not username or not password:
-                show_alert("Input Error", "Please enter both username and password.", QMessageBox.Warning)
-                # QMessageBox.warning(self, "Input Error", "Please enter both username and password.")
+                QMessageBox.warning(self, "Input Error", "Please enter both username and password.")
                 app_signals.append_log.emit("[Login] Failed: Missing username or password")
                 self.status_bar.showMessage("Missing username or password")
                 return
@@ -5395,8 +4786,7 @@ class LoginDialog(QDialog):
             self.status_bar.showMessage(f"Login error: {str(e)}")
             if self.progress:
                 self.progress.close()
-            show_alert("Login Error",  f"Login error: {str(e)}", QMessageBox.Critical)
-            # QMessageBox.critical(self, "Login Error", f"Login error: {str(e)}")
+            QMessageBox.critical(self, "Login Error", f"Login error: {str(e)}")
 
     def perform_login(self, username, password):
         try:
@@ -5439,94 +4829,58 @@ class LoginDialog(QDialog):
                 # QApplication.processEvents()
                 logger.debug("Progress dialog closed in perform_login error handler")
                 app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
-            # QMessageBox.critical(self, "Login Error", f"Login thread error: {str(e)}")
-            show_alert("Title", "message", QMessageBox.Critical)
+            QMessageBox.critical(self, "Login Error", f"Login thread error: {str(e)}")
 
     def cleanup_progress(self):
         try:
             if self.progress and self.progress.isVisible():
                 self.progress.close()
+                # QApplication.processEvents()
                 logger.debug("Progress dialog closed in cleanup_progress")
                 app_signals.append_log.emit("[Login] Progress dialog closed in cleanup_progress")
-        except RuntimeError:
-            # Qt already deleted the C++ progress dialog object — ignore safely
-            self.progress = None
         except Exception as e:
             logger.error(f"Error in cleanup_progress: {str(e)}")
             app_signals.append_log.emit(f"[Login] Failed: Error in cleanup_progress - {str(e)}")
 
-    # def validate_account_already_inuse(self):
-    #     print("in validate_account_already_inuse")
-
-    #     msg_box = QMessageBox(self)
-    #     msg_box.setWindowTitle("Account In Use")
-    #     msg_box.setText("You are already logged in on another device.\nDo you want to switch this session here?")
-    #     msg_box.setIcon(QMessageBox.Warning)
-    #     switch_btn = msg_box.addButton("Switch Here", QMessageBox.AcceptRole)
-    #     cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
-    #     # Apply red color only to Cancel button
-    #     switch_btn.setStyleSheet("""
-    #         QPushButton {
-    #             color: white;
-    #             border-radius: 4px;
-    #             padding: 2px;
-    #         }
-    #     """)
-    #     cancel_btn.setStyleSheet("""
-    #         QPushButton {
-    #             background-color: #d32f2f;   /* Red background */
-    #             color: white;
-    #             border-radius: 4px;
-    #             padding: 2px;
-    #         }
-    #     """)
-
-
-    #     # --- Block here until user clicks ---
-    #     msg_box.exec()
-
-    #     if msg_box.clickedButton() == switch_btn:
-    #         print("User chose to switch session.")
-    #         self.switch_login = True
-    #     else:
-    #         print("User cancelled.")
-    #         self.switch_login = False
-    #     print(f"self.LoginDialog_USERNAME={self.LoginDialog_USERNAME}===self.LoginDialog_PASSWORD{self.LoginDialog_PASSWORD}")
-    #     if self.switch_login:
-    #         self.perform_login(self.LoginDialog_USERNAME, self.LoginDialog_PASSWORD)
-
-
-
     def validate_account_already_inuse(self):
+        print("in validate_account_already_inuse")
+
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Account In Use")
-        msg_box.setText(
-            "You are already logged in on another device.\n"
-            "Do you want to switch this session here?"
-        )
+        msg_box.setText("You are already logged in on another device.\nDo you want to switch this session here?")
         msg_box.setIcon(QMessageBox.Warning)
-        msg_box.setWindowFlags(
-        msg_box.windowFlags()
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
-        msg_box.setWindowState(Qt.WindowState.WindowActive)
-        msg_box.setAttribute(Qt.WA_ShowWithoutActivating, False)
-
         switch_btn = msg_box.addButton("Switch Here", QMessageBox.AcceptRole)
         cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
-        switch_btn.setStyleSheet("QPushButton { color: white; border-radius: 4px; padding: 2px; }")
-        cancel_btn.setStyleSheet(
-            "QPushButton { background-color: #d32f2f; color: white; border-radius: 4px; padding: 2px; }"
-        )
+        # Apply red color only to Cancel button
+        switch_btn.setStyleSheet("""
+            QPushButton {
+                color: white;
+                border-radius: 4px;
+                padding: 2px;
+            }
+        """)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #d32f2f;   /* Red background */
+                color: white;
+                border-radius: 4px;
+                padding: 2px;
+            }
+        """)
 
-        msg_box.raise_()
-        msg_box.activateWindow()
+
+        # --- Block here until user clicks ---
         msg_box.exec()
 
-        self.switch_login = (msg_box.clickedButton() == switch_btn)
+        if msg_box.clickedButton() == switch_btn:
+            print("User chose to switch session.")
+            self.switch_login = True
+        else:
+            print("User cancelled.")
+            self.switch_login = False
+        print(f"self.LoginDialog_USERNAME={self.LoginDialog_USERNAME}===self.LoginDialog_PASSWORD{self.LoginDialog_PASSWORD}")
         if self.switch_login:
             self.perform_login(self.LoginDialog_USERNAME, self.LoginDialog_PASSWORD)
-
  
     def on_login_success(self, user_info: dict, token: str):
         try:
@@ -5548,8 +4902,7 @@ class LoginDialog(QDialog):
                 app_signals.append_log.emit("[Login] Progress dialog closed")
             
             # Show success message
-            # QMessageBox.information(self, "Login Success", f"Successfully logged in as {user_name}")
-            show_alert("Login Success",  f"Successfully logged in as {user_name}", QMessageBox.Information)
+            QMessageBox.information(self, "Login Success", f"Successfully logged in as {user_name}")
             
             self.accept()
             app_signals.update_status.emit("Logged in successfully")
@@ -5565,8 +4918,7 @@ class LoginDialog(QDialog):
                 QApplication.processEvents()
                 logger.debug("Progress dialog closed in on_login_success error handler")
                 app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
-            # QMessageBox.critical(self, "Login Error", f"Error handling login success: {str(e)}")
-            show_alert("Login Error", f"Error handling login success: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(self, "Login Error", f"Error handling login success: {str(e)}")
 
 
 
@@ -5655,8 +5007,7 @@ class LoginDialog(QDialog):
                 app_signals.append_log.emit("[Login] Progress dialog closed")
 
             # Show error popup
-            # QMessageBox.critical(self, "Login Error", str(error))
-            show_alert("Login Error", str(error), QMessageBox.Critical)
+            QMessageBox.critical(self, "Login Error", str(error))
 
             # Set logged-out state and re-show login
             if hasattr(self, 'app') and self.app:
@@ -5778,8 +5129,7 @@ class PremediaApp(QApplication):
                 logger.error(f"Failed to initialize LoginDialog: {e}")
                 app_signals.append_log.emit(f"[Init] Failed to initialize LoginDialog: {str(e)}")
                 self.login_dialog = None
-                # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
-                show_alert("Initialization Error",  f"Failed to initialize login dialog: {str(e)}", QMessageBox.Critical)
+                QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
                 self.cleanup_and_quit()
                 return
 
@@ -5892,8 +5242,7 @@ class PremediaApp(QApplication):
                 app_signals.update_status.emit(f"Initialization error: {str(e)}")
                 self.show_login()
             else:
-                # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize application: {str(e)}")
-                show_alert("Initialization Error", f"Failed to initialize application: {str(e)}", QMessageBox.Critical)
+                QMessageBox.critical(None, "Initialization Error", f"Failed to initialize application: {str(e)}")
             self.cleanup_and_quit()
 
     def event(self, event):
@@ -5949,8 +5298,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in handle_tray_icon_activated: {e}")
             app_signals.append_log.emit(f"[Tray] Failed: Error handling tray icon activation - {str(e)}")
             app_signals.update_status.emit(f"Error handling tray icon activation: {str(e)}")
-            # QMessageBox.critical(None, "Tray Icon Error", f"Error handling tray icon activation: {str(e)}")
-            show_alert("Tray Icon Error", f"Error handling tray icon activation: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(None, "Tray Icon Error", f"Error handling tray icon activation: {str(e)}")
+
 
 
     def update_tray_menu(self):
@@ -6140,8 +5489,7 @@ class PremediaApp(QApplication):
             logger.error(f"Error updating tray menu: {e}\n{traceback.format_exc()}")
             app_signals.append_log.emit(f"[Tray] Failed to update tray menu: {str(e)}")
             app_signals.update_status.emit(f"Failed to update tray menu: {str(e)}")
-            # QMessageBox.critical(None, "Tray Menu Error", f"Failed to update tray menu: {str(e)}")
-            show_alert("Tray Menu Error", f"Failed to update tray menu: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(None, "Tray Menu Error", f"Failed to update tray menu: {str(e)}")
 
     def is_file_watcher_running(self):
         """Safely check if the file watcher thread is running."""
@@ -6297,44 +5645,11 @@ class PremediaApp(QApplication):
             # ✅ FIX: Start the poll timer ONLY after thread has started.
             #         Use thread.started signal to guarantee worker is live before
             #         any invokeMethod calls happen.
-            # def on_thread_started():
-            #     logger.info("FileWatcherWorker thread is live — starting poll timer")
-            #     app_signals.append_log.emit("[App] FileWatcherWorker thread live, poll timer starting")
-
-            #     # ✅ FIX: Safe poll timer with None guard (see _safe_invoke_watcher)
-            #     if getattr(self, "poll_timer", None):
-            #         try:
-            #             self.poll_timer.stop()
-            #         except Exception:
-            #             pass
-
-            #     self.poll_timer = QTimer(self)
-            #     self.poll_timer.timeout.connect(self._safe_invoke_watcher)
-            #     self.poll_timer.start(3000)  # 3 seconds
-
-            # self.file_watcher_thread.started.connect(on_thread_started)
-
-            # # Start the thread — worker is already inside it via moveToThread
-            # self.file_watcher_thread.start()
-
-            # logger.info("FileWatcherWorker thread started successfully")
-            # app_signals.append_log.emit("[App] FileWatcherWorker thread started successfully")
-
-            # # Watchdog timer (runs on main thread, just checks memory — safe)
-            # if getattr(self, "watchdog_timer", None):
-            #     try:
-            #         self.watchdog_timer.stop()
-            #     except Exception:
-            #         pass
-            # self.watchdog_timer = QTimer(self)
-            # self.watchdog_timer.timeout.connect(self.check_memory_usage)
-            # self.watchdog_timer.start(60000)  # every 60 seconds
-
-            # self.schedule_daily_restart(3, 0)
             def on_thread_started():
                 logger.info("FileWatcherWorker thread is live — starting poll timer")
                 app_signals.append_log.emit("[App] FileWatcherWorker thread live, poll timer starting")
 
+                # ✅ FIX: Safe poll timer with None guard (see _safe_invoke_watcher)
                 if getattr(self, "poll_timer", None):
                     try:
                         self.poll_timer.stop()
@@ -6343,57 +5658,17 @@ class PremediaApp(QApplication):
 
                 self.poll_timer = QTimer(self)
                 self.poll_timer.timeout.connect(self._safe_invoke_watcher)
-                self.poll_timer.start(3000)
+                self.poll_timer.start(3000)  # 3 seconds
 
-                # Fire first scan immediately without waiting 3s
-                QTimer.singleShot(500, self._safe_invoke_watcher)
-
-                # ── Notification Manager ──────────────────────────────────────
-                def _find_best_anchor():
-                    for w in QApplication.topLevelWidgets():
-                        try:
-                            if w.isVisible() and w.width() > 200:
-                                return w
-                        except RuntimeError:
-                            continue
-                    return getattr(self, "log_window", None)
-
-                anchor = _find_best_anchor()
-                if anchor is not None:
-                    if getattr(self, "notif_manager", None):
-                        try:
-                            self.notif_manager.hide()
-                            self.notif_manager.deleteLater()
-                        except Exception:
-                            pass
-
-                    self.notif_manager = TransferNotificationManager()   # no anchor needed
-
-                    watcher = self.file_watcher
-                    watcher.download_progress.connect(
-                        self.notif_manager.on_download_progress, Qt.QueuedConnection
-                    )
-                    watcher.download_status_detail.connect(
-                        self.notif_manager.on_download_status_detail, Qt.QueuedConnection
-                    )
-                    watcher.upload_progress.connect(
-                        self.notif_manager.on_upload_progress, Qt.QueuedConnection
-                    )
-                    watcher.upload_status_detail.connect(
-                        self.notif_manager.on_upload_status_detail, Qt.QueuedConnection
-                    )
-                    logger.info("[App] TransferNotificationManager connected")
-                    app_signals.append_log.emit("[App] TransferNotificationManager connected")
-                # ─────────────────────────────────────────────────────────────
-
-            # Connect and start the thread
             self.file_watcher_thread.started.connect(on_thread_started)
+
+            # Start the thread — worker is already inside it via moveToThread
             self.file_watcher_thread.start()
 
             logger.info("FileWatcherWorker thread started successfully")
             app_signals.append_log.emit("[App] FileWatcherWorker thread started successfully")
 
-            # Watchdog timer
+            # Watchdog timer (runs on main thread, just checks memory — safe)
             if getattr(self, "watchdog_timer", None):
                 try:
                     self.watchdog_timer.stop()
@@ -6401,16 +5676,13 @@ class PremediaApp(QApplication):
                     pass
             self.watchdog_timer = QTimer(self)
             self.watchdog_timer.timeout.connect(self.check_memory_usage)
-            self.watchdog_timer.start(60000)
+            self.watchdog_timer.start(60000)  # every 60 seconds
 
             self.schedule_daily_restart(3, 0)
 
         except Exception as e:
             self.handle_error("FileWatcher", f"Failed to start FileWatcherWorker: {str(e)}")
 
-
-            
-        # ─────────────────────────────────────────────────────────────────
 
     def _safe_invoke_watcher(self):
         """
@@ -6544,16 +5816,14 @@ class PremediaApp(QApplication):
         app_signals.append_log.emit(f"[{context}] Failed: {str(error)}")
         app_signals.update_status.emit(f"{context} error: {str(error)}")
         if show_dialog:
-            # QMessageBox.critical(None, f"{context} Error", f"{context} error: {str(error)}")
-            show_alert(f"{context} Error",  f"{context} error: {str(error)}", QMessageBox.Critical)
+            QMessageBox.critical(None, f"{context} Error", f"{context} error: {str(error)}")
 
 
     def cleanup_and_quit(self):
         if IS_APP_ACTIVE_UPLOAD_DOWNLOAD:
             print(f"Skip log out: {IS_APP_ACTIVE_UPLOAD_DOWNLOAD}")
             # Show success message
-            # QMessageBox.information(None, "Action blocked", "An upload/download is currently in progress. Try again once it is complete.")
-            show_alert("Action blocked", "An upload/download is currently in progress. Try again once it is complete.", QMessageBox.Information)
+            QMessageBox.information(None, "Action blocked", "An upload/download is currently in progress. Try again once it is complete.")
             return
 
         try:
@@ -6634,16 +5904,11 @@ class PremediaApp(QApplication):
 
     def logout(self):
         if IS_APP_ACTIVE_UPLOAD_DOWNLOAD:
-            # QMessageBox.information(
-            #     None,
-            #     "Action blocked",
-            #     "An upload/download is currently in progress. "
-            #     "Try again once it is complete."
-            # )
-            show_alert(
+            QMessageBox.information(
+                None,
                 "Action blocked",
-                "An upload/download is currently in progress. Try again once it is complete.",
-                QMessageBox.Information
+                "An upload/download is currently in progress. "
+                "Try again once it is complete."
             )
             print(f"Skip log out: {IS_APP_ACTIVE_UPLOAD_DOWNLOAD}")
             return
@@ -6779,8 +6044,7 @@ class PremediaApp(QApplication):
                 logger.warning(f"Cache file does not exist: {cache_file}")
                 app_signals.append_log.emit(f"[Cache] Cache file does not exist: {cache_file}")
                 app_signals.update_status.emit("Cache file does not exist")
-                # QMessageBox.warning(None, "Cache Error", f"Cache file does not exist:\n{cache_file}")
-                show_alert("Cache Error", f"Cache file does not exist:\n{cache_file}", QMessageBox.Warning)
+                QMessageBox.warning(None, "Cache Error", f"Cache file does not exist:\n{cache_file}")
                 return
 
             # Verify file is readable
@@ -6788,8 +6052,7 @@ class PremediaApp(QApplication):
                 logger.warning(f"Cache file is not a valid file: {cache_file}")
                 app_signals.append_log.emit(f"[Cache] Invalid file: {cache_file}")
                 app_signals.update_status.emit("Invalid cache file")
-                # QMessageBox.warning(None, "Cache Error", f"Invalid cache file:\n{cache_file}")
-                show_alert("Cache Error", f"Invalid cache file:\n{cache_file}", QMessageBox.Warning)
+                QMessageBox.warning(None, "Cache Error", f"Invalid cache file:\n{cache_file}")
                 return
 
             # Read and beautify file content
@@ -6837,14 +6100,12 @@ class PremediaApp(QApplication):
             logger.error(f"IO error opening cache file: {e}\n{traceback.format_exc()}")
             app_signals.append_log.emit(f"[Cache] Failed: IO error - {str(e)}")
             app_signals.update_status.emit(f"Error opening cache file: {str(e)}")
-            # QMessageBox.critical(None, "Cache Error", f"Failed to open cache file:\n{str(e)}")
-            show_alert("Cache Error",f"Failed to open cache file:\n{str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(None, "Cache Error", f"Failed to open cache file:\n{str(e)}")
         except Exception as e:
             logger.error(f"Unexpected error opening cache file: {e}\n{traceback.format_exc()}")
             app_signals.append_log.emit(f"[Cache] Failed: Unexpected error - {str(e)}")
             app_signals.update_status.emit("Unexpected error")
-            # QMessageBox.critical(None, "Cache Error", f"Unexpected error opening cache file:\n{str(e)}")
-            show_alert("Cache Error",f"Unexpected error opening cache file:\n{str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(None, "Cache Error", f"Unexpected error opening cache file:\n{str(e)}")
 
     def clear_cache(self):
         global IS_APP_ACTIVE_UPLOAD_DOWNLOAD
@@ -6892,16 +6153,14 @@ class PremediaApp(QApplication):
                 app_signals.update_status.emit("Cache cleared successfully")
 
                 # ✅ Show success dialog
-                # QMessageBox.information(None, "Cache Cleared", "Cache cleared successfully!")
-                show_alert("Cache Cleared", "Cache cleared successfully!", QMessageBox.Critical)
+                QMessageBox.information(None, "Cache Cleared", "Cache cleared successfully!")
 
                 self.show_login()
             except Exception as e:
                 print(f"Error clearing cache: {e}")
                 app_signals.append_log.emit(f"[Cache] Failed: Error clearing cache - {str(e)}")
                 app_signals.update_status.emit(f"Error clearing cache: {str(e)}")
-                # QMessageBox.critical(None, "Cache Error", f"Failed to clear cache: {str(e)}")
-                show_alert("Cache Cleared", f"Failed to clear cache: {str(e)}", QMessageBox.Critical)
+                QMessageBox.critical(None, "Cache Error", f"Failed to clear cache: {str(e)}")
         else:
             app_signals.append_log.emit("[Cache] Cache clear cancelled by user")
             logger.info("Cache clear cancelled by user")
@@ -6985,8 +6244,7 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_login: {e}")
             app_signals.append_log.emit(f"[Login] Failed: Error opening login dialog - {str(e)}")
             app_signals.update_status.emit(f"Error opening login dialog: {str(e)}")
-            # QMessageBox.critical(None, "Login Error", f"Failed to open login dialog: {str(e)}")
-            show_alert("Login Error", f"Failed to open login dialog: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(None, "Login Error", f"Failed to open login dialog: {str(e)}")
 
 
     def show_logs(self):
@@ -7005,8 +6263,7 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_logs: {e}")
             app_signals.append_log.emit(f"[Log] Failed: Error opening log window - {str(e)}")
             app_signals.update_status.emit(f"Error opening log window: {str(e)}")
-            # QMessageBox.critical(self, "Log Error", f"Failed to open log window: {str(e)}")
-            show_alert("Log Error", f"Failed to open log window: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(self, "Log Error", f"Failed to open log window: {str(e)}")
 
     def show_downloaded_files(self):
         try:
@@ -7024,8 +6281,7 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_downloaded_files: {e}")
             app_signals.append_log.emit(f"[Files] Failed: Error showing downloaded files - {str(e)}")
             app_signals.update_status.emit(f"Error showing downloaded files: {str(e)}")
-            # QMessageBox.critical(self, "Files Error", f"Failed to show downloaded files: {str(e)}")
-            show_alert("Files Error", f"Failed to show downloaded files: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(self, "Files Error", f"Failed to show downloaded files: {str(e)}")
 
     def show_uploaded_files(self):
         try:
@@ -7043,8 +6299,7 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_uploaded_files: {e}")
             app_signals.append_log.emit(f"[Files] Failed: Error showing uploaded files - {str(e)}")
             app_signals.update_status.emit(f"Error showing uploaded files: {str(e)}")
-            # QMessageBox.critical(self, "Files Error", f"Failed to show uploaded files: {str(e)}")
-            show_alert("Files Error", f"Failed to show uploaded files: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(self, "Files Error", f"Failed to show uploaded files: {str(e)}")
 
     def convert_to_jpg_and_psd(self, src_path, dest_dir):
         try:
@@ -7066,8 +6321,7 @@ class PremediaApp(QApplication):
             logger.error(f"File conversion thread error: {e}")
             app_signals.append_log.emit(f"[Conversion] Failed: File conversion thread error - {str(e)}")
             app_signals.update_status.emit(f"File conversion thread error: {str(e)}")
-            # QMessageBox.critical(self, "Conversion Error", f"File conversion thread error: {str(e)}")
-            show_alert("Conversion Error", f"File conversion thread error: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(self, "Conversion Error", f"File conversion thread error: {str(e)}")
 
     def on_conversion_finished(self, jpg_path, psd_path, basename):
         try:
@@ -7083,8 +6337,7 @@ class PremediaApp(QApplication):
             logger.error(f"Error in on_conversion_finished: {e}")
             app_signals.append_log.emit(f"[Conversion] Failed: Conversion error - {str(e)}")
             app_signals.update_status.emit(f"Conversion error: {str(e)}")
-            # QMessageBox.critical(self, "Conversion Error", f"Conversion error: {str(e)}")
-            show_alert("Conversion Error", f"Conversion error: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(self, "Conversion Error", f"Conversion error: {str(e)}")
 
     def on_conversion_error(self, error, basename):
         try:
@@ -7095,8 +6348,7 @@ class PremediaApp(QApplication):
             logger.error(f"Error in on_conversion_error: {e}")
             app_signals.append_log.emit(f"[Conversion] Failed: Error handling conversion error - {str(e)}")
             app_signals.update_status.emit(f"Error handling conversion error: {str(e)}")
-            # QMessageBox.critical(self, "Conversion Error", f"Error handling conversion error: {str(e)}")
-            show_alert("Conversion Error", f"Error handling conversion error: {str(e)}", QMessageBox.Critical)
+            QMessageBox.critical(self, "Conversion Error", f"Error handling conversion error: {str(e)}")
 
     def open_with_photoshop(self, file_path):
         try:
@@ -7156,16 +6408,14 @@ class PremediaApp(QApplication):
                 logger.warning(error_msg)
                 app_signals.append_log.emit(f"[Photoshop] {error_msg}")
                 app_signals.update_status.emit(error_msg)
-                # QMessageBox.critical(self, "Photoshop Error", error_msg)
-                show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
+                QMessageBox.critical(self, "Photoshop Error", error_msg)
                 return
             if not Path(file_path).is_file():
                 error_msg = f"File not found: {file_path}"
                 logger.error(error_msg)
                 app_signals.append_log.emit(f"[Photoshop] {error_msg}")
                 app_signals.update_status.emit(error_msg)
-                # QMessageBox.critical(self, "Photoshop Error", error_msg)
-                show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
+                QMessageBox.critical(self, "Photoshop Error", error_msg)
                 return
             if system == "Darwin":
                 subprocess.run(["open", "-a", photoshop_path, file_path], check=True)
@@ -7179,8 +6429,7 @@ class PremediaApp(QApplication):
             logger.error(error_msg)
             app_signals.append_log.emit(f"[Photoshop] {error_msg}")
             app_signals.update_status.emit(error_msg)
-            # QMessageBox.critical(self, "Photoshop Error", error_msg)
-            show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
+            QMessageBox.critical(self, "Photoshop Error", error_msg)
 
     def update_progress(self, value: int):
         try:
@@ -7194,36 +6443,20 @@ class PremediaApp(QApplication):
             logger.error(f"Error in update_progress: {e}")
             app_signals.append_log.emit(f"[App] Error in update_progress: {str(e)}")
             
-    # @Slot(str, str)
-    # def _show_worker_alert(self, title: str, message: str):
-    #     """
-    #     Receives alert_notification signals from FileWatcherWorker (background thread)
-    #     and shows the dialog safely on the main thread via Qt.QueuedConnection.
-    #     """
-    #     QMessageBox.warning(None, title, message)
-
     @Slot(str, str)
     def _show_worker_alert(self, title: str, message: str):
-        msg = QMessageBox(None)
-        msg.setWindowTitle(title)
-        msg.setText(message)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowFlags(
-            msg.windowFlags()
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
-        msg.setWindowState(Qt.WindowState.WindowActive)
-        msg.setAttribute(Qt.WA_ShowWithoutActivating, False)
-        msg.raise_()
-        msg.activateWindow()
-        msg.exec()
+        """
+        Receives alert_notification signals from FileWatcherWorker (background thread)
+        and shows the dialog safely on the main thread via Qt.QueuedConnection.
+        """
+        QMessageBox.warning(None, title, message)
 
     def post_login_processes(self):
         """
         Called ONLY after a successful manual login from LoginDialog.
         NOT called during __init__ auto-login — start_file_watcher() handles that.
         """
-        global FILE_WATCHER_RUNNING_show_worker_alert
+        global FILE_WATCHER_RUNNING
         try:
             cache = load_cache()
             token = cache.get("token", "")
