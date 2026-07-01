@@ -1013,7 +1013,7 @@ def wait_for_vpn():
     while True:
 
         try:
-            socket.create_connection(("8.8.8.8",53),3)
+            socket.create_connection(("192.168.1.145",22),3)
             print("VPN Reconnected")
             return
 
