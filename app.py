@@ -2048,13 +2048,13 @@ class FileWatcherWorker(QObject):
 
                 raise
 
-        finally:
-            if transport is not None:
-                try:
-                    if transport.is_active():
-                        transport.close()
-                except Exception as t_err:
-                    logger.warning(f"Could not close download transport: {t_err}")
+            finally:
+                if transport is not None:
+                    try:
+                        if transport.is_active():
+                            transport.close()
+                    except Exception as t_err:
+                        logger.warning(f"Could not close download transport: {t_err}")
 
 
 
