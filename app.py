@@ -1008,18 +1008,31 @@ TIMEOUT = 1000  # seconds
 import socket
 import time
 
+MAX_VPN_RETRY = 20
+
 def wait_for_vpn():
 
-    while True:
+    retry = 0
+
+    while retry < MAX_VPN_RETRY:
 
         try:
-            socket.create_connection(("192.168.1.145",22),3)
-            print("VPN Reconnected")
-            return
 
-        except:
-            print("Waiting for VPN...")
+            socket.create_connection((NAS_IP, NAS_PORT), 3)
+
+            print("VPN Reconnected")
+
+            return True
+
+        except Exception:
+
+            retry += 1
+
+            print(f"Waiting for VPN... ({retry}/{MAX_VPN_RETRY})")
+
             time.sleep(5)
+
+    return False
 
 def call_api(api_url, payload, local_file_path=None):
     logger.info("+++++++++++++++++++++++++++++++ Posting operator upload ++++++++++++++++++++++++++++++")
@@ -1875,133 +1888,165 @@ class FileWatcherWorker(QObject):
         dest_path = str(Path(dest_path).resolve())
         filename = Path(dest_path).name
 
-        transport = None
-        transfer_start_time = time.time()
-        try:
-            transport = paramiko.Transport((NAS_IP, NAS_PORT))
-            transport.default_window_size = 2147483647
-            transport.default_max_packet_size = 65536
-            transport.packetizer.REKEY_BYTES = 2**40
-            transport.packetizer.REKEY_PACKETS = 2**40
-            transport.get_security_options().ciphers = (
-                "aes128-ctr", "aes192-ctr", "aes256-ctr"
-            )
-            transport.connect(username=NAS_USERNAME, password=NAS_PASSWORD)
+        retry = 0
 
-            nas_path = item.get("file_path", src_path)
-            Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+        while retry < 5:
+            transport = None
+            transfer_start_time = time.time()
 
-            sftp = transport.open_sftp_client()
-            total_size = sftp.stat(nas_path).st_size
-            sftp.close()
+            try:
+                transport = paramiko.Transport((NAS_IP, NAS_PORT))
+                transport.default_window_size = 2147483647
+                transport.default_max_packet_size = 65536
+                transport.packetizer.REKEY_BYTES = 2**40
+                transport.packetizer.REKEY_PACKETS = 2**40
+                transport.get_security_options().ciphers = (
+                    "aes128-ctr", "aes192-ctr", "aes256-ctr"
+                )
+                transport.connect(username=NAS_USERNAME, password=NAS_PASSWORD)
 
-            start_time = time.time()
-            last_emit = 0.0
+                nas_path = item.get("file_path", src_path)
+                Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
 
-            def format_time(seconds: float) -> str:
-                if seconds <= 0 or seconds == float("inf"):
-                    return "—"
-                m, s = divmod(int(seconds), 60)
-                h, m = divmod(m, 60)
-                if h:
-                    return f"{h:02d}:{m:02d}:{s:02d}"
-                return f"{m:02d}:{s:02d}"
+                sftp = transport.open_sftp_client()
+                total_size = sftp.stat(nas_path).st_size
+                sftp.close()
 
-            def scp_progress(_remote, size, sent):
-                nonlocal last_emit
+                start_time = time.time()
+                last_emit = 0.0
 
-                now = time.time()
-                elapsed = now - start_time
-                if elapsed <= 0:
-                    return
+                def format_time(seconds: float) -> str:
+                    if seconds <= 0 or seconds == float("inf"):
+                        return "—"
+                    m, s = divmod(int(seconds), 60)
+                    h, m = divmod(m, 60)
+                    if h:
+                        return f"{h:02d}:{m:02d}:{s:02d}"
+                    return f"{m:02d}:{s:02d}"
 
-                # Throttle UI updates
-                if now - last_emit < 0.5 and sent < total_size:
-                    return
-                last_emit = now
+                def scp_progress(_remote, size, sent):
+                    nonlocal last_emit
 
-                percent = int((sent / total_size) * 100) if total_size else 0
+                    now = time.time()
+                    elapsed = now - start_time
+                    if elapsed <= 0:
+                        return
 
-                # ---- Speed (MB/s) ----
-                speed_mbps = (sent / 1024 / 1024) / elapsed if elapsed > 0 else 0.0
+                    # Throttle UI updates
+                    if now - last_emit < 0.5 and sent < total_size:
+                        return
+                    last_emit = now
 
-                # ---- ETA ----
-                remaining = total_size - sent
-                eta = (remaining / 1024 / 1024) / speed_mbps if speed_mbps > 0 else float("inf")
+                    percent = int((sent / total_size) * 100) if total_size else 0
 
-                # ---- Progress bar (numeric only) ----
-                file_watcher.download_progress.emit(
+                    # ---- Speed (MB/s) ----
+                    speed_mbps = (sent / 1024 / 1024) / elapsed if elapsed > 0 else 0.0
+
+                    # ---- ETA ----
+                    remaining = total_size - sent
+                    eta = (remaining / 1024 / 1024) / speed_mbps if speed_mbps > 0 else float("inf")
+
+                    # ---- Progress bar (numeric only) ----
+                    file_watcher.download_progress.emit(
+                        spec_id,
+                        dest_path,
+                        filename,
+                        percent
+                    )
+
+                    # ---- Status text (human readable) ----
+                    status_text = (
+                        f"Downloading {percent}% • "
+                        f"{speed_mbps:.1f} MB/s • "
+                        f"ETA {format_time(eta)}"
+                    )
+
+                    file_watcher.download_status_detail.emit(
+                        dest_path,
+                        status_text,
+                        "download",
+                        percent,
+                        True
+                    )
+
+                with SCPClient(
+                    transport,
+                    socket_timeout=30,
+                    buff_size=8 * 1024 * 1024,
+                    progress=scp_progress
+                ) as scp:
+                    scp.get(nas_path, local_path=dest_path)
+
+                    # ---- Final completion ----
+                    self.download_progress.emit(
+                        spec_id,
+                        dest_path,
+                        filename,
+                        100
+                    )
+                    self.download_status_detail.emit(
+                        dest_path,
+                        "Download Completed",
+                        "download",
+                        100,
+                        True
+                    )
+                    break
+                duration_seconds = time.time() - transfer_start_time   # ← ADD THIS
+                
+                # Save duration to cache
+                cache = load_cache()
+                meta = cache.get("downloaded_files_with_metadata", {}).get(spec_id)
+                if meta:
+                    meta["api_response"]["transfer_duration"] = round(duration_seconds, 1)
+                    save_cache(cache, significant_change=False)           # ← ADD THIS
+
+                self.download_progress.emit(spec_id, dest_path, filename, 100)
+                self.download_status_detail.emit(dest_path, "Download Completed", "download", 100, True)
+
+            # except Exception:
+            # self.download_progress.emit(
+            #     spec_id,
+            #     dest_path,
+            #     filename,
+            #     0
+            # )
+            # self.download_status_detail.emit(
+            #     dest_path,
+            #     "Download Failed",
+            #     "download",
+            #     0,
+            #     True
+            # )
+            # raise
+            except Exception as e:
+
+                print(e)
+
+                if wait_for_vpn():
+
+                    retry += 1
+
+                    print("Retry Download...")
+
+                    continue
+
+                self.download_progress.emit(
                     spec_id,
                     dest_path,
                     filename,
-                    percent
+                    0
                 )
 
-                # ---- Status text (human readable) ----
-                status_text = (
-                    f"Downloading {percent}% • "
-                    f"{speed_mbps:.1f} MB/s • "
-                    f"ETA {format_time(eta)}"
-                )
-
-                file_watcher.download_status_detail.emit(
+                self.download_status_detail.emit(
                     dest_path,
-                    status_text,
+                    "Download Failed",
                     "download",
-                    percent,
+                    0,
                     True
                 )
 
-            with SCPClient(
-                transport,
-                socket_timeout=30,
-                buff_size=8 * 1024 * 1024,
-                progress=scp_progress
-            ) as scp:
-                scp.get(nas_path, local_path=dest_path)
-
-            # ---- Final completion ----
-            self.download_progress.emit(
-                spec_id,
-                dest_path,
-                filename,
-                100
-            )
-            self.download_status_detail.emit(
-                dest_path,
-                "Download Completed",
-                "download",
-                100,
-                True
-            )
-
-            duration_seconds = time.time() - transfer_start_time   # ← ADD THIS
-            
-            # Save duration to cache
-            cache = load_cache()
-            meta = cache.get("downloaded_files_with_metadata", {}).get(spec_id)
-            if meta:
-                meta["api_response"]["transfer_duration"] = round(duration_seconds, 1)
-                save_cache(cache, significant_change=False)           # ← ADD THIS
-
-            self.download_progress.emit(spec_id, dest_path, filename, 100)
-            self.download_status_detail.emit(dest_path, "Download Completed", "download", 100, True)
-
-        except Exception:
-            self.download_progress.emit(
-                spec_id,
-                dest_path,
-                filename,
-                0
-            )
-            self.download_status_detail.emit(
-                dest_path,
-                "Download Failed",
-                "download",
-                0,
-                True
-            )
-            raise
+                raise
 
         finally:
             if transport is not None:
@@ -2154,19 +2199,55 @@ class FileWatcherWorker(QObject):
 
                         while not success:
 
-                            try:
+                            retry = 0
 
-                                remote_file.write(data)
+                            while retry < 5:
+                                try:
 
-                                success = True
+                                    remote_file.write(data)
 
-                            except Exception as e:
+                                    success = True
 
-                                print("VPN disconnected :", e)
+                                # except Exception as e:
 
-                                wait_for_vpn()
+                                #     print("VPN disconnected :", e)
 
-                                raise Exception("Reconnect upload")
+                                #     wait_for_vpn()
+
+                                #     raise Exception("Reconnect upload")
+                                except Exception as e:
+
+                                    print(e)
+
+                                    if wait_for_vpn():
+
+                                        retry += 1
+
+                                        print("Retry Upload")
+
+                                        continue
+
+                                    file_watcher.upload_progress.emit(
+                                        spec_id,
+                                        dest_path,
+                                        filename,
+                                        0
+                                    )
+
+                                    file_watcher.upload_status_detail.emit(
+                                        dest_path,
+                                        "Upload Failed",
+                                        "upload",
+                                        0,
+                                        True
+                                    )
+
+                                    self.alert_notification.emit(
+                                        "Upload Error",
+                                        "Upload failed."
+                                    )
+
+                                    raise
                                 
 
                         transferred += len(data)
