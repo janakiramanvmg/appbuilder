@@ -406,7 +406,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-    DEPLOY_PATH: ${{ github.ref_name == 'uat113' && '22112023/application_uat/drn' || '22112023/application/drn' }}
+      DEPLOY_PATH: ${{ github.ref_name == 'uat113' && '22112023/application_uat/drn' || '22112023/application/drn' }}
 
 
     steps:
