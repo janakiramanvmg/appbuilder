@@ -184,27 +184,27 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === Server and environment Pointing global variables ===
 
-# BASE_DOMAIN = "https://app.vmgpremedia.com"
-# NAS_IP = "192.168.1.145"
-# NAS_PASSWORD = "D&*qmn012@12"
-# NAS_PORT = 22
-# NAS_SHARE = ""
-# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_USERNAME = "irnasappprod"
-# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_PATH = "softwaremedia/IR_prod/"
-# APPVERSION = "1.2.6"
-
-BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+BASE_DOMAIN = "https://app.vmgpremedia.com"
 NAS_IP = "192.168.1.145"
-NAS_USERNAME = "irdev"
-NAS_PASSWORD = "i#0f!L&+@s%^qc"
+NAS_PASSWORD = "D&*qmn012@12"
 NAS_PORT = 22
 NAS_SHARE = ""
-NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
-MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
-NAS_PATH = "softwaremedia/IR_uat/"
-APPVERSION = "1.2.6(UAT)"
+NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
+NAS_USERNAME = "irnasappprod"
+MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
+NAS_PATH = "softwaremedia/IR_prod/"
+APPVERSION = "1.2.6"
+
+# BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+# NAS_IP = "192.168.1.145"
+# NAS_USERNAME = "irdev"
+# NAS_PASSWORD = "i#0f!L&+@s%^qc"
+# NAS_PORT = 22
+# NAS_SHARE = ""
+# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
+# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
+# NAS_PATH = "softwaremedia/IR_uat/"
+# APPVERSION = "1.2.6(UAT)"
 
 
 BASE_DIR = Path(__file__).parent.resolve()
