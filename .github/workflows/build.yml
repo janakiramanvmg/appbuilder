@@ -2,8 +2,7 @@ name: Build PremediaApp (macOS & Windows)
 
 on:
   push:
-  branches:
-      branches: [uat113, uat113_ravi]
+    branches: [uat113, uat113_ravi]
   workflow_dispatch:
 
 jobs:
