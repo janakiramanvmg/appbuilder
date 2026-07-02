@@ -13,7 +13,7 @@ jobs:
     runs-on: macos-15-intel
     
     env:
-      DEPLOY_PATH: ${{ github.ref_name == 'uat113_ravi' && '22112023/application_uat/drn' || '22112023/application/drn' }}
+      DEPLOY_PATH: ${{ github.ref_name == 'uat113_ravi' && 'application_uat/drn' || 'application/drn' }}
 
 
     steps:
