@@ -13,7 +13,7 @@ jobs:
     runs-on: macos-15-intel
     
     env:
-      DEPLOY_PATH: ${{ github.ref_name == 'uat113_ravi' && 'application_uat/drn' || 'application/drn' }}
+      DEPLOY_PATH: ${{ github.ref_name == 'uat113' && 'application_uat/drn' || 'application/drn' }}
 
 
     steps:
@@ -319,7 +319,7 @@ jobs:
           set -e
 
           echo "Downloading latest version.json from S3 (if exists)..."
-          aws s3 cp s3://vmg-premedia-22112023/${DEPLOY_PATH}/latest_version.json version.json \
+          aws s3 cp "s3://vmg-premedia-22112023/${DEPLOY_PATH}/latest_version.json" version.json \
             || echo "version.json not found, using template"
 
           if [ ! -f version.json ]; then
@@ -373,12 +373,12 @@ jobs:
           # Ensure aws CLI is installed and available
           aws --version
           aws s3 cp dist/PremediaApp.dmg \
-            s3://vmg-premedia-22112023/${DEPLOY_PATH}/macos/PremediaApp_v1.2.6.dmg \
+            "s3://vmg-premedia-22112023/${DEPLOY_PATH}/macos/PremediaApp_v1.2.6.dmg" \
             --acl public-read
 
           echo "☁️ Uploading latest_version.json..."
           aws s3 cp version.json \
-            s3://vmg-premedia-22112023/${DEPLOY_PATH}/latest_version.json \
+            "s3://vmg-premedia-22112023/${DEPLOY_PATH}/latest_version.json" \
             --cache-control "no-cache, max-age=0, must-revalidate"
 
           echo "✅ macOS build uploaded successfully."
@@ -403,7 +403,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-      DEPLOY_PATH: ${{ github.ref_name == 'uat113' && '22112023/application_uat/drn' || '22112023/application/drn' }}
+      DEPLOY_PATH: ${{ github.ref_name == 'uat113' && 'application_uat/drn' || 'application/drn' }}
 
 
     steps:
@@ -972,8 +972,8 @@ jobs:
       #     $hash = "${{ env.sha256 }}"   # ✅ Uses lowercase hash from Step 1
       #     $json = @{
       #       version = $version
-      #       windows_url = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/${DEPLOY_PATH}/windows/PremediaApp_v$version.exe"
-      #       mac_url = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/${DEPLOY_PATH}/macos/PremediaApp_v$version.dmg"
+      #       windows_url = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/$env:DEPLOY_PATH/windows/PremediaApp_v$version.exe"
+      #       mac_url = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/$env:DEPLOY_PATH/macos/PremediaApp_v$version.dmg"
       #       sha256 = $hash
       #       release_notes = "Performance improvements and stability fixes"
       #       mandatory = $false
@@ -985,7 +985,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Downloading latest version.json from S3 (if exists)..."
-          aws s3 cp s3://vmg-premedia-22112023/${DEPLOY_PATH}/latest_version.json version.json `
+          aws s3 cp "s3://vmg-premedia-22112023/$env:DEPLOY_PATH/latest_version.json" version.json `
             || Write-Host "version.json not found, using template"
 
           if (-not (Test-Path version.json)) {
@@ -1002,7 +1002,7 @@ jobs:
                 $baseJson | Out-File version.json -Encoding utf8
               }
 
-              $winUrl = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/${DEPLOY_PATH}/windows/PremediaApp_v1.2.6.exe"
+              $winUrl = "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/$env:DEPLOY_PATH/windows/PremediaApp_v1.2.6.exe"
               $winSha = "${{ env.sha256 }}"
 
               jq --arg url "$winUrl" --arg sha "$winSha" `
@@ -1028,9 +1028,9 @@ jobs:
           AWS_DEFAULT_REGION: ap-southeast-2
         run: |
           echo "Uploading Windows EXE, changelog, and version metadata..."
-          aws s3 cp Output/PremediaApp-Setup.exe s3://vmg-premedia-22112023/${DEPLOY_PATH}/windows/PremediaApp_v1.2.6.exe --acl public-read
-          aws s3 cp Output/release_notes.txt s3://vmg-premedia-22112023/${DEPLOY_PATH}/changelogs/changelog_1.2.6.txt --acl public-read
-          aws s3 cp version.json s3://vmg-premedia-22112023/${DEPLOY_PATH}/latest_version.json --acl public-read --cache-control "no-cache, max-age=60"
+          aws s3 cp Output/PremediaApp-Setup.exe "s3://vmg-premedia-22112023/$env:DEPLOY_PATH/windows/PremediaApp_v1.2.6.exe" --acl public-read
+          aws s3 cp Output/release_notes.txt "s3://vmg-premedia-22112023/$env:DEPLOY_PATH/changelogs/changelog_1.2.6.txt" --acl public-read
+          aws s3 cp version.json "s3://vmg-premedia-22112023/$env:DEPLOY_PATH/latest_version.json" --acl public-read --cache-control "no-cache, max-age=60"
           echo "✅ Windows build uploaded successfully."
 
       - name: Upload release notes
