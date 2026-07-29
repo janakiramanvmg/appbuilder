@@ -348,11 +348,6 @@ TRANSFER_REPORT_INTERVAL_SEC = 10  # send a report every 10 seconds while a tran
 LATENCY_TARGET_HOST = None  # None => uses NAS_IP; set to a domain/IP to ping a different server
 LATENCY_TARGET_PORT = None  # None => uses NAS_PORT
 
-# === Network/server problem alarm thresholds ===
-LATENCY_WARNING_MS = 1000       # server latency above this = "server is very slow"
-SPEED_WARNING_MBPS = 0.5        # transfer speed below this (mid-transfer) = "server is very slow"
-ALARM_COOLDOWN_SEC = 300        # don't repeat the same alarm type more than once per 5 minutes
-
 log_window_handler = None
 # === Global State ===
 GLOBAL_CACHE = None
@@ -403,19 +398,6 @@ class AppSignals(QObject):
     update_file_list = Signal(str, str, str, int, bool)
     api_call_status = Signal(str, str, int)
     update_timer_status = Signal(str)
-    network_alarm = Signal(str, str)  # summary, full_diagnostic_report_text
-
-    def __init__(self):
-        super().__init__()
-        # Self-connect with QueuedConnection: app_signals is created at import
-        # time on the main thread, so this guarantees _on_network_alarm (and
-        # the Qt dialog it builds) always runs on the main GUI thread, even
-        # though network_alarm.emit() is called from background threads.
-        self.network_alarm.connect(self._on_network_alarm, Qt.QueuedConnection)
-
-    @Slot(str, str)
-    def _on_network_alarm(self, summary, report_text):
-        show_network_alarm_dialog(summary, report_text)
 
 app_signals = AppSignals()
 
@@ -513,356 +495,33 @@ def measure_latency_ms(host: str = None, port: int = None, timeout: float = 3.0)
                 pass
 
 
-def _tcp_check(host: str, port: int, timeout: float = 3.0):
-    """Generic reachability probe. Returns (reachable: bool, latency_ms or None, error_str or None)."""
-    start = time.perf_counter()
-    sock = None
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect((host, port))
-        return True, round((time.perf_counter() - start) * 1000, 1), None
-    except Exception as e:
-        return False, None, str(e)
-    finally:
-        if sock:
-            try:
-                sock.close()
-            except Exception:
-                pass
-
-
-def build_network_diagnostics_report(issue_type: str, summary: str, context: dict = None, error: str = None) -> str:
-    """
-    Builds a full, human-readable diagnostics report suitable for a screenshot
-    or copy/paste to the development team: who/what/where, plus live
-    reachability checks against the NAS, the API server, Google Chat, and
-    general internet, so the dev team can immediately tell whether the
-    problem is local-network-wide or specific to one endpoint.
-    """
-    lines = []
-    lines.append("PremediaApp — Network / Server Alarm Report")
-    lines.append("=" * 60)
-    lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f"Issue Type: {issue_type}")
-    lines.append(f"Summary: {summary}")
-    lines.append("")
-
-    try:
-        cache = load_cache()
-        username = cache.get("user", "Unknown")
-    except Exception:
-        username = "Unknown"
-
-    identifiers = {}
-    if isinstance(USER_SYSTEM_INFO, dict):
-        identifiers = USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
-    hostname = identifiers.get("hostname") or socket.gethostname()
-    ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
-
-    lines.append("-- User / System --")
-    lines.append(f"User: {username}")
-    lines.append(f"System: {hostname}")
-    lines.append(f"Local IP: {ip_address}")
-    lines.append(f"OS: {platform.system()} {platform.release()}")
-    lines.append(f"App Version: {APPVERSION}")
-    lines.append("")
-
-    if context:
-        lines.append("-- Context --")
-        for k, v in context.items():
-            lines.append(f"{k}: {v}")
-        lines.append("")
-
-    lines.append("-- Live Connectivity Checks --")
-
-    nas_ok, nas_latency, nas_err = _tcp_check(NAS_IP, NAS_PORT)
-    lines.append(
-        f"NAS Server ({NAS_IP}:{NAS_PORT}): "
-        + (f"Reachable — {nas_latency} ms" if nas_ok else f"UNREACHABLE — {nas_err}")
-    )
-
-    try:
-        api_host = BASE_DOMAIN.replace("https://", "").replace("http://", "").split("/")[0]
-    except Exception:
-        api_host = BASE_DOMAIN
-    api_ok, api_latency, api_err = _tcp_check(api_host, 443)
-    lines.append(
-        f"API Server ({api_host}:443): "
-        + (f"Reachable — {api_latency} ms" if api_ok else f"UNREACHABLE — {api_err}")
-    )
-
-    gchat_ok, gchat_latency, gchat_err = _tcp_check("chat.googleapis.com", 443)
-    lines.append(
-        f"Google Chat (chat.googleapis.com:443): "
-        + (f"Reachable — {gchat_latency} ms" if gchat_ok else f"UNREACHABLE — {gchat_err}")
-    )
-
-    inet_ok, inet_latency, inet_err = _tcp_check("8.8.8.8", 53)
-    lines.append(
-        f"General Internet (8.8.8.8:53): "
-        + (f"Reachable — {inet_latency} ms" if inet_ok else f"UNREACHABLE — {inet_err}")
-    )
-    lines.append("")
-
-    if error:
-        lines.append("-- Error Details --")
-        lines.append(str(error))
-        lines.append("")
-
-    lines.append("=" * 60)
-    return "\n".join(lines)
-
-
-def show_network_alarm_dialog(summary: str, report_text: str):
-    """
-    Loud, unmissable popup for network/server problems (Google Chat
-    unreachable, NAS/server unreachable, server very slow, etc). Beeps a few
-    times, shows the full diagnostic report in a selectable text box, and
-    provides a one-click "Copy Report to Clipboard" button so the report can
-    be pasted (or the window screenshotted) and sent straight to the
-    development team.
-
-    Must only be invoked on the main GUI thread — reached exclusively via
-    AppSignals.network_alarm's self-connected QueuedConnection, which
-    guarantees that regardless of which background thread triggered it.
-    """
-    try:
-        for i in range(3):
-            QTimer.singleShot(i * 300, QApplication.beep)
-
-        dialog = QDialog(None)
-        dialog.setWindowTitle("⚠ PremediaApp — Network / Server Alarm")
-        dialog.setMinimumSize(720, 480)
-        dialog.setWindowFlags(
-            dialog.windowFlags()
-            | Qt.WindowType.Window
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
-        try:
-            dialog.setWindowIcon(load_icon(ICON_PATH, "network alarm"))
-        except Exception:
-            pass
-
-        layout = QVBoxLayout(dialog)
-
-        summary_lbl = QLabel(f"⚠  {summary}")
-        summary_lbl.setWordWrap(True)
-        summary_lbl.setStyleSheet(
-            "color: white; background-color: #c0392b; font-weight: bold; "
-            "font-size: 14px; padding: 10px; border-radius: 4px;"
-        )
-        layout.addWidget(summary_lbl)
-
-        hint_lbl = QLabel(
-            "Take a screenshot of the report below, or click 'Copy Report' and paste it "
-            "into an email/chat message to the development team."
-        )
-        hint_lbl.setWordWrap(True)
-        hint_lbl.setStyleSheet("color: #555; font-size: 11px;")
-        layout.addWidget(hint_lbl)
-
-        text_edit = QTextEdit()
-        text_edit.setReadOnly(True)
-        text_edit.setPlainText(report_text)
-        text_edit.setFont(QFont("Consolas" if platform.system() == "Windows" else "Monospace", 10))
-        layout.addWidget(text_edit)
-
-        btn_row = QHBoxLayout()
-        copy_btn = QPushButton("📋 Copy Report to Clipboard")
-        status_lbl = QLabel("")
-        status_lbl.setStyleSheet("color: #2ecc71; font-weight: bold;")
-        close_btn = QPushButton("Close")
-
-        def _copy():
-            QApplication.clipboard().setText(report_text)
-            status_lbl.setText("Copied!")
-            QTimer.singleShot(2000, lambda: status_lbl.setText(""))
-
-        copy_btn.clicked.connect(_copy)
-        close_btn.clicked.connect(dialog.close)
-
-        btn_row.addWidget(copy_btn)
-        btn_row.addWidget(status_lbl)
-        btn_row.addStretch(1)
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
-
-        dialog.setLayout(layout)
-        dialog.raise_()
-        dialog.activateWindow()
-        dialog.exec()
-    except Exception as e:
-        logger.error(f"[Alarm] Failed to show network alarm dialog: {e}")
-
-
-_ALARM_LOCK = Lock()
-_LAST_ALARM_TIME = {}
-
-
-def raise_network_alarm(issue_type: str, summary: str, context: dict = None, error: str = None):
-    """
-    Raises a popup alarm (with sound + full diagnostics) for network/server
-    problems: can't reach Google Chat, can't reach the NAS/server, server
-    responding very slowly, or any other unexpected reporting failure.
-
-    Rate-limited per issue_type (ALARM_COOLDOWN_SEC) so a persistent problem
-    doesn't spam popups every few seconds — the underlying issue still gets
-    logged every time, just not re-popped-up.
-
-    Safe to call from any thread.
-    """
-    now = time.time()
-    with _ALARM_LOCK:
-        last = _LAST_ALARM_TIME.get(issue_type, 0)
-        if now - last < ALARM_COOLDOWN_SEC:
-            logger.debug(f"[Alarm] Suppressed duplicate '{issue_type}' alarm (cooldown active)")
-            return
-        _LAST_ALARM_TIME[issue_type] = now
-
-    logger.error(f"[Alarm] {issue_type}: {summary}")
-    try:
-        app_signals.append_log.emit(f"[Alarm] {issue_type}: {summary}")
-    except Exception:
-        pass
-
-    try:
-        report_text = build_network_diagnostics_report(issue_type, summary, context, error)
-    except Exception as e:
-        report_text = f"Failed to build full diagnostics report: {e}\n\nOriginal issue: {issue_type} - {summary}"
-
-    # Hand off to the main thread — Qt widgets can only be built there.
-    app_signals.network_alarm.emit(summary, report_text)
-
-
-def _gchat_webhook_url_with_threading():
-    """
-    Ensure the webhook URL has messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD,
-    which is required for Google Chat to group messages sharing the same
-    threadKey into a single thread instead of posting separate top-level messages.
-    """
+def send_google_chat_message(text: str):
+    """Post a plain-text message to the configured Google Chat webhook."""
     if not GOOGLE_CHAT_WEBHOOK_URL:
-        return ""
-    if "messageReplyOption=" in GOOGLE_CHAT_WEBHOOK_URL:
-        return GOOGLE_CHAT_WEBHOOK_URL
-    separator = "&" if "?" in GOOGLE_CHAT_WEBHOOK_URL else "?"
-    return f"{GOOGLE_CHAT_WEBHOOK_URL}{separator}messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
-
-
-def send_google_chat_message(text: str, thread_key: str = None):
-    """
-    Post a message to the configured Google Chat webhook.
-
-    Returns (True, response_json_or_None) on success, or
-            (False, error_message_str) on failure — the caller uses this to
-    decide whether to raise a network alarm.
-
-    NOTE ON "UPDATING" MESSAGES:
-    Google Chat's message-edit endpoint (PUT/PATCH .../spaces/*/messages/*)
-    requires full OAuth app authentication (a registered Chat app + service
-    account with the chat.bot scope) — a plain incoming webhook's key/token
-    can only ever CREATE messages, it cannot edit one after the fact. So true
-    "keep editing message #1" is not possible with just a webhook URL.
-
-    The practical equivalent used here: every event for the same file+
-    operation is posted with the SAME thread_key. Google Chat groups all
-    messages sharing a thread_key into a single collapsible thread, so the
-    conversation for that file+operation stays together instead of scattering
-    across the space, and the first message is never replaced.
-    """
-    if not GOOGLE_CHAT_WEBHOOK_URL:
-        return False, "GOOGLE_CHAT_WEBHOOK_URL is not configured"
+        logger.debug("[GChat] GOOGLE_CHAT_WEBHOOK_URL not configured, skipping send")
+        return
     try:
-        url = _gchat_webhook_url_with_threading()
-        payload = {"text": text}
-        if thread_key:
-            payload["thread"] = {"threadKey": thread_key}
-        resp = requests.post(url, json=payload, timeout=10)
+        resp = requests.post(
+            GOOGLE_CHAT_WEBHOOK_URL,
+            json={"text": text},
+            timeout=10,
+        )
         if resp.status_code not in (200, 204):
-            err = f"HTTP {resp.status_code}: {resp.text[:300]}"
-            logger.warning(f"[GChat] Failed to send message: {err}")
-            return False, err
-        try:
-            return True, resp.json()
-        except ValueError:
-            # 204 No Content (or an empty body on 200) — still a success
-            return True, None
-    except requests.exceptions.Timeout:
-        err = "Request to Google Chat timed out (slow or unreachable network)"
-        logger.warning(f"[GChat] {err}")
-        return False, err
-    except requests.exceptions.ConnectionError as e:
-        err = f"Could not connect to Google Chat: {e}"
-        logger.warning(f"[GChat] {err}")
-        return False, err
+            logger.warning(f"[GChat] Failed to send message: {resp.status_code} {resp.text[:300]}")
     except Exception as e:
-        err = f"Unexpected error sending to Google Chat: {e}"
-        logger.warning(f"[GChat] {err}")
-        return False, err
-
-
-def _thread_key_for(action: str, file_name: str) -> str:
-    """Stable thread key so every event for this (action, file_name) lands in one thread."""
-    raw = f"{action}:{file_name}"
-    return "premedia-" + hashlib.md5(raw.encode("utf-8")).hexdigest()[:20]
-
-
-def _pad_cell(value, width):
-    value = str(value)
-    return value + " " * max(0, width - len(value))
-
-
-def _build_transfer_table_text(header_info: dict, rows: list) -> str:
-    """
-    Builds one Google Chat message: a header block (User/System/IP/File/Type/Size,
-    shown once) followed by a monospaced table (inside a code block, so columns
-    stay aligned) with one row per event (Started / periodic Progress / Completed
-    or Failed).
-    """
-    header_lines = [
-        f"*PremediaApp Transfer — {header_info.get('action', '')}*",
-        f"User: {header_info.get('user', '-')}",
-        f"System: {header_info.get('system', '-')}",
-        f"IP: {header_info.get('ip', '-')}",
-        f"File: {header_info.get('file', '-')}",
-        f"Type: {header_info.get('type', '-')}",
-        f"Size: {header_info.get('size', '-')}",
-    ]
-
-    columns = ["Event", "Time", "Progress", "Speed", "Time Taken", "ETA", "Latency"]
-    keys = ["event", "time", "progress", "speed", "time_taken", "eta", "latency"]
-
-    widths = [len(c) for c in columns]
-    for row in rows:
-        for i, k in enumerate(keys):
-            widths[i] = max(widths[i], len(str(row.get(k, "-"))))
-
-    def _fmt_row(values):
-        return " | ".join(_pad_cell(v, widths[i]) for i, v in enumerate(values))
-
-    separator = "-+-".join("-" * w for w in widths)
-
-    table_lines = [_fmt_row(columns), separator]
-    for row in rows:
-        table_lines.append(_fmt_row([row.get(k, "-") for k in keys]))
-
-    table_block = "```\n" + "\n".join(table_lines) + "\n```"
-
-    return "\n".join(header_lines) + "\n\n" + table_block
-
-
-# One Google Chat message per (action, file_name) currently in flight.
-# key: (action, file_name) -> {"message_name": str|None, "rows": [...], "header_info": {...}}
-_MESSAGE_REGISTRY_LOCK = Lock()
-_ACTIVE_MESSAGE_REGISTRY = {}
+        logger.warning(f"[GChat] Error sending message: {e}")
 
 
 class TransferMonitorReporter:
     """
     Background daemon-thread reporter. Every TRANSFER_REPORT_INTERVAL_SEC
-    seconds, if an upload/download is currently active, it appends a
-    "Progress" row (latency/speed/ETA/etc.) to that file's existing Google
-    Chat table message — it does NOT post a brand-new message.
+    seconds, if an upload/download is currently active, it gathers:
+      - logged-in username
+      - system/host name
+      - system IP address
+      - current transfer speed (MB/s)
+      - server latency (ms, TCP connect time to the NAS)
+    and posts that as a message to Google Chat.
 
     Runs on its own thread — never touches Qt widgets — so it's safe to
     start once and leave running for the lifetime of the app.
@@ -899,18 +558,49 @@ class TransferMonitorReporter:
                 continue
 
             try:
-                report_transfer_event(
-                    "Progress",
-                    stats.get("action") or "",
-                    stats.get("file_name") or "",
-                    percent=stats.get("percent", 0),
-                    speed_mbps=stats.get("speed_mbps", 0.0),
-                    file_size_mb=stats.get("file_size_mb", 0.0),
-                    elapsed_sec=stats.get("elapsed_sec", 0.0),
-                    eta_text=stats.get("eta_text", "-"),
-                )
+                self._report(stats)
             except Exception as e:
                 logger.warning(f"[TransferMonitorReporter] Failed to build/send report: {e}")
+
+    def _report(self, stats: dict):
+        cache = load_cache()
+        username = cache.get("user", "Unknown")
+
+        identifiers = {}
+        if isinstance(USER_SYSTEM_INFO, dict):
+            identifiers = USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
+
+        hostname = identifiers.get("hostname") or socket.gethostname()
+        ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
+
+        latency_ms = measure_latency_ms()
+        latency_text = f"{latency_ms} ms" if latency_ms is not None else "Unreachable"
+
+        action = (stats.get("action") or "").capitalize()
+        file_name = stats.get("file_name") or "-"
+        file_type = stats.get("file_type") or "-"
+        file_size_mb = stats.get("file_size_mb", 0.0)
+        percent = stats.get("percent", 0)
+        speed = stats.get("speed_mbps", 0.0)
+        elapsed_text = _format_elapsed(stats.get("elapsed_sec", 0.0))
+        eta_text = stats.get("eta_text", "-")
+
+        text = (
+            f"*PremediaApp Transfer Report*\n"
+            f"User: {username}\n"
+            f"System: {hostname}\n"
+            f"IP: {ip_address}\n"
+            f"Action: {action}\n"
+            f"File: {file_name}\n"
+            f"Type: {file_type}\n"
+            f"Size: {file_size_mb:.2f} MB\n"
+            f"Progress: {percent}%\n"
+            f"Speed: {speed:.2f} MB/s\n"
+            f"Time Taken: {elapsed_text}\n"
+            f"ETA: {eta_text}\n"
+            f"Server Latency: {latency_text}"
+        )
+        send_google_chat_message(text)
 
 
 # Single shared instance — .start() is called once near app startup below.
@@ -928,21 +618,15 @@ def report_transfer_event(
     eta_text: str = "-",
 ):
     """
-    Post one Google Chat message per event ("Started", "Progress",
-    "Completed", "Failed") for a given (action, file_name) — but every one of
-    them is posted with the SAME thread_key, so Google Chat groups them into
-    a single thread instead of scattering separate top-level messages across
-    the space. The first message ("Started") is never overwritten; each later
-    post is a reply in that same thread and carries the FULL cumulative table
-    (all rows so far), so the most recent message always shows the complete
-    history for that file+operation.
+    Fire off an immediate, one-off Google Chat report for a transfer lifecycle
+    event ("Started", "Completed", "Failed") — independent of the periodic
+    TransferMonitorReporter loop. This guarantees fast transfers (finishing in
+    under TRANSFER_REPORT_INTERVAL_SEC) still get reported at least twice:
+    once when they start and once when they finish.
 
-    (True in-place message editing would need a full Chat app with OAuth app
-    authentication — not possible with a plain incoming webhook's key/token —
-    see send_google_chat_message() for details.)
-
-    On "Completed"/"Failed" the row history for that file+operation is
-    cleared, so a later transfer of the same file starts a fresh thread/table.
+    file_size_mb: total size of the file being transferred, in MB (if known yet).
+    elapsed_sec: time taken so far / at completion, in seconds (if known yet).
+    eta_text: human-readable ETA string, e.g. "00:12" or "Done" (if known yet).
 
     Runs on its own daemon thread so it never blocks the actual transfer.
     """
@@ -959,100 +643,29 @@ def report_transfer_event(
             ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
 
             latency_ms = measure_latency_ms()
-            latency_text = f"{latency_ms} ms" if latency_ms is not None else "N/A"
+            latency_text = f"{latency_ms} ms" if latency_ms is not None else "Unreachable"
 
-            alarm_context = {
-                "Action": action.capitalize(),
-                "File": file_name or "-",
-                "Event": event,
-                "Progress": f"{percent}%",
-                "Speed": f"{speed_mbps:.2f} MB/s",
-            }
+            file_type = _file_type_of(file_name)
+            elapsed_text = _format_elapsed(elapsed_sec)
 
-            # ---- Alarm: NAS/server unreachable ("not able to ping server") ----
-            if latency_ms is None:
-                target_host = LATENCY_TARGET_HOST or NAS_IP
-                target_port = LATENCY_TARGET_PORT or NAS_PORT
-                raise_network_alarm(
-                    "ServerUnreachable",
-                    f"Cannot reach the server ({target_host}:{target_port}) — it may be down "
-                    f"or your network connection may be lost.",
-                    context=alarm_context,
-                )
-            # ---- Alarm: server responding, but very slow (high latency) ----
-            elif latency_ms > LATENCY_WARNING_MS:
-                raise_network_alarm(
-                    "ServerSlow",
-                    f"Server latency is very high ({latency_ms} ms) — the connection to the "
-                    f"server appears unstable or overloaded.",
-                    context={**alarm_context, "Latency": f"{latency_ms} ms"},
-                )
-
-            # ---- Alarm: transfer speed is critically slow mid-transfer ----
-            if event == "Progress" and 0 < percent < 100 and 0 < speed_mbps < SPEED_WARNING_MBPS:
-                raise_network_alarm(
-                    "TransferSlow",
-                    f"Transfer speed is very slow ({speed_mbps:.2f} MB/s) for '{file_name}' — "
-                    f"the server or network may be degraded.",
-                    context=alarm_context,
-                )
-
-            row = {
-                "event": event,
-                "time": datetime.now().strftime("%H:%M:%S"),
-                "progress": f"{percent}%",
-                "speed": f"{speed_mbps:.2f} MB/s",
-                "time_taken": _format_elapsed(elapsed_sec),
-                "eta": eta_text,
-                "latency": latency_text,
-            }
-
-            header_info = {
-                "action": action.capitalize(),
-                "user": username,
-                "system": hostname,
-                "ip": ip_address,
-                "file": file_name or "-",
-                "type": _file_type_of(file_name),
-                "size": f"{file_size_mb:.2f} MB" if file_size_mb else "-",
-            }
-
-            reg_key = (action, file_name)
-            is_final = event in ("Completed", "Failed")
-            thread_key = _thread_key_for(action, file_name)
-
-            with _MESSAGE_REGISTRY_LOCK:
-                entry = _ACTIVE_MESSAGE_REGISTRY.get(reg_key)
-                if entry is None:
-                    entry = {"rows": [], "header_info": header_info}
-                    _ACTIVE_MESSAGE_REGISTRY[reg_key] = entry
-
-                entry["header_info"] = header_info  # keep size/type current
-                entry["rows"].append(row)
-                text = _build_transfer_table_text(entry["header_info"], entry["rows"])
-
-                ok, result = send_google_chat_message(text, thread_key=thread_key)
-
-                if is_final:
-                    _ACTIVE_MESSAGE_REGISTRY.pop(reg_key, None)
-
-            # ---- Alarm: could not deliver the report to Google Chat at all ----
-            if not ok:
-                raise_network_alarm(
-                    "GoogleChatUnreachable",
-                    f"Unable to send the transfer report to Google Chat for '{file_name}'.",
-                    context=alarm_context,
-                    error=result,
-                )
-
+            text = (
+                f"*PremediaApp Transfer {event}*\n"
+                f"User: {username}\n"
+                f"System: {hostname}\n"
+                f"IP: {ip_address}\n"
+                f"Action: {action.capitalize()}\n"
+                f"File: {file_name or '-'}\n"
+                f"Type: {file_type}\n"
+                f"Size: {file_size_mb:.2f} MB\n"
+                f"Progress: {percent}%\n"
+                f"Speed: {speed_mbps:.2f} MB/s\n"
+                f"Time Taken: {elapsed_text}\n"
+                f"ETA: {eta_text}\n"
+                f"Server Latency: {latency_text}"
+            )
+            send_google_chat_message(text)
         except Exception as e:
             logger.warning(f"[TransferReport:{event}] Failed to send report: {e}")
-            raise_network_alarm(
-                "ReportingError",
-                f"Unexpected error while building/sending the transfer report for '{file_name}'.",
-                context={"Action": action, "File": file_name, "Event": event},
-                error=str(e),
-            )
 
     threading.Thread(target=_worker, daemon=True, name=f"TransferReport-{event}").start()
 
