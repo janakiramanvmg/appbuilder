@@ -438,7 +438,6 @@ _CURRENT_TRANSFER_STATS = {
     "percent": 0,
     "elapsed_sec": 0.0,
     "eta_text": "-",
-    "request_id": None,   # spec_id/task_id — distinguishes repeat transfers of the same file
 }
 
 
@@ -463,8 +462,7 @@ def _format_elapsed(seconds: float) -> str:
 
 
 def _update_transfer_stats(action: str, file_name: str, speed_mbps: float, percent: int,
-                            file_size_mb: float = 0.0, elapsed_sec: float = 0.0, eta_text: str = "-",
-                            request_id: str = None):
+                            file_size_mb: float = 0.0, elapsed_sec: float = 0.0, eta_text: str = "-"):
     """Called from the download/upload progress callbacks to record current speed/size/ETA."""
     with _TRANSFER_MONITOR_LOCK:
         _CURRENT_TRANSFER_STATS.update({
@@ -477,7 +475,6 @@ def _update_transfer_stats(action: str, file_name: str, speed_mbps: float, perce
             "percent": percent,
             "elapsed_sec": elapsed_sec,
             "eta_text": eta_text,
-            "request_id": request_id,
         })
 
 
@@ -489,7 +486,6 @@ def _clear_transfer_stats():
         _CURRENT_TRANSFER_STATS["percent"] = 0
         _CURRENT_TRANSFER_STATS["elapsed_sec"] = 0.0
         _CURRENT_TRANSFER_STATS["eta_text"] = "-"
-        _CURRENT_TRANSFER_STATS["request_id"] = None
 
 
 def measure_latency_ms(host: str = None, port: int = None, timeout: float = 3.0):
@@ -739,121 +735,6 @@ def raise_network_alarm(issue_type: str, summary: str, context: dict = None, err
     app_signals.network_alarm.emit(summary, report_text)
 
 
-# Fields that must never be forwarded to Google Chat even inside a request payload.
-_SENSITIVE_PAYLOAD_KEYS = {
-    "password", "saved_password", "client_secret", "secret",
-    "token", "access_token", "authorization", "auth",
-}
-
-
-def _redact_and_stringify_payload(payload) -> str:
-    """
-    Turns a request payload (dict / JSON string / bytes / anything) into a
-    readable string for the Chat report, with any password/secret/token
-    fields replaced by ***REDACTED*** first. Truncated to a safe length.
-    """
-    try:
-        data = payload
-        if isinstance(data, (bytes, bytearray)):
-            data = data.decode("utf-8", errors="replace")
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except Exception:
-                return data[:1200]
-
-        if isinstance(data, dict):
-            redacted = {
-                k: ("***REDACTED***" if str(k).lower() in _SENSITIVE_PAYLOAD_KEYS else v)
-                for k, v in data.items()
-            }
-            return json.dumps(redacted, indent=2, default=str)[:1500]
-
-        return str(data)[:1200]
-    except Exception:
-        return "<payload could not be serialized>"
-
-
-_API_ERROR_LOCK = Lock()
-_LAST_API_ERROR_TIME = {}
-API_ERROR_REPORT_COOLDOWN_SEC = 120  # avoid spamming Chat if the same endpoint keeps failing on retries
-
-
-def report_api_error_to_chat(
-    api_url: str,
-    method: str = "POST",
-    payload=None,
-    status_code=None,
-    response_text: str = None,
-    error: str = None,
-    files_included: bool = False,
-):
-    """
-    Fire-and-forget report of a failed API call to Google Chat, including the
-    request payload (secrets redacted) and the server's response (or the
-    exception if no response was ever received).
-
-    Rate-limited per (endpoint, status/error) so repeated retries of the same
-    failing call don't flood the Chat space — a genuinely different failure
-    (different endpoint or different status) still gets reported right away.
-
-    Runs on its own daemon thread; safe to call from anywhere, any thread.
-    """
-    def _worker():
-        try:
-            dedup_key = (api_url, status_code, bool(error))
-            now = time.time()
-            with _API_ERROR_LOCK:
-                last = _LAST_API_ERROR_TIME.get(dedup_key, 0)
-                if now - last < API_ERROR_REPORT_COOLDOWN_SEC:
-                    logger.debug(f"[ApiErrorReport] Suppressed duplicate report for {api_url} (cooldown)")
-                    return
-                _LAST_API_ERROR_TIME[dedup_key] = now
-
-            cache = load_cache()
-            username = cache.get("user", "Unknown")
-            identifiers = {}
-            if isinstance(USER_SYSTEM_INFO, dict):
-                identifiers = USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
-            hostname = identifiers.get("hostname") or socket.gethostname()
-            ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
-
-            payload_text = (
-                "<file upload — binary payload omitted>"
-                if files_included else _redact_and_stringify_payload(payload)
-            )
-            response_snippet = (response_text or "-")[:1200]
-
-            text_lines = [
-                "*PremediaApp API Error*",
-                f"User: {username}",
-                f"System: {hostname}",
-                f"IP: {ip_address}",
-                f"Method: {method}",
-                f"Endpoint: {api_url}",
-                f"Status Code: {status_code if status_code is not None else 'No response'}",
-                "",
-                "Payload:",
-                f"```{payload_text}```",
-                "",
-                "Response:",
-                f"```{response_snippet}```",
-            ]
-            if error:
-                text_lines.append("")
-                text_lines.append(f"Error: {error}")
-
-            send_google_chat_message("\n".join(text_lines))
-            logger.warning(
-                f"[ApiErrorReport] Reported failed {method} {api_url} "
-                f"(status={status_code}) to Google Chat"
-            )
-        except Exception as e:
-            logger.warning(f"[ApiErrorReport] Failed to report API error to Chat: {e}")
-
-    threading.Thread(target=_worker, daemon=True, name="ApiErrorReport").start()
-
-
 def _gchat_webhook_url_with_threading():
     """
     Ensure the webhook URL has messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD,
@@ -920,14 +801,9 @@ def send_google_chat_message(text: str, thread_key: str = None):
         return False, err
 
 
-def _thread_key_for(action: str, file_name: str, request_id: str = None) -> str:
-    """
-    Stable thread key so every event belonging to the SAME transfer request
-    lands in one thread. Including request_id means a second download/upload
-    of the same file (a different request_id) gets its own NEW thread/message
-    instead of being merged into the previous transfer's thread.
-    """
-    raw = f"{action}:{file_name}:{request_id or ''}"
+def _thread_key_for(action: str, file_name: str) -> str:
+    """Stable thread key so every event for this (action, file_name) lands in one thread."""
+    raw = f"{action}:{file_name}"
     return "premedia-" + hashlib.md5(raw.encode("utf-8")).hexdigest()[:20]
 
 
@@ -938,10 +814,10 @@ def _pad_cell(value, width):
 
 def _build_transfer_table_text(header_info: dict, rows: list) -> str:
     """
-    Builds one Google Chat message: a header block (User/System/IP/File/Type/
-    Size/Request ID, shown once) followed by a monospaced table (inside a
-    code block, so columns stay aligned) with one row per event (Started /
-    periodic Progress / Completed or Failed).
+    Builds one Google Chat message: a header block (User/System/IP/File/Type/Size,
+    shown once) followed by a monospaced table (inside a code block, so columns
+    stay aligned) with one row per event (Started / periodic Progress / Completed
+    or Failed).
     """
     header_lines = [
         f"*PremediaApp Transfer — {header_info.get('action', '')}*",
@@ -951,7 +827,6 @@ def _build_transfer_table_text(header_info: dict, rows: list) -> str:
         f"File: {header_info.get('file', '-')}",
         f"Type: {header_info.get('type', '-')}",
         f"Size: {header_info.get('size', '-')}",
-        f"Request ID: {header_info.get('request_id', '-')}",
     ]
 
     columns = ["Event", "Time", "Progress", "Speed", "Time Taken", "ETA", "Latency"]
@@ -1033,7 +908,6 @@ class TransferMonitorReporter:
                     file_size_mb=stats.get("file_size_mb", 0.0),
                     elapsed_sec=stats.get("elapsed_sec", 0.0),
                     eta_text=stats.get("eta_text", "-"),
-                    request_id=stats.get("request_id"),
                 )
             except Exception as e:
                 logger.warning(f"[TransferMonitorReporter] Failed to build/send report: {e}")
@@ -1052,27 +926,23 @@ def report_transfer_event(
     file_size_mb: float = 0.0,
     elapsed_sec: float = 0.0,
     eta_text: str = "-",
-    request_id: str = None,
 ):
     """
     Post one Google Chat message per event ("Started", "Progress",
-    "Completed", "Failed") for a given (action, file_name, request_id) — but
-    every one of them is posted with the SAME thread_key, so Google Chat
-    groups them into a single thread instead of scattering separate
-    top-level messages across the space.
-
-    request_id (the task/spec id for this specific download or upload) is
-    what makes REPEAT transfers of the SAME file distinct: if you download
-    'photo.jpg' twice, each download has its own request_id, so each gets
-    its OWN new top-level thread/message — they are never merged together.
-    Only events sharing the same request_id (Started -> Progress -> Completed
-    for one specific transfer) get grouped as replies in one thread.
+    "Completed", "Failed") for a given (action, file_name) — but every one of
+    them is posted with the SAME thread_key, so Google Chat groups them into
+    a single thread instead of scattering separate top-level messages across
+    the space. The first message ("Started") is never overwritten; each later
+    post is a reply in that same thread and carries the FULL cumulative table
+    (all rows so far), so the most recent message always shows the complete
+    history for that file+operation.
 
     (True in-place message editing would need a full Chat app with OAuth app
     authentication — not possible with a plain incoming webhook's key/token —
     see send_google_chat_message() for details.)
 
-    On "Completed"/"Failed" the row history for that request is cleared.
+    On "Completed"/"Failed" the row history for that file+operation is
+    cleared, so a later transfer of the same file starts a fresh thread/table.
 
     Runs on its own daemon thread so it never blocks the actual transfer.
     """
@@ -1094,7 +964,6 @@ def report_transfer_event(
             alarm_context = {
                 "Action": action.capitalize(),
                 "File": file_name or "-",
-                "Request ID": request_id or "-",
                 "Event": event,
                 "Progress": f"{percent}%",
                 "Speed": f"{speed_mbps:.2f} MB/s",
@@ -1146,14 +1015,11 @@ def report_transfer_event(
                 "file": file_name or "-",
                 "type": _file_type_of(file_name),
                 "size": f"{file_size_mb:.2f} MB" if file_size_mb else "-",
-                "request_id": request_id or "-",
             }
 
-            # request_id makes this key unique PER TRANSFER — two downloads of
-            # the same file (different request_id) never share a thread/table.
-            reg_key = (action, file_name, request_id)
+            reg_key = (action, file_name)
             is_final = event in ("Completed", "Failed")
-            thread_key = _thread_key_for(action, file_name, request_id)
+            thread_key = _thread_key_for(action, file_name)
 
             with _MESSAGE_REGISTRY_LOCK:
                 entry = _ACTIVE_MESSAGE_REGISTRY.get(reg_key)
@@ -1184,7 +1050,7 @@ def report_transfer_event(
             raise_network_alarm(
                 "ReportingError",
                 f"Unexpected error while building/sending the transfer report for '{file_name}'.",
-                context={"Action": action, "File": file_name, "Event": event, "Request ID": request_id or "-"},
+                context={"Action": action, "File": file_name, "Event": event},
                 error=str(e),
             )
 
@@ -1690,11 +1556,10 @@ def create_folders_from_response(response):
         app_signals.append_log.emit(f"[Folder] Failed to create folders: {str(e)}")
 
 def start_timer_api(file_path, token):
-    payload = {"file_path": file_path}
     try:
         response = HTTP_SESSION.post(
             f"{BASE_DOMAIN}/api/ir_production/timer/start",
-            json=payload,
+            json={"file_path": file_path},
             headers={"Authorization": f"Bearer {token}"},
             verify=False,
             timeout=30
@@ -1710,21 +1575,13 @@ def start_timer_api(file_path, token):
     except Exception as e:
         logger.error(f"Failed to start timer: {e}")
         app_signals.append_log.emit(f"[API Scan] Failed to start timer: {str(e)}")
-        _resp = getattr(e, "response", None)
-        report_api_error_to_chat(
-            f"{BASE_DOMAIN}/api/ir_production/timer/start", method="POST", payload=payload,
-            status_code=getattr(_resp, "status_code", None),
-            response_text=getattr(_resp, "text", None),
-            error=str(e),
-        )
         return None
 
 def end_timer_api(file_path, timer_response, token):
-    payload = {"file_path": file_path, "timer_response": timer_response}
     try:
         response = HTTP_SESSION.post(
             f"{BASE_DOMAIN}/api/ir_production/timer/end",
-            json=payload,
+            json={"file_path": file_path, "timer_response": timer_response},
             headers={"Authorization": f"Bearer {token}"},
             verify=False,
             timeout=30
@@ -1740,13 +1597,6 @@ def end_timer_api(file_path, timer_response, token):
     except Exception as e:
         logger.error(f"Failed to end timer: {e}")
         app_signals.append_log.emit(f"[API Scan] Failed to end timer: {str(e)}")
-        _resp = getattr(e, "response", None)
-        report_api_error_to_chat(
-            f"{BASE_DOMAIN}/api/ir_production/timer/end", method="POST", payload=payload,
-            status_code=getattr(_resp, "status_code", None),
-            response_text=getattr(_resp, "text", None),
-            error=str(e),
-        )
         return None
 
 # def connect_to_nas():
@@ -1851,20 +1701,9 @@ def call_api(api_url, payload, local_file_path=None):
                 logger.debug(f"Retrying after {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
             else:
-                report_api_error_to_chat(
-                    api_url, method="POST", payload=payload,
-                    error=str(req_err), files_included=bool(files),
-                )
                 return {"error": "Request failed", "details": str(req_err)}
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
-            _resp = getattr(e, "response", None)
-            report_api_error_to_chat(
-                api_url, method="POST", payload=payload,
-                status_code=getattr(_resp, "status_code", None),
-                response_text=getattr(_resp, "text", None),
-                error=str(e), files_included=bool(files),
-            )
             return {"error": "Unexpected error", "details": str(e)}
         finally:
             if files:
@@ -1904,20 +1743,9 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
                 logger.debug(f"Retrying after {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
             else:
-                report_api_error_to_chat(
-                    api_url, method="POST", payload=payload,
-                    error=str(req_err), files_included=bool(files),
-                )
                 return {"error": "Request failed", "details": str(req_err)}
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
-            _resp = getattr(e, "response", None)
-            report_api_error_to_chat(
-                api_url, method="POST", payload=payload,
-                status_code=getattr(_resp, "status_code", None),
-                response_text=getattr(_resp, "text", None),
-                error=str(e), files_included=bool(files),
-            )
             return {"error": "Unexpected error", "details": str(e)}
         finally:
             if files:
@@ -1940,17 +1768,8 @@ def post_metadata_to_api_upload(spec_id, user_id):
             logger.info(f"Successfully posted metadata to API (Upload).")
         else:
             logger.error(f"Failed to post metadata to API (Upload): {response.status_code} {response.text}")
-            report_api_error_to_chat(
-                API_URL_UPLOAD, method="POST", payload=payload,
-                status_code=response.status_code, response_text=response.text,
-            )
     except Exception as e:
         logger.error(f"Error posting metadata to API (Upload): {e}")
-        report_api_error_to_chat(
-            API_URL_UPLOAD, method="POST",
-            payload={"business": "image_retouching", "operator_uid": user_id, "spec_id": spec_id},
-            error=str(e),
-        )
 
 
 def post_api(api_url,payload):
@@ -1962,22 +1781,14 @@ def post_api(api_url,payload):
             logger.info(f"Successfully posted metadata to API (Upload).")
         else:
             logger.error(f"Failed to post metadata to API (Upload): {response.status_code} {response.text}")
-            report_api_error_to_chat(
-                api_url, method="POST", payload=payload,
-                status_code=response.status_code, response_text=response.text,
-            )
     except Exception as e:
         logger.error(f"Error posting metadata to API (Upload): {e}")
-        report_api_error_to_chat(api_url, method="POST", payload=payload, error=str(e))
 
 
 def update_download_upload_metadata(task_id, request_status, retries=3, timeout=10.0, base_retry_delay=2):
    
     payload = {"id": task_id, "request_status": request_status}
     headers = {"Content-Type": "application/json"}
-    last_status_code = None
-    last_response_text = None
-    last_error = None
 
     for attempt in range(1, retries + 1):
         try:
@@ -1992,28 +1803,19 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
             if response.status_code == 200:
                 return response.json()
 
-            last_status_code = response.status_code
-            last_response_text = response.text
             logger.error(
                 f"Attempt {attempt}: Failed with status {response.status_code}"
             )
 
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            last_error = str(e)
             logger.error(f"Attempt {attempt}: Request error -> {e}")
         except Exception as e:
-            last_error = str(e)
             logger.error(f"Attempt {attempt}: Unexpected error -> {e}")
 
         if attempt < retries:
             delay = base_retry_delay * (2 ** (attempt - 1))  # exponential backoff
             time.sleep(delay)
 
-    report_api_error_to_chat(
-        API_URL_UPLOAD_DOWNLOAD_UPDATE, method="POST", payload=payload,
-        status_code=last_status_code, response_text=last_response_text,
-        error=last_error or f"Failed after {retries} retries",
-    )
     return {"error": "Failed after retries"}
 
 def get_file_types_from_api(job_id):
@@ -2741,10 +2543,7 @@ class FileWatcherWorker(QObject):
             sftp.close()
             total_size_mb = total_size / 1024 / 1024
 
-            report_transfer_event(
-                "Started", "download", filename,
-                file_size_mb=total_size_mb, eta_text="Calculating...", request_id=str(task_id),
-            )
+            report_transfer_event("Started", "download", filename, file_size_mb=total_size_mb, eta_text="Calculating...")
 
             start_time = time.time()
             last_emit = 0.0
@@ -2794,7 +2593,6 @@ class FileWatcherWorker(QObject):
                     file_size_mb=total_size / 1024 / 1024,
                     elapsed_sec=elapsed,
                     eta_text=format_time(eta),
-                    request_id=str(task_id),
                 )
 
                 # ---- Status text (human readable) ----
@@ -2852,7 +2650,6 @@ class FileWatcherWorker(QObject):
             report_transfer_event(
                 "Completed", "download", filename, percent=100, speed_mbps=_avg_speed_mbps,
                 file_size_mb=total_size / 1024 / 1024, elapsed_sec=duration_seconds, eta_text="Done",
-                request_id=str(task_id),
             )
 
         except Exception:
@@ -2875,7 +2672,6 @@ class FileWatcherWorker(QObject):
             report_transfer_event(
                 "Failed", "download", filename,
                 file_size_mb=_size_mb_at_failure, elapsed_sec=_elapsed_at_failure, eta_text="-",
-                request_id=str(task_id),
             )
             raise
 
@@ -2945,7 +2741,7 @@ class FileWatcherWorker(QObject):
             file_watcher.upload_status_detail.emit(
                 dest_path, "Upload Failed", "upload", 0, True
             )
-            report_transfer_event("Failed", "upload", filename, request_id=str(task_id))
+            report_transfer_event("Failed", "upload", filename)
             raise FileNotFoundError(f"Source file does not exist: {src_path}")
         
         print("========Continue upload=====matched_file======================")
@@ -3008,10 +2804,7 @@ class FileWatcherWorker(QObject):
             print(f"Uploading: {filename} ({total_mb:.2f} MB)")
             print(f"Destination: {dest_path}")
 
-            report_transfer_event(
-                "Started", "upload", filename,
-                file_size_mb=total_mb, eta_text="Calculating...", request_id=str(task_id),
-            )
+            report_transfer_event("Started", "upload", filename, file_size_mb=total_mb, eta_text="Calculating...")
 
             # FIX: open both file handles explicitly so both are closed in finally
             local_file = open(src_path, "rb")
@@ -3075,7 +2868,6 @@ class FileWatcherWorker(QObject):
                                 file_size_mb=total_mb,
                                 elapsed_sec=elapsed_total,
                                 eta_text=_eta_text,
-                                request_id=str(task_id),
                             )
                             last_emit = now
 
@@ -3133,7 +2925,6 @@ class FileWatcherWorker(QObject):
             report_transfer_event(
                 "Completed", "upload", filename, percent=100, speed_mbps=final_speed,
                 file_size_mb=total_mb, elapsed_sec=duration, eta_text="Done",
-                request_id=str(task_id),
             )
 
         except Exception as e:
@@ -3176,7 +2967,6 @@ class FileWatcherWorker(QObject):
             report_transfer_event(
                 "Failed", "upload", filename,
                 file_size_mb=_size_mb_at_failure, elapsed_sec=_elapsed_at_failure, eta_text="-",
-                request_id=str(task_id),
             )
             raise
 
@@ -3509,12 +3299,6 @@ class FileWatcherWorker(QObject):
                         verify=False
                     )
 
-                    if response.status_code not in (200, 201):
-                        report_api_error_to_chat(
-                            DRUPAL_DB_ENTRY_API, method="POST", payload=request_data,
-                            status_code=response.status_code, response_text=response.text,
-                        )
-
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} completed"
                     save_cache(cache, significant_change=True)
                     update_download_upload_metadata(task_id, "Conversion Started")
@@ -3524,9 +3308,6 @@ class FileWatcherWorker(QObject):
                     cache[metadata_key][spec_id]["status"] = f"{status_prefix} API Call Failed"
                     save_cache(cache, significant_change=True)
                     logging.error(f"DRUPAL_DB_ENTRY_API call error: {str(e)}")
-                    report_api_error_to_chat(
-                        DRUPAL_DB_ENTRY_API, method="POST", payload=request_data, error=str(e),
-                    )
                 
             else:
                 raise ValueError(f"Invalid action_type: {action_type}")
@@ -7507,24 +7288,19 @@ class PremediaApp(QApplication):
 
     def logout_apicall(self, user_id):
         machine_id = USER_SYSTEM_INFO.get('encoded_mac', '')
-        payload = {
-            'user_id': user_id,
-            'machine_id': machine_id,
-        }
         try:
+            payload = {
+                'user_id': user_id,
+                'machine_id': machine_id,
+            }
             response = requests.post(API_URL_LOGOUT, data=payload, verify=False)
             logger.info(response)
             if response.status_code == 200:
                 logger.info(f"Successfully posted metadata to API (Logout).")
             else:
                 logger.error(f"Failed to post metadata to API (Logout): {response.status_code} {response.text}")
-                report_api_error_to_chat(
-                    API_URL_LOGOUT, method="POST", payload=payload,
-                    status_code=response.status_code, response_text=response.text,
-                )
         except Exception as e:
             logger.error(f"Error posting metadata to API (Logout): {e}")
-            report_api_error_to_chat(API_URL_LOGOUT, method="POST", payload=payload, error=str(e))
 
 
     def logout(self):
