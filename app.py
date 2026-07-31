@@ -650,7 +650,7 @@ def show_network_alarm_dialog(summary: str, report_text: str):
 
         layout = QVBoxLayout(dialog)
 
-        summary_lbl = QLabel(f"⚠  {summary}")
+        summary_lbl = QLabel(f"⚠  Unable to send reort to Engineering Team")
         summary_lbl.setWordWrap(True)
         summary_lbl.setStyleSheet(
             "color: white; background-color: #c0392b; font-weight: bold; "
@@ -659,8 +659,7 @@ def show_network_alarm_dialog(summary: str, report_text: str):
         layout.addWidget(summary_lbl)
 
         hint_lbl = QLabel(
-            "Take a screenshot of the report below, or click 'Copy Report' and paste it "
-            "into an email/chat message to the development team."
+            "Click 'Copy Report' and paste it into an email/chat message to the Engineering Team."
         )
         hint_lbl.setWordWrap(True)
         hint_lbl.setStyleSheet("color: #555; font-size: 11px;")
