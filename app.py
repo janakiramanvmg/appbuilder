@@ -438,7 +438,6 @@ _CURRENT_TRANSFER_STATS = {
     "percent": 0,
     "elapsed_sec": 0.0,
     "eta_text": "-",
-    "request_id": None,   # spec_id/task_id — distinguishes repeat transfers of the same file
 }
 
 
@@ -463,8 +462,7 @@ def _format_elapsed(seconds: float) -> str:
 
 
 def _update_transfer_stats(action: str, file_name: str, speed_mbps: float, percent: int,
-                            file_size_mb: float = 0.0, elapsed_sec: float = 0.0, eta_text: str = "-",
-                            request_id: str = None):
+                            file_size_mb: float = 0.0, elapsed_sec: float = 0.0, eta_text: str = "-"):
     """Called from the download/upload progress callbacks to record current speed/size/ETA."""
     with _TRANSFER_MONITOR_LOCK:
         _CURRENT_TRANSFER_STATS.update({
@@ -477,7 +475,6 @@ def _update_transfer_stats(action: str, file_name: str, speed_mbps: float, perce
             "percent": percent,
             "elapsed_sec": elapsed_sec,
             "eta_text": eta_text,
-            "request_id": request_id,
         })
 
 
@@ -489,7 +486,6 @@ def _clear_transfer_stats():
         _CURRENT_TRANSFER_STATS["percent"] = 0
         _CURRENT_TRANSFER_STATS["elapsed_sec"] = 0.0
         _CURRENT_TRANSFER_STATS["eta_text"] = "-"
-        _CURRENT_TRANSFER_STATS["request_id"] = None
 
 
 def measure_latency_ms(host: str = None, port: int = None, timeout: float = 3.0):
@@ -618,85 +614,165 @@ def build_network_diagnostics_report(issue_type: str, summary: str, context: dic
     return "\n".join(lines)
 
 
-def show_network_alarm_dialog(summary: str, report_text: str):
+class NetworkAlarmWindow(QDialog):
     """
-    Loud, unmissable popup for network/server problems (Google Chat
-    unreachable, NAS/server unreachable, server very slow, etc). Beeps a few
-    times, shows the full diagnostic report in a selectable text box, and
-    provides a one-click "Copy Report to Clipboard" button so the report can
-    be pasted (or the window screenshotted) and sent straight to the
-    development team.
+    Singleton, non-modal alarm window. ALL network/server alarms (NAS
+    unreachable, server slow, transfer slow, Google Chat unreachable, API
+    call failures, etc.) land in this SAME window as separate, clearly
+    labeled/timestamped entries — instead of each alarm spawning its own
+    popup.
 
-    Must only be invoked on the main GUI thread — reached exclusively via
-    AppSignals.network_alarm's self-connected QueuedConnection, which
-    guarantees that regardless of which background thread triggered it.
+    Why this exists (bug fix):
+    The previous implementation created a brand-new modal QDialog and called
+    .exec() on every single call to raise_network_alarm(). Because
+    .exec() runs its own nested Qt event loop, a second network_alarm
+    signal arriving (from a different background thread/issue type) while
+    the first dialog was still open got processed *during* that nested loop
+    and spawned a second, independent dialog on top of the first — so two
+    separate windows with two different reports could appear at once.
+
+    Fix: keep exactly ONE instance alive for the lifetime of the app. New
+    alarms call add_report() on the existing instance (appending to the
+    same scrollable log with a divider + timestamp + issue banner) rather
+    than creating a new window. The window itself is shown non-modally
+    (show(), not exec()), so nothing blocks and nothing can double-spawn.
     """
-    try:
-        for i in range(3):
-            QTimer.singleShot(i * 300, QApplication.beep)
 
-        dialog = QDialog(None)
-        dialog.setWindowTitle("⚠ PremediaApp — Network / Server Alarm")
-        dialog.setMinimumSize(720, 480)
-        dialog.setWindowFlags(
-            dialog.windowFlags()
+    _instance = None
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self):
+        super().__init__(None)
+        self._entries = []  # list of (timestamp_str, summary, report_text) — newest first
+        self._alert_count = 0
+
+        self.setWindowTitle("⚠ PremediaApp — Network / Server Alarms")
+        self.setMinimumSize(760, 520)
+        self.resize(820, 560)
+        self.setWindowFlags(
+            self.windowFlags()
             | Qt.WindowType.Window
             | Qt.WindowType.WindowStaysOnTopHint
         )
         try:
-            dialog.setWindowIcon(load_icon(ICON_PATH, "network alarm"))
+            self.setWindowIcon(load_icon(ICON_PATH, "network alarm"))
         except Exception:
             pass
 
-        layout = QVBoxLayout(dialog)
+        layout = QVBoxLayout(self)
 
-        summary_lbl = QLabel(f"⚠  Unable to send reort to Engineering Team")
-        summary_lbl.setWordWrap(True)
-        summary_lbl.setStyleSheet(
+        self.summary_lbl = QLabel("⚠  Network / Server Alarms")
+        self.summary_lbl.setWordWrap(True)
+        self.summary_lbl.setStyleSheet(
             "color: white; background-color: #c0392b; font-weight: bold; "
             "font-size: 14px; padding: 10px; border-radius: 4px;"
         )
-        layout.addWidget(summary_lbl)
+        layout.addWidget(self.summary_lbl)
 
         hint_lbl = QLabel(
-            "Click 'Copy Report' and paste it into an email/chat message to the Engineering Team."
+            "Every alert is listed below (most recent first), clearly separated and "
+            "timestamped. Click 'Copy All Reports' and paste into an email/chat message "
+            "to the development team, or 'Clear' to reset this window."
         )
         hint_lbl.setWordWrap(True)
         hint_lbl.setStyleSheet("color: #555; font-size: 11px;")
         layout.addWidget(hint_lbl)
 
-        text_edit = QTextEdit()
-        text_edit.setReadOnly(True)
-        text_edit.setPlainText(report_text)
-        text_edit.setFont(QFont("Consolas" if platform.system() == "Windows" else "Monospace", 10))
-        layout.addWidget(text_edit)
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setFont(QFont("Consolas" if platform.system() == "Windows" else "Monospace", 10))
+        layout.addWidget(self.text_edit)
 
         btn_row = QHBoxLayout()
-        copy_btn = QPushButton("📋 Copy Report to Clipboard")
-        status_lbl = QLabel("")
-        status_lbl.setStyleSheet("color: #2ecc71; font-weight: bold;")
+        copy_btn = QPushButton("📋 Copy All Reports")
+        clear_btn = QPushButton("🧹 Clear")
+        self.status_lbl = QLabel("")
+        self.status_lbl.setStyleSheet("color: #2ecc71; font-weight: bold;")
         close_btn = QPushButton("Close")
 
-        def _copy():
-            QApplication.clipboard().setText(report_text)
-            status_lbl.setText("Copied!")
-            QTimer.singleShot(2000, lambda: status_lbl.setText(""))
-
-        copy_btn.clicked.connect(_copy)
-        close_btn.clicked.connect(dialog.close)
+        copy_btn.clicked.connect(self._copy_all)
+        clear_btn.clicked.connect(self._clear_all)
+        close_btn.clicked.connect(self.close)
 
         btn_row.addWidget(copy_btn)
-        btn_row.addWidget(status_lbl)
+        btn_row.addWidget(clear_btn)
+        btn_row.addWidget(self.status_lbl)
         btn_row.addStretch(1)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
-        dialog.setLayout(layout)
-        dialog.raise_()
-        dialog.activateWindow()
-        dialog.exec()
+        self.setLayout(layout)
+
+    def add_report(self, summary: str, report_text: str):
+        """Append a new alarm entry (most recent on top) and (re)show the window."""
+        self._alert_count += 1
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._entries.insert(0, (timestamp, summary, report_text))
+
+        # Keep at most the last 50 alerts so the window/memory don't grow unbounded
+        if len(self._entries) > 50:
+            self._entries = self._entries[:50]
+
+        self._rebuild_text()
+
+        self.summary_lbl.setText(
+            f"⚠  {summary}   ({self._alert_count} alert{'s' if self._alert_count != 1 else ''} this session)"
+        )
+
+        # Beep to get attention, then bring the single window to front
+        for i in range(3):
+            QTimer.singleShot(i * 300, QApplication.beep)
+        if not self.isVisible():
+            self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _rebuild_text(self):
+        blocks = []
+        for idx, (timestamp, summary, report_text) in enumerate(self._entries, start=1):
+            divider = "=" * 70
+            header = f"{divider}\n[Alert #{len(self._entries) - idx + 1}]  {timestamp}\n{summary}\n{divider}"
+            blocks.append(f"{header}\n{report_text}\n")
+        self.text_edit.setPlainText("\n".join(blocks))
+        self.text_edit.moveCursor(QTextCursor.Start)
+
+    def _copy_all(self):
+        QApplication.clipboard().setText(self.text_edit.toPlainText())
+        self.status_lbl.setText("Copied!")
+        QTimer.singleShot(2000, lambda: self.status_lbl.setText(""))
+
+    def _clear_all(self):
+        self._entries = []
+        self._alert_count = 0
+        self.text_edit.clear()
+        self.summary_lbl.setText("⚠  Network / Server Alarms")
+
+    def closeEvent(self, event):
+        # Hide instead of destroying — keeps history and avoids recreating
+        # (and re-registering) the singleton on the next alarm.
+        event.ignore()
+        self.hide()
+
+
+def show_network_alarm_dialog(summary: str, report_text: str):
+    """
+    Routes every alarm to the single persistent NetworkAlarmWindow instance
+    instead of creating a brand-new dialog per call. See NetworkAlarmWindow
+    docstring for why this fixes the "two separate windows at once" bug.
+
+    Must only be invoked on the main GUI thread — reached exclusively via
+    AppSignals.network_alarm's self-connected QueuedConnection.
+    """
+    try:
+        window = NetworkAlarmWindow.get_instance()
+        window.add_report(summary, report_text)
     except Exception as e:
-        logger.error(f"[Alarm] Failed to show network alarm dialog: {e}")
+        logger.error(f"[Alarm] Failed to show network alarm window: {e}")
 
 
 _ALARM_LOCK = Lock()
@@ -729,6 +805,29 @@ def raise_network_alarm(issue_type: str, summary: str, context: dict = None, err
     except Exception:
         pass
 
+    # ── NEW: surface the problem directly on the transfer card/window ──
+    # Previously a network alarm only opened the separate NetworkAlarmWindow.
+    # The download/upload card had no idea anything was wrong and just kept
+    # showing whatever progress % it last received — looking "frozen" or
+    # "stuck" to the user instead of clearly indicating the network dropped.
+    if issue_type in ("ServerUnreachable", "ServerSlow", "TransferSlow"):
+        try:
+            ctx = context or {}
+            file_name = ctx.get("File")
+            if file_name and file_name != "-":
+                is_upload = ctx.get("Action", "").lower() == "upload"
+                status_text = f"⚠ {summary}"
+                if is_upload:
+                    FileWatcherWorker.get_instance().upload_status_detail.emit(
+                        file_name, status_text, "upload", 0, True
+                    )
+                else:
+                    FileWatcherWorker.get_instance().download_status_detail.emit(
+                        file_name, status_text, "download", 0, True
+                    )
+        except Exception as ui_err:
+            logger.debug(f"[Alarm] Could not surface alarm on transfer UI: {ui_err}")
+
     try:
         report_text = build_network_diagnostics_report(issue_type, summary, context, error)
     except Exception as e:
@@ -738,119 +837,66 @@ def raise_network_alarm(issue_type: str, summary: str, context: dict = None, err
     app_signals.network_alarm.emit(summary, report_text)
 
 
-# Fields that must never be forwarded to Google Chat even inside a request payload.
-_SENSITIVE_PAYLOAD_KEYS = {
-    "password", "saved_password", "client_secret", "secret",
-    "token", "access_token", "authorization", "auth",
-}
-
-
-def _redact_and_stringify_payload(payload) -> str:
+def report_api_failure(api_name: str, url: str, status_code=None, response_text=None, error: str = None):
     """
-    Turns a request payload (dict / JSON string / bytes / anything) into a
-    readable string for the Chat report, with any password/secret/token
-    fields replaced by ***REDACTED*** first. Truncated to a safe length.
+    Notifies Google Chat whenever a POST/GET API call fails — either a
+    non-2xx status code or a request exception (timeout, connection error,
+    JSON decode error, etc). All API failures share one thread_key so they
+    group into a single Google Chat thread instead of scattering as
+    separate top-level messages. Also raises the existing local
+    popup/diagnostics alarm (raise_network_alarm) so it shows up the same
+    way NAS/server alarms do.
+
+    Safe to call from any thread. Never blocks the caller — the actual
+    Google Chat POST + local alarm happen on a background daemon thread.
     """
+    if status_code is not None:
+        summary = f"API call failed: {api_name} — HTTP {status_code}"
+    else:
+        summary = f"API call failed: {api_name} — {error or 'Unknown error'}"
+
+    logger.error(f"[APIFailure] {summary} | url={url} | response={str(response_text)[:300]}")
     try:
-        data = payload
-        if isinstance(data, (bytes, bytearray)):
-            data = data.decode("utf-8", errors="replace")
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except Exception:
-                return data[:1200]
-
-        if isinstance(data, dict):
-            redacted = {
-                k: ("***REDACTED***" if str(k).lower() in _SENSITIVE_PAYLOAD_KEYS else v)
-                for k, v in data.items()
-            }
-            return json.dumps(redacted, indent=2, default=str)[:1500]
-
-        return str(data)[:1200]
+        app_signals.append_log.emit(f"[APIFailure] {summary}")
     except Exception:
-        return "<payload could not be serialized>"
+        pass
 
+    lines = [
+        f"*🔴 API Call Failed — {api_name}*",
+        f"URL: {url}",
+    ]
+    if status_code is not None:
+        lines.append(f"Status Code: {status_code}")
+    if response_text:
+        lines.append(f"Response: {str(response_text)[:500]}")
+    if error:
+        lines.append(f"Error: {error}")
+    lines.append(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-_API_ERROR_LOCK = Lock()
-_LAST_API_ERROR_TIME = {}
-API_ERROR_REPORT_COOLDOWN_SEC = 120  # avoid spamming Chat if the same endpoint keeps failing on retries
+    text = "\n".join(lines)
+    thread_key = "premedia-api-failures"
 
-
-def report_api_error_to_chat(
-    api_url: str,
-    method: str = "POST",
-    payload=None,
-    status_code=None,
-    response_text: str = None,
-    error: str = None,
-    files_included: bool = False,
-):
-    """
-    Fire-and-forget report of a failed API call to Google Chat, including the
-    request payload (secrets redacted) and the server's response (or the
-    exception if no response was ever received).
-
-    Rate-limited per (endpoint, status/error) so repeated retries of the same
-    failing call don't flood the Chat space — a genuinely different failure
-    (different endpoint or different status) still gets reported right away.
-
-    Runs on its own daemon thread; safe to call from anywhere, any thread.
-    """
     def _worker():
         try:
-            dedup_key = (api_url, status_code, bool(error))
-            now = time.time()
-            with _API_ERROR_LOCK:
-                last = _LAST_API_ERROR_TIME.get(dedup_key, 0)
-                if now - last < API_ERROR_REPORT_COOLDOWN_SEC:
-                    logger.debug(f"[ApiErrorReport] Suppressed duplicate report for {api_url} (cooldown)")
-                    return
-                _LAST_API_ERROR_TIME[dedup_key] = now
+            ok, result = send_google_chat_message(text, thread_key=thread_key)
+            if not ok:
+                logger.warning(f"[APIFailure] Could not deliver failure report to Google Chat: {result}")
 
-            cache = load_cache()
-            username = cache.get("user", "Unknown")
-            identifiers = {}
-            if isinstance(USER_SYSTEM_INFO, dict):
-                identifiers = USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
-            hostname = identifiers.get("hostname") or socket.gethostname()
-            ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
-
-            payload_text = (
-                "<file upload — binary payload omitted>"
-                if files_included else _redact_and_stringify_payload(payload)
-            )
-            response_snippet = (response_text or "-")[:1200]
-
-            text_lines = [
-                "*PremediaApp API Error*",
-                f"User: {username}",
-                f"System: {hostname}",
-                f"IP: {ip_address}",
-                f"Method: {method}",
-                f"Endpoint: {api_url}",
-                f"Status Code: {status_code if status_code is not None else 'No response'}",
-                "",
-                "Payload:",
-                f"```{payload_text}```",
-                "",
-                "Response:",
-                f"```{response_snippet}```",
-            ]
-            if error:
-                text_lines.append("")
-                text_lines.append(f"Error: {error}")
-
-            send_google_chat_message("\n".join(text_lines))
-            logger.warning(
-                f"[ApiErrorReport] Reported failed {method} {api_url} "
-                f"(status={status_code}) to Google Chat"
+            raise_network_alarm(
+                "APICallFailed",
+                summary,
+                context={
+                    "API": api_name,
+                    "URL": url,
+                    "Status Code": status_code if status_code is not None else "-",
+                    "Response": str(response_text)[:300] if response_text else "-",
+                },
+                error=error,
             )
         except Exception as e:
-            logger.warning(f"[ApiErrorReport] Failed to report API error to Chat: {e}")
+            logger.warning(f"[APIFailure] Failed while reporting API failure for {api_name}: {e}")
 
-    threading.Thread(target=_worker, daemon=True, name="ApiErrorReport").start()
+    threading.Thread(target=_worker, daemon=True, name=f"APIFailureReport-{api_name}").start()
 
 
 def _gchat_webhook_url_with_threading():
@@ -919,14 +965,9 @@ def send_google_chat_message(text: str, thread_key: str = None):
         return False, err
 
 
-def _thread_key_for(action: str, file_name: str, request_id: str = None) -> str:
-    """
-    Stable thread key so every event belonging to the SAME transfer request
-    lands in one thread. Including request_id means a second download/upload
-    of the same file (a different request_id) gets its own NEW thread/message
-    instead of being merged into the previous transfer's thread.
-    """
-    raw = f"{action}:{file_name}:{request_id or ''}"
+def _thread_key_for(action: str, file_name: str) -> str:
+    """Stable thread key so every event for this (action, file_name) lands in one thread."""
+    raw = f"{action}:{file_name}"
     return "premedia-" + hashlib.md5(raw.encode("utf-8")).hexdigest()[:20]
 
 
@@ -937,10 +978,10 @@ def _pad_cell(value, width):
 
 def _build_transfer_table_text(header_info: dict, rows: list) -> str:
     """
-    Builds one Google Chat message: a header block (User/System/IP/File/Type/
-    Size/Request ID, shown once) followed by a monospaced table (inside a
-    code block, so columns stay aligned) with one row per event (Started /
-    periodic Progress / Completed or Failed).
+    Builds one Google Chat message: a header block (User/System/IP/File/Type/Size,
+    shown once) followed by a monospaced table (inside a code block, so columns
+    stay aligned) with one row per event (Started / periodic Progress / Completed
+    or Failed).
     """
     header_lines = [
         f"*PremediaApp Transfer — {header_info.get('action', '')}*",
@@ -950,7 +991,6 @@ def _build_transfer_table_text(header_info: dict, rows: list) -> str:
         f"File: {header_info.get('file', '-')}",
         f"Type: {header_info.get('type', '-')}",
         f"Size: {header_info.get('size', '-')}",
-        f"Request ID: {header_info.get('request_id', '-')}",
     ]
 
     columns = ["Event", "Time", "Progress", "Speed", "Time Taken", "ETA", "Latency"]
@@ -1032,7 +1072,6 @@ class TransferMonitorReporter:
                     file_size_mb=stats.get("file_size_mb", 0.0),
                     elapsed_sec=stats.get("elapsed_sec", 0.0),
                     eta_text=stats.get("eta_text", "-"),
-                    request_id=stats.get("request_id"),
                 )
             except Exception as e:
                 logger.warning(f"[TransferMonitorReporter] Failed to build/send report: {e}")
@@ -1051,27 +1090,23 @@ def report_transfer_event(
     file_size_mb: float = 0.0,
     elapsed_sec: float = 0.0,
     eta_text: str = "-",
-    request_id: str = None,
 ):
     """
     Post one Google Chat message per event ("Started", "Progress",
-    "Completed", "Failed") for a given (action, file_name, request_id) — but
-    every one of them is posted with the SAME thread_key, so Google Chat
-    groups them into a single thread instead of scattering separate
-    top-level messages across the space.
-
-    request_id (the task/spec id for this specific download or upload) is
-    what makes REPEAT transfers of the SAME file distinct: if you download
-    'photo.jpg' twice, each download has its own request_id, so each gets
-    its OWN new top-level thread/message — they are never merged together.
-    Only events sharing the same request_id (Started -> Progress -> Completed
-    for one specific transfer) get grouped as replies in one thread.
+    "Completed", "Failed") for a given (action, file_name) — but every one of
+    them is posted with the SAME thread_key, so Google Chat groups them into
+    a single thread instead of scattering separate top-level messages across
+    the space. The first message ("Started") is never overwritten; each later
+    post is a reply in that same thread and carries the FULL cumulative table
+    (all rows so far), so the most recent message always shows the complete
+    history for that file+operation.
 
     (True in-place message editing would need a full Chat app with OAuth app
     authentication — not possible with a plain incoming webhook's key/token —
     see send_google_chat_message() for details.)
 
-    On "Completed"/"Failed" the row history for that request is cleared.
+    On "Completed"/"Failed" the row history for that file+operation is
+    cleared, so a later transfer of the same file starts a fresh thread/table.
 
     Runs on its own daemon thread so it never blocks the actual transfer.
     """
@@ -1093,7 +1128,6 @@ def report_transfer_event(
             alarm_context = {
                 "Action": action.capitalize(),
                 "File": file_name or "-",
-                "Request ID": request_id or "-",
                 "Event": event,
                 "Progress": f"{percent}%",
                 "Speed": f"{speed_mbps:.2f} MB/s",
@@ -1145,14 +1179,11 @@ def report_transfer_event(
                 "file": file_name or "-",
                 "type": _file_type_of(file_name),
                 "size": f"{file_size_mb:.2f} MB" if file_size_mb else "-",
-                "request_id": request_id or "-",
             }
 
-            # request_id makes this key unique PER TRANSFER — two downloads of
-            # the same file (different request_id) never share a thread/table.
-            reg_key = (action, file_name, request_id)
+            reg_key = (action, file_name)
             is_final = event in ("Completed", "Failed")
-            thread_key = _thread_key_for(action, file_name, request_id)
+            thread_key = _thread_key_for(action, file_name)
 
             with _MESSAGE_REGISTRY_LOCK:
                 entry = _ACTIVE_MESSAGE_REGISTRY.get(reg_key)
@@ -1183,7 +1214,7 @@ def report_transfer_event(
             raise_network_alarm(
                 "ReportingError",
                 f"Unexpected error while building/sending the transfer report for '{file_name}'.",
-                context={"Action": action, "File": file_name, "Event": event, "Request ID": request_id or "-"},
+                context={"Action": action, "File": file_name, "Event": event},
                 error=str(e),
             )
 
@@ -1689,11 +1720,10 @@ def create_folders_from_response(response):
         app_signals.append_log.emit(f"[Folder] Failed to create folders: {str(e)}")
 
 def start_timer_api(file_path, token):
-    payload = {"file_path": file_path}
     try:
         response = HTTP_SESSION.post(
             f"{BASE_DOMAIN}/api/ir_production/timer/start",
-            json=payload,
+            json={"file_path": file_path},
             headers={"Authorization": f"Bearer {token}"},
             verify=False,
             timeout=30
@@ -1709,21 +1739,13 @@ def start_timer_api(file_path, token):
     except Exception as e:
         logger.error(f"Failed to start timer: {e}")
         app_signals.append_log.emit(f"[API Scan] Failed to start timer: {str(e)}")
-        _resp = getattr(e, "response", None)
-        report_api_error_to_chat(
-            f"{BASE_DOMAIN}/api/ir_production/timer/start", method="POST", payload=payload,
-            status_code=getattr(_resp, "status_code", None),
-            response_text=getattr(_resp, "text", None),
-            error=str(e),
-        )
         return None
 
 def end_timer_api(file_path, timer_response, token):
-    payload = {"file_path": file_path, "timer_response": timer_response}
     try:
         response = HTTP_SESSION.post(
             f"{BASE_DOMAIN}/api/ir_production/timer/end",
-            json=payload,
+            json={"file_path": file_path, "timer_response": timer_response},
             headers={"Authorization": f"Bearer {token}"},
             verify=False,
             timeout=30
@@ -1739,13 +1761,6 @@ def end_timer_api(file_path, timer_response, token):
     except Exception as e:
         logger.error(f"Failed to end timer: {e}")
         app_signals.append_log.emit(f"[API Scan] Failed to end timer: {str(e)}")
-        _resp = getattr(e, "response", None)
-        report_api_error_to_chat(
-            f"{BASE_DOMAIN}/api/ir_production/timer/end", method="POST", payload=payload,
-            status_code=getattr(_resp, "status_code", None),
-            response_text=getattr(_resp, "text", None),
-            error=str(e),
-        )
         return None
 
 # def connect_to_nas():
@@ -1840,6 +1855,11 @@ def call_api(api_url, payload, local_file_path=None):
                 response = client.post(api_url, files=files, data=payload)
             logger.debug(f"Response Status Code: {response.status_code}")
             logger.debug(f"Response Text: {response.text[:500]}...")
+            if response.status_code >= 400:
+                report_api_failure(
+                    "operator_upload", api_url,
+                    status_code=response.status_code, response_text=response.text
+                )
             response.raise_for_status()
             return response.json()
         except httpx.RequestError as req_err:
@@ -1850,20 +1870,11 @@ def call_api(api_url, payload, local_file_path=None):
                 logger.debug(f"Retrying after {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
             else:
-                report_api_error_to_chat(
-                    api_url, method="POST", payload=payload,
-                    error=str(req_err), files_included=bool(files),
-                )
+                report_api_failure("operator_upload", api_url, error=str(req_err))
                 return {"error": "Request failed", "details": str(req_err)}
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
-            _resp = getattr(e, "response", None)
-            report_api_error_to_chat(
-                api_url, method="POST", payload=payload,
-                status_code=getattr(_resp, "status_code", None),
-                response_text=getattr(_resp, "text", None),
-                error=str(e), files_included=bool(files),
-            )
+            report_api_failure("operator_upload", api_url, error=str(e))
             return {"error": "Unexpected error", "details": str(e)}
         finally:
             if files:
@@ -1893,6 +1904,11 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
                 response = client.post(api_url, files=files, data=payload)
             logger.debug(f"Response Status Code: {response.status_code}")
             logger.debug(f"Response Text: {response.text[:500]}...")
+            if response.status_code >= 400:
+                report_api_failure(
+                    "qc_qa_replace", api_url,
+                    status_code=response.status_code, response_text=response.text
+                )
             response.raise_for_status()
             return response.json()
         except httpx.RequestError as req_err:
@@ -1903,20 +1919,11 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
                 logger.debug(f"Retrying after {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
             else:
-                report_api_error_to_chat(
-                    api_url, method="POST", payload=payload,
-                    error=str(req_err), files_included=bool(files),
-                )
+                report_api_failure("qc_qa_replace", api_url, error=str(req_err))
                 return {"error": "Request failed", "details": str(req_err)}
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
-            _resp = getattr(e, "response", None)
-            report_api_error_to_chat(
-                api_url, method="POST", payload=payload,
-                status_code=getattr(_resp, "status_code", None),
-                response_text=getattr(_resp, "text", None),
-                error=str(e), files_included=bool(files),
-            )
+            report_api_failure("qc_qa_replace", api_url, error=str(e))
             return {"error": "Unexpected error", "details": str(e)}
         finally:
             if files:
@@ -1939,17 +1946,13 @@ def post_metadata_to_api_upload(spec_id, user_id):
             logger.info(f"Successfully posted metadata to API (Upload).")
         else:
             logger.error(f"Failed to post metadata to API (Upload): {response.status_code} {response.text}")
-            report_api_error_to_chat(
-                API_URL_UPLOAD, method="POST", payload=payload,
-                status_code=response.status_code, response_text=response.text,
+            report_api_failure(
+                "post_metadata_upload", API_URL_UPLOAD,
+                status_code=response.status_code, response_text=response.text
             )
     except Exception as e:
         logger.error(f"Error posting metadata to API (Upload): {e}")
-        report_api_error_to_chat(
-            API_URL_UPLOAD, method="POST",
-            payload={"business": "image_retouching", "operator_uid": user_id, "spec_id": spec_id},
-            error=str(e),
-        )
+        report_api_failure("post_metadata_upload", API_URL_UPLOAD, error=str(e))
 
 
 def post_api(api_url,payload):
@@ -1961,22 +1964,19 @@ def post_api(api_url,payload):
             logger.info(f"Successfully posted metadata to API (Upload).")
         else:
             logger.error(f"Failed to post metadata to API (Upload): {response.status_code} {response.text}")
-            report_api_error_to_chat(
-                api_url, method="POST", payload=payload,
-                status_code=response.status_code, response_text=response.text,
+            report_api_failure(
+                "post_api", api_url,
+                status_code=response.status_code, response_text=response.text
             )
     except Exception as e:
         logger.error(f"Error posting metadata to API (Upload): {e}")
-        report_api_error_to_chat(api_url, method="POST", payload=payload, error=str(e))
+        report_api_failure("post_api", api_url, error=str(e))
 
 
 def update_download_upload_metadata(task_id, request_status, retries=3, timeout=10.0, base_retry_delay=2):
    
     payload = {"id": task_id, "request_status": request_status}
     headers = {"Content-Type": "application/json"}
-    last_status_code = None
-    last_response_text = None
-    last_error = None
 
     for attempt in range(1, retries + 1):
         try:
@@ -1991,28 +1991,28 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
             if response.status_code == 200:
                 return response.json()
 
-            last_status_code = response.status_code
-            last_response_text = response.text
             logger.error(
                 f"Attempt {attempt}: Failed with status {response.status_code}"
             )
+            if attempt == retries:
+                report_api_failure(
+                    "update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE,
+                    status_code=response.status_code, response_text=response.text
+                )
 
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            last_error = str(e)
             logger.error(f"Attempt {attempt}: Request error -> {e}")
+            if attempt == retries:
+                report_api_failure("update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE, error=str(e))
         except Exception as e:
-            last_error = str(e)
             logger.error(f"Attempt {attempt}: Unexpected error -> {e}")
+            if attempt == retries:
+                report_api_failure("update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE, error=str(e))
 
         if attempt < retries:
             delay = base_retry_delay * (2 ** (attempt - 1))  # exponential backoff
             time.sleep(delay)
 
-    report_api_error_to_chat(
-        API_URL_UPLOAD_DOWNLOAD_UPDATE, method="POST", payload=payload,
-        status_code=last_status_code, response_text=last_response_text,
-        error=last_error or f"Failed after {retries} retries",
-    )
     return {"error": "Failed after retries"}
 
 def get_file_types_from_api(job_id):
@@ -2740,13 +2740,19 @@ class FileWatcherWorker(QObject):
             sftp.close()
             total_size_mb = total_size / 1024 / 1024
 
-            report_transfer_event(
-                "Started", "download", filename,
-                file_size_mb=total_size_mb, eta_text="Calculating...", request_id=str(task_id),
-            )
+            report_transfer_event("Started", "download", filename, file_size_mb=total_size_mb, eta_text="Calculating...")
 
             start_time = time.time()
             last_emit = 0.0
+            # ── Stall watchdog state ──────────────────────────────────────
+            # A dropped network connection doesn't raise immediately — the
+            # OS can sit on a dead TCP socket for a long time (60s+) before
+            # surfacing an error. Track "no new bytes received" ourselves so
+            # we fail fast and let the retry loop kick in promptly instead
+            # of appearing to hang at whatever % it was at when the network died.
+            STALL_TIMEOUT_SEC = 15
+            last_byte_time = [start_time]
+            last_sent_bytes = [0]
 
             def format_time(seconds: float) -> str:
                 if seconds <= 0 or seconds == float("inf"):
@@ -2764,6 +2770,22 @@ class FileWatcherWorker(QObject):
                 elapsed = now - start_time
                 if elapsed <= 0:
                     return
+
+                # ── Stall detection ──────────────────────────────────────
+                if sent != last_sent_bytes[0]:
+                    last_sent_bytes[0] = sent
+                    last_byte_time[0] = now
+                elif now - last_byte_time[0] > STALL_TIMEOUT_SEC and sent < total_size:
+                    stall_msg = (
+                        f"Download stalled — no data received for "
+                        f"{STALL_TIMEOUT_SEC}s (network likely disconnected)"
+                    )
+                    logger.warning(f"[Transfer] {stall_msg}: {filename}")
+                    file_watcher.download_status_detail.emit(
+                        dest_path, f"⚠ {stall_msg}", "download",
+                        int((sent / total_size) * 100) if total_size else 0, True
+                    )
+                    raise RuntimeError(stall_msg)
 
                 # Throttle UI updates
                 if now - last_emit < 0.5 and sent < total_size:
@@ -2793,7 +2815,6 @@ class FileWatcherWorker(QObject):
                     file_size_mb=total_size / 1024 / 1024,
                     elapsed_sec=elapsed,
                     eta_text=format_time(eta),
-                    request_id=str(task_id),
                 )
 
                 # ---- Status text (human readable) ----
@@ -2851,7 +2872,6 @@ class FileWatcherWorker(QObject):
             report_transfer_event(
                 "Completed", "download", filename, percent=100, speed_mbps=_avg_speed_mbps,
                 file_size_mb=total_size / 1024 / 1024, elapsed_sec=duration_seconds, eta_text="Done",
-                request_id=str(task_id),
             )
 
         except Exception:
@@ -2874,7 +2894,6 @@ class FileWatcherWorker(QObject):
             report_transfer_event(
                 "Failed", "download", filename,
                 file_size_mb=_size_mb_at_failure, elapsed_sec=_elapsed_at_failure, eta_text="-",
-                request_id=str(task_id),
             )
             raise
 
@@ -2944,7 +2963,7 @@ class FileWatcherWorker(QObject):
             file_watcher.upload_status_detail.emit(
                 dest_path, "Upload Failed", "upload", 0, True
             )
-            report_transfer_event("Failed", "upload", filename, request_id=str(task_id))
+            report_transfer_event("Failed", "upload", filename)
             raise FileNotFoundError(f"Source file does not exist: {src_path}")
         
         print("========Continue upload=====matched_file======================")
@@ -2969,6 +2988,13 @@ class FileWatcherWorker(QObject):
             start_conn = time.time()
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            # FIX: this socket previously had NO timeout at all. If the
+            # network dropped mid-write, remote_file.write() could block
+            # indefinitely (potentially far longer than the download path's
+            # ~60s OS-level stall) with no way for the retry logic to kick
+            # in. Bound every blocking socket op to 30s so a dead connection
+            # surfaces as an exception promptly.
+            sock.settimeout(30)
             sock.connect((NAS_IP, NAS_PORT))
 
             session = Session()
@@ -2990,6 +3016,40 @@ class FileWatcherWorker(QObject):
             # ---------- UPLOAD ----------
             upload_start = time.time()
 
+            # ────────────────────────────────────────────────────────────────
+            # FIX (CRITICAL — data integrity): upload to a hidden temp file,
+            # NOT directly to dest_path.
+            #
+            # The previous code did:
+            #   sftp.open(dest_path, CREAT|WRITE|TRUNC, 0o644)
+            # LIBSSH2_FXF_TRUNC truncates the file the INSTANT it's opened —
+            # before a single byte of the new upload has been written. That
+            # means the existing good file on the NAS was destroyed the
+            # moment the upload started. If the network dropped mid-transfer
+            # (e.g. after 250MB of a 1GB file), dest_path was left containing
+            # only those 250MB — and anyone downloading that file in the
+            # meantime got the truncated/corrupt version, with no way to
+            # tell it wasn't the real file.
+            #
+            # Fix: write the new content to a temp sibling file
+            # (".<name>.uploading_<random>.tmp") in the SAME directory as
+            # dest_path. The real dest_path is never opened/truncated during
+            # the transfer, so it keeps serving the last-known-good file to
+            # anyone downloading it throughout the entire upload. Only once
+            # the full byte count has been written and verified do we
+            # atomically rename the temp file over dest_path — a rename is
+            # effectively instantaneous, so there's no window where a
+            # partial file is visible under the real filename. If anything
+            # fails at any point, we just delete the temp file; dest_path is
+            # untouched and the previous good file remains available.
+            # ────────────────────────────────────────────────────────────────
+            temp_suffix = f".uploading_{uuid.uuid4().hex[:12]}.tmp"
+            if "/" in dest_path:
+                _dest_dir_part, _dest_name_part = dest_path.rsplit("/", 1)
+                temp_dest_path = f"{_dest_dir_part}/.{_dest_name_part}{temp_suffix}"
+            else:
+                temp_dest_path = f".{dest_path}{temp_suffix}"
+
             flags = LIBSSH2_FXF_CREAT | LIBSSH2_FXF_WRITE | LIBSSH2_FXF_TRUNC
             chunk_size = 4 * 1024 * 1024  # 4 MB
 
@@ -3005,17 +3065,16 @@ class FileWatcherWorker(QObject):
             chunk_start_time = time.time()
 
             print(f"Uploading: {filename} ({total_mb:.2f} MB)")
-            print(f"Destination: {dest_path}")
+            print(f"Destination (final): {dest_path}")
+            print(f"Destination (temp, in-progress): {temp_dest_path}")
 
-            report_transfer_event(
-                "Started", "upload", filename,
-                file_size_mb=total_mb, eta_text="Calculating...", request_id=str(task_id),
-            )
+            report_transfer_event("Started", "upload", filename, file_size_mb=total_mb, eta_text="Calculating...")
 
             # FIX: open both file handles explicitly so both are closed in finally
             local_file = open(src_path, "rb")
             try:
-                remote_file = sftp.open(dest_path, flags, 0o644)
+                # ── Write to the TEMP path, never to dest_path directly ──
+                remote_file = sftp.open(temp_dest_path, flags, 0o644)
                 try:
                     while True:
                         data = local_file.read(chunk_size)
@@ -3074,7 +3133,6 @@ class FileWatcherWorker(QObject):
                                 file_size_mb=total_mb,
                                 elapsed_sec=elapsed_total,
                                 eta_text=_eta_text,
-                                request_id=str(task_id),
                             )
                             last_emit = now
 
@@ -3085,6 +3143,65 @@ class FileWatcherWorker(QObject):
                     except Exception as rf_err:
                         logger.warning(f"Could not close remote file handle: {rf_err}")
                     remote_file = None
+
+                # ────────────────────────────────────────────────────────
+                # VERIFY + ATOMIC SWAP
+                # Only now — after the temp file has been fully written and
+                # closed — do we touch dest_path. If the transfer was
+                # interrupted (network drop, exception, etc.) we never
+                # reach this point, so dest_path still holds the
+                # last-known-good file, completely untouched, for the
+                # entire duration of the upload.
+                # ────────────────────────────────────────────────────────
+                if transferred != file_size:
+                    raise IOError(
+                        f"Incomplete upload: transferred {transferred} of "
+                        f"{file_size} bytes — aborting swap, existing file "
+                        f"on NAS left untouched"
+                    )
+
+                try:
+                    # Prefer an atomic overwrite-rename if the server/library
+                    # supports the flag — POSIX rename semantics replace
+                    # dest_path in a single step with no window where the
+                    # file is missing or partial.
+                    try:
+                        from ssh2.sftp import (
+                            LIBSSH2_SFTP_RENAME_OVERWRITE,
+                            LIBSSH2_SFTP_RENAME_ATOMIC,
+                            LIBSSH2_SFTP_RENAME_NATIVE,
+                        )
+                        rename_flags = (
+                            LIBSSH2_SFTP_RENAME_OVERWRITE
+                            | LIBSSH2_SFTP_RENAME_ATOMIC
+                            | LIBSSH2_SFTP_RENAME_NATIVE
+                        )
+                        sftp.rename(temp_dest_path, dest_path, rename_flags)
+                    except ImportError:
+                        sftp.rename(temp_dest_path, dest_path)
+                except Exception as rename_err:
+                    # Some SFTP servers refuse to rename onto an existing
+                    # file even with the overwrite flag. Fall back to
+                    # remove-then-rename. This has a brief non-atomic
+                    # window, but it only happens AFTER the new file is
+                    # fully uploaded and verified — worst case a
+                    # downloader briefly sees "file not found" instead of
+                    # ever seeing a truncated/partial file, which is the
+                    # failure mode this fixes.
+                    logger.debug(
+                        f"[Transfer] Direct rename failed ({rename_err}), "
+                        f"retrying with unlink+rename"
+                    )
+                    try:
+                        sftp.unlink(dest_path)
+                    except Exception:
+                        pass  # dest_path may not exist yet (first-time upload)
+                    sftp.rename(temp_dest_path, dest_path)
+
+                logger.info(f"[Transfer] Upload verified, swapped into place: {dest_path}")
+                app_signals.append_log.emit(
+                    f"[Transfer] Upload verified and swapped into place: {dest_path}"
+                )
 
                 # ---------- FINAL SUCCESS ----------
                 duration = time.time() - upload_start
@@ -3132,7 +3249,6 @@ class FileWatcherWorker(QObject):
             report_transfer_event(
                 "Completed", "upload", filename, percent=100, speed_mbps=final_speed,
                 file_size_mb=total_mb, elapsed_sec=duration, eta_text="Done",
-                request_id=str(task_id),
             )
 
         except Exception as e:
@@ -3158,6 +3274,22 @@ class FileWatcherWorker(QObject):
             print(f"Upload failed: {error_details}")
             traceback.print_exc()
 
+            # ── FIX: clean up the orphaned temp file, if any ──
+            # dest_path was never opened/truncated during the transfer (see
+            # temp-file upload strategy above), so the existing good file on
+            # the NAS is still intact and safe. Just remove the partial
+            # temp file so it doesn't linger.
+            try:
+                if sftp is not None and 'temp_dest_path' in locals():
+                    sftp.unlink(temp_dest_path)
+                    logger.debug(f"[Transfer] Cleaned up incomplete temp file: {temp_dest_path}")
+                    app_signals.append_log.emit(
+                        f"[Transfer] Cleaned up incomplete temp upload; "
+                        f"existing file at {dest_path} was not modified"
+                    )
+            except Exception:
+                pass  # temp file may not exist if failure occurred before sftp.open
+
             try:
                 cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
                 save_cache(cache, significant_change=True)
@@ -3169,13 +3301,16 @@ class FileWatcherWorker(QObject):
                 dest_path, "Upload Failed", "upload", 0, True
             )
 
-            self.alert_notification.emit("Error (U3)", "Upload failed – check destination path.")
+            self.alert_notification.emit(
+                "Error (U3)",
+                "Upload failed — the existing file on the NAS was NOT modified. "
+                "Please retry the upload."
+            )
             _elapsed_at_failure = (time.time() - upload_start) if 'upload_start' in locals() else 0.0
             _size_mb_at_failure = total_mb if 'total_mb' in locals() else 0.0
             report_transfer_event(
                 "Failed", "upload", filename,
                 file_size_mb=_size_mb_at_failure, elapsed_sec=_elapsed_at_failure, eta_text="-",
-                request_id=str(task_id),
             )
             raise
 
@@ -3508,12 +3643,6 @@ class FileWatcherWorker(QObject):
                         verify=False
                     )
 
-                    if response.status_code not in (200, 201):
-                        report_api_error_to_chat(
-                            DRUPAL_DB_ENTRY_API, method="POST", payload=request_data,
-                            status_code=response.status_code, response_text=response.text,
-                        )
-
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} completed"
                     save_cache(cache, significant_change=True)
                     update_download_upload_metadata(task_id, "Conversion Started")
@@ -3523,9 +3652,6 @@ class FileWatcherWorker(QObject):
                     cache[metadata_key][spec_id]["status"] = f"{status_prefix} API Call Failed"
                     save_cache(cache, significant_change=True)
                     logging.error(f"DRUPAL_DB_ENTRY_API call error: {str(e)}")
-                    report_api_error_to_chat(
-                        DRUPAL_DB_ENTRY_API, method="POST", payload=request_data, error=str(e),
-                    )
                 
             else:
                 raise ValueError(f"Invalid action_type: {action_type}")
@@ -3870,6 +3996,18 @@ class FileWatcherWorker(QObject):
                             delay = 2 ** attempt
                             logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Retrying download after {delay}s, instance: {id(self)}")
                             self.log_update.emit(f"[API Scan] Retrying download after {delay}s")
+                            # ── NEW: tell the UI a retry is happening ──
+                            # Without this the card/window keeps showing the last
+                            # progress % it received before the drop, which looks
+                            # "stuck" — even though the app is about to restart
+                            # the transfer from scratch (SCP has no resume).
+                            retry_msg = (
+                                f"⚠ Network lost — retrying download "
+                                f"(attempt {attempt + 2}/{max_download_retries}) in {delay}s"
+                            )
+                            self.download_status_detail.emit(
+                                local_path, retry_msg, action_type, 0, not is_online
+                            )
                             time.sleep(delay)
                         else:
                             raise
@@ -3924,6 +4062,14 @@ class FileWatcherWorker(QObject):
                             delay = 2 ** attempt
                             logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Retrying upload after {delay}s, instance: {id(self)}")
                             self.log_update.emit(f"[API Scan] Retrying upload after {delay}s")
+                            # ── NEW: tell the UI a retry is happening ──
+                            retry_msg = (
+                                f"⚠ Network lost — retrying upload "
+                                f"(attempt {attempt + 2}/{max_download_retries}) in {delay}s"
+                            )
+                            self.upload_status_detail.emit(
+                                local_path, retry_msg, action_type, 0, not is_online
+                            )
                             time.sleep(delay)
                         else:
                             raise
@@ -4809,12 +4955,36 @@ class FileDownloadListWindow(QDialog):
         self.load_files()
 
         # Connect signals
-        # watcher = FileWatcherWorker.get_instance(parent=self)
-        watcher = FileWatcherWorker.get_instance()
-        watcher.download_progress.connect(self.on_download_progress, Qt.QueuedConnection)
-        watcher.download_status_detail.connect(self.on_download_status_detail, Qt.QueuedConnection)
+        self._connected_watcher = None
+        self._ensure_watcher_connected()
         # Keep your existing update_file_list if needed
         # app_signals.update_file_list.connect(self.on_file_update, Qt.QueuedConnection)
+
+    def _ensure_watcher_connected(self):
+        """
+        (Re)connect to the CURRENT FileWatcherWorker singleton.
+
+        FIX: Every logout/login (and every start_file_watcher() call) does
+        `FileWatcherWorker._instance = None` and creates a brand-new worker
+        with its own fresh download_progress/download_status_detail signals.
+        This window used to connect only once in __init__, so after a single
+        logout/login cycle it stayed wired to the dead old worker and the
+        card UI silently stopped updating even though transfers were
+        actually happening. Called from showEvent so it's always current.
+        """
+        watcher = FileWatcherWorker.get_instance()
+        if watcher is self._connected_watcher:
+            return
+        if self._connected_watcher is not None:
+            try:
+                self._connected_watcher.download_progress.disconnect(self.on_download_progress)
+                self._connected_watcher.download_status_detail.disconnect(self.on_download_status_detail)
+            except Exception:
+                pass
+        watcher.download_progress.connect(self.on_download_progress, Qt.QueuedConnection)
+        watcher.download_status_detail.connect(self.on_download_status_detail, Qt.QueuedConnection)
+        self._connected_watcher = watcher
+        logger.debug("[FileDownloadListWindow] (Re)connected to current FileWatcherWorker instance")
 
     @staticmethod
     def normalize_path(path: str) -> str:
@@ -5037,6 +5207,7 @@ class FileDownloadListWindow(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._ensure_watcher_connected()  # FIX: reconnect if worker was recreated
         self.load_files()  # Refresh when shown
 
 
@@ -5279,10 +5450,28 @@ class FileUploadListWindow(QDialog):
         self.load_files()
 
         # Connect signals
-        # watcher = FileWatcherWorker.get_instance(parent=self)
+        self._connected_watcher = None
+        self._ensure_watcher_connected()
+
+    def _ensure_watcher_connected(self):
+        """
+        (Re)connect to the CURRENT FileWatcherWorker singleton.
+        See FileDownloadListWindow._ensure_watcher_connected for why this
+        is necessary — logout/login recreates the worker with fresh signals.
+        """
         watcher = FileWatcherWorker.get_instance()
+        if watcher is self._connected_watcher:
+            return
+        if self._connected_watcher is not None:
+            try:
+                self._connected_watcher.upload_progress.disconnect(self.on_upload_progress)
+                self._connected_watcher.upload_status_detail.disconnect(self.on_upload_status_detail)
+            except Exception:
+                pass
         watcher.upload_progress.connect(self.on_upload_progress, Qt.QueuedConnection)
         watcher.upload_status_detail.connect(self.on_upload_status_detail, Qt.QueuedConnection)
+        self._connected_watcher = watcher
+        logger.debug("[FileUploadListWindow] (Re)connected to current FileWatcherWorker instance")
 
     @staticmethod
     def normalize_path(path: str) -> str:
@@ -5500,6 +5689,7 @@ class FileUploadListWindow(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._ensure_watcher_connected()  # FIX: reconnect if worker was recreated
         self.load_files()  # Refresh when shown
 
 
@@ -7238,41 +7428,38 @@ class PremediaApp(QApplication):
                 QTimer.singleShot(500, self._safe_invoke_watcher)
 
                 # ── Notification Manager ──────────────────────────────────────
-                def _find_best_anchor():
-                    for w in QApplication.topLevelWidgets():
-                        try:
-                            if w.isVisible() and w.width() > 200:
-                                return w
-                        except RuntimeError:
-                            continue
-                    return getattr(self, "log_window", None)
+                # FIX: This used to be gated behind "a visible top-level widget
+                # exists" via _find_best_anchor(), even though
+                # TransferNotificationManager doesn't actually use an anchor —
+                # it positions itself off the screen's own geometry. If that
+                # search came back empty (e.g. right after login before any
+                # window was shown), the whole block was skipped and progress
+                # popups silently never got wired up for the rest of the
+                # session. Always (re)create and connect it.
+                if getattr(self, "notif_manager", None):
+                    try:
+                        self.notif_manager.hide()
+                        self.notif_manager.deleteLater()
+                    except Exception:
+                        pass
 
-                anchor = _find_best_anchor()
-                if anchor is not None:
-                    if getattr(self, "notif_manager", None):
-                        try:
-                            self.notif_manager.hide()
-                            self.notif_manager.deleteLater()
-                        except Exception:
-                            pass
+                self.notif_manager = TransferNotificationManager()
 
-                    self.notif_manager = TransferNotificationManager()   # no anchor needed
-
-                    watcher = self.file_watcher
-                    watcher.download_progress.connect(
-                        self.notif_manager.on_download_progress, Qt.QueuedConnection
-                    )
-                    watcher.download_status_detail.connect(
-                        self.notif_manager.on_download_status_detail, Qt.QueuedConnection
-                    )
-                    watcher.upload_progress.connect(
-                        self.notif_manager.on_upload_progress, Qt.QueuedConnection
-                    )
-                    watcher.upload_status_detail.connect(
-                        self.notif_manager.on_upload_status_detail, Qt.QueuedConnection
-                    )
-                    logger.info("[App] TransferNotificationManager connected")
-                    app_signals.append_log.emit("[App] TransferNotificationManager connected")
+                watcher = self.file_watcher
+                watcher.download_progress.connect(
+                    self.notif_manager.on_download_progress, Qt.QueuedConnection
+                )
+                watcher.download_status_detail.connect(
+                    self.notif_manager.on_download_status_detail, Qt.QueuedConnection
+                )
+                watcher.upload_progress.connect(
+                    self.notif_manager.on_upload_progress, Qt.QueuedConnection
+                )
+                watcher.upload_status_detail.connect(
+                    self.notif_manager.on_upload_status_detail, Qt.QueuedConnection
+                )
+                logger.info("[App] TransferNotificationManager connected")
+                app_signals.append_log.emit("[App] TransferNotificationManager connected")
                 # ─────────────────────────────────────────────────────────────
 
             # Connect and start the thread
@@ -7506,24 +7693,19 @@ class PremediaApp(QApplication):
 
     def logout_apicall(self, user_id):
         machine_id = USER_SYSTEM_INFO.get('encoded_mac', '')
-        payload = {
-            'user_id': user_id,
-            'machine_id': machine_id,
-        }
         try:
+            payload = {
+                'user_id': user_id,
+                'machine_id': machine_id,
+            }
             response = requests.post(API_URL_LOGOUT, data=payload, verify=False)
             logger.info(response)
             if response.status_code == 200:
                 logger.info(f"Successfully posted metadata to API (Logout).")
             else:
                 logger.error(f"Failed to post metadata to API (Logout): {response.status_code} {response.text}")
-                report_api_error_to_chat(
-                    API_URL_LOGOUT, method="POST", payload=payload,
-                    status_code=response.status_code, response_text=response.text,
-                )
         except Exception as e:
             logger.error(f"Error posting metadata to API (Logout): {e}")
-            report_api_error_to_chat(API_URL_LOGOUT, method="POST", payload=payload, error=str(e))
 
 
     def logout(self):
