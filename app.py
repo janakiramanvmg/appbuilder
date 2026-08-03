@@ -152,6 +152,17 @@ SUPPORTED_EXTENSIONS = [
     "jpg", "jpeg", "png", "gif", "tiff", "tif", "bmp", "webp",
     "psd", "psb", "cr2", "nef", "arw", "dng", "raf", "pef", "srw"
 ]
+
+
+class FileTooLargeError(Exception):
+    """
+    Raised when a file exceeds MAX_UPLOAD_SIZE_BYTES.
+    Intentionally NOT a subclass of any transient/network error — the
+    retry loop in _process_task checks for this specifically and skips
+    retrying, since retrying an oversized file can never succeed.
+    """
+    pass
+
 import shlex
 # Global stop queue for signaling
 FILE_WATCHER_STOP_QUEUE = Queue()
@@ -184,27 +195,31 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === Server and environment Pointing global variables ===
 
-# BASE_DOMAIN = "https://app.vmgpremedia.com"
-# NAS_IP = "192.168.1.145"
-# NAS_PASSWORD = "D&*qmn012@12"
-# NAS_PORT = 22
-# NAS_SHARE = ""
-# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_USERNAME = "irnasappprod"
-# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_PATH = "softwaremedia/IR_prod/"
-# APPVERSION = "1.2.6"
-
-BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+BASE_DOMAIN = "https://app.vmgpremedia.com"
 NAS_IP = "192.168.1.145"
-NAS_USERNAME = "irdev"
-NAS_PASSWORD = "i#0f!L&+@s%^qc"
+NAS_PASSWORD = "D&*qmn012@12"
 NAS_PORT = 22
 NAS_SHARE = ""
-NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
-MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
-NAS_PATH = "softwaremedia/IR_uat/"
-APPVERSION = "1.2.6(UAT)"
+NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
+NAS_USERNAME = "irnasappprod"
+MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
+NAS_PATH = "softwaremedia/IR_prod/"
+APPVERSION = "1.2.7"
+GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
+
+# BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+# NAS_IP = "192.168.1.145"
+# NAS_USERNAME = "irdev"
+# NAS_PASSWORD = "i#0f!L&+@s%^qc"
+# NAS_PORT = 22
+# NAS_SHARE = ""
+# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
+# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
+# NAS_PATH = "softwaremedia/IR_uat/"
+# APPVERSION = "1.2.7(UAT)"
+# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
+
+
 
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -343,7 +358,12 @@ API_POLL_INTERVAL = 5000  # 5 seconds in milliseconds
 
 # === Google Chat transfer reporting (latency / speed) ===
 # Paste your Google Chat "Incoming Webhook" URL here (Space -> Apps & integrations -> Webhooks)
-GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
+# UAT CHAT
+# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
+
+
+
+
 TRANSFER_REPORT_INTERVAL_SEC = 10  # send a report every 10 seconds while a transfer is active
 LATENCY_TARGET_HOST = None  # None => uses NAS_IP; set to a domain/IP to ping a different server
 LATENCY_TARGET_PORT = None  # None => uses NAS_PORT
@@ -372,6 +392,9 @@ USER_SYSTEM_INFO = {}
 THROTTLE_MBPS = None       # Set to e.g. 50, 100, or None for no limit (full speed)
 MIN_REQUIRED_MBPS = 50     # Optional: for warning if speed too low (in Mbps)
 PRINT_INTERVAL = 0.5       # Progress update frequency in seconds
+# MAX_UPLOAD_SIZE_BYTES = 2 * 1024 * 1024 * 1024   # 2 GB — hard cap on upload file size
+# To disable the upload size limit entirely, set the line above to:
+MAX_UPLOAD_SIZE_BYTES = None
 # ===================================
 # === Logging Setup ===
 logger = logging.getLogger("PremediaApp")
@@ -1204,7 +1227,7 @@ def report_transfer_event(
             if not ok:
                 raise_network_alarm(
                     "GoogleChatUnreachable",
-                    f"Unable to send the transfer report to Google Chat for '{file_name}'.",
+                    "Unable to send report to Engineering Team",
                     context=alarm_context,
                     error=result,
                 )
@@ -2965,7 +2988,50 @@ class FileWatcherWorker(QObject):
             )
             report_transfer_event("Failed", "upload", filename)
             raise FileNotFoundError(f"Source file does not exist: {src_path}")
-        
+
+        # ── FIX: enforce max upload size (if configured) BEFORE opening ──
+        # any NAS connection or dispatching progress. Checked here — the
+        # single choke point every upload/replace/retry path goes through —
+        # so the file never starts transferring, no partial file ever
+        # lands on the NAS, and no NAS connection is wasted on a file that
+        # can never succeed.
+        #
+        # To disable this limit entirely, set MAX_UPLOAD_SIZE_BYTES = None
+        # near the top of the file (CONFIGURATION section) — no other code
+        # changes needed.
+        if MAX_UPLOAD_SIZE_BYTES is not None:
+            try:
+                _src_size_bytes = src_path.stat().st_size
+            except Exception as size_err:
+                _src_size_bytes = 0
+                logger.warning(f"[Transfer] Could not stat file size for {src_path}: {size_err}")
+
+            if _src_size_bytes > MAX_UPLOAD_SIZE_BYTES:
+                size_gb = _src_size_bytes / (1024 ** 3)
+                limit_gb = MAX_UPLOAD_SIZE_BYTES / (1024 ** 3)
+                size_msg = (
+                    f"File size ({size_gb:.2f} GB) exceeds the {limit_gb:.0f} GB "
+                    f"upload limit:\n{filename}"
+                )
+                logger.error(f"[Transfer] Upload blocked — {size_msg}")
+                app_signals.append_log.emit(f"[Transfer] Upload blocked: {size_msg}")
+
+                cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed - File Too Large"
+                save_cache(cache, significant_change=True)
+                update_download_upload_metadata(task_id, "failed")
+
+                self.alert_notification.emit("File Size Limit Exceeded", size_msg)
+
+                file_watcher.upload_progress.emit(spec_id, dest_path, filename, 0)
+                file_watcher.upload_status_detail.emit(
+                    dest_path, f"Upload Failed: File size above {limit_gb:.0f} GB", "upload", 0, True
+                )
+                report_transfer_event(
+                    "Failed", "upload", filename,
+                    file_size_mb=_src_size_bytes / 1024 / 1024, eta_text="-",
+                )
+                raise FileTooLargeError(size_msg)
+
         print("========Continue upload=====matched_file======================")
         # dest_path = item.get("file_path", dest_path)
         # if matched_ext:
@@ -3585,6 +3651,17 @@ class FileWatcherWorker(QObject):
 
                         self._upload_to_nas(src_path, dest_path, item)
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
+                    except FileTooLargeError:
+                        # ── FIX: don't mask the size-limit error ──
+                        # This block used to catch every exception from
+                        # _upload_to_nas (network errors, stalls, this size
+                        # check, anything) and convert it into a generic
+                        # NotImplementedError, which meant the retry loop in
+                        # _process_task could never tell a "file too big"
+                        # failure apart from a transient network failure —
+                        # so it retried an error that can never succeed.
+                        # Let it propagate unchanged.
+                        raise
                     except Exception as e:
                         # self.alert_notification.emit("ERROR", f"2No completed file found in target folder. upload the file manually.")            
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
@@ -4054,6 +4131,20 @@ class FileWatcherWorker(QObject):
                                 'task_key': task_key,
                                 'success': True
                             }
+                    except FileTooLargeError as e:
+                        # ── FIX: don't retry oversized files ──
+                        # The size check in _upload_to_nas already raised the
+                        # alert popup and set status/cache. Retrying can
+                        # never succeed since the file size doesn't change
+                        # between attempts, so fail immediately instead of
+                        # burning through all retry delays.
+                        logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Upload blocked for {local_path} (Task {task_id}): {str(e)}")
+                        self.log_update.emit(f"[API Scan] Upload blocked (file too large): {local_path}")
+                        return {
+                            'update': (local_path, f"Upload Failed: {str(e)}", action_type, 0, not is_online),
+                            'task_key': task_key,
+                            'success': False
+                        }
                     except Exception as e:
                         logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Upload failed for {local_path} (Task {task_id}): {str(e)}, attempt {attempt + 1}, instance: {id(self)}")
                         self.log_update.emit(f"[API Scan] Upload failed for {local_path} (Task {task_id}): {str(e)}")
@@ -5372,17 +5463,28 @@ class FileDownloadListWindow(QDialog):
         # ------------------------------------------------------------------
         # 7. Dispatch retry to worker (NON-BLOCKING)
         # ------------------------------------------------------------------
+        # FIX: This used to call file_worker.perform_file_transfer(...)
+        # directly — a plain Python method call ignores the worker's
+        # moveToThread() affinity and just runs synchronously on whichever
+        # thread calls it. Since retry_file_process is triggered by a
+        # button click, that thread is the GUI thread — so the entire
+        # network transfer (SCP/SFTP, chunk-by-chunk) ran INSIDE the Qt
+        # event loop, freezing the whole application (no repaints, no
+        # signal delivery, no other UI response) until the transfer
+        # finished or failed. Dispatching it on a background daemon thread
+        # fixes both the hang AND the "progress not showing" symptom,
+        # since download_progress/download_status_detail are emitted with
+        # Qt.QueuedConnection and are safe to emit from any thread — the
+        # GUI thread stays free to actually process and paint them.
         try:
             file_worker = FileWatcherWorker.get_instance()
 
-            file_worker.perform_file_transfer(
-                src_path,
-                dest_path,
-                "download",
-                retry_item,       # 🔑 CORRECT ITEM PAYLOAD
-                is_nas_src,
-                is_nas_dest
-            )
+            threading.Thread(
+                target=file_worker.perform_file_transfer,
+                args=(src_path, dest_path, "download", retry_item, is_nas_src, is_nas_dest),
+                daemon=True,
+                name=f"RetryDownload-{spec_id}",
+            ).start()
 
             logger.info(
                 f"[Retry] Download retry dispatched "
@@ -5815,17 +5917,19 @@ class FileUploadListWindow(QDialog):
             "request_type": "upload",
         }
 
+        # FIX: same issue as the download retry — calling
+        # perform_file_transfer directly is a synchronous call on the GUI
+        # thread and freezes the whole application for the duration of the
+        # upload. Dispatch on a background daemon thread instead.
         try:
             file_worker = FileWatcherWorker.get_instance()
 
-            file_worker.perform_file_transfer(
-                src_path,
-                dest_path,
-                "upload",
-                retry_item,
-                is_nas_src,
-                is_nas_dest
-            )
+            threading.Thread(
+                target=file_worker.perform_file_transfer,
+                args=(src_path, dest_path, "upload", retry_item, is_nas_src, is_nas_dest),
+                daemon=True,
+                name=f"RetryUpload-{spec_id}",
+            ).start()
 
             logger.info(f"[Upload Retry] Upload retry dispatched (spec_id={spec_id}, task_id={task_id})")
 
