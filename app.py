@@ -152,17 +152,6 @@ SUPPORTED_EXTENSIONS = [
     "jpg", "jpeg", "png", "gif", "tiff", "tif", "bmp", "webp",
     "psd", "psb", "cr2", "nef", "arw", "dng", "raf", "pef", "srw"
 ]
-
-
-class FileTooLargeError(Exception):
-    """
-    Raised when a file exceeds MAX_UPLOAD_SIZE_BYTES.
-    Intentionally NOT a subclass of any transient/network error — the
-    retry loop in _process_task checks for this specifically and skips
-    retrying, since retrying an oversized file can never succeed.
-    """
-    pass
-
 import shlex
 # Global stop queue for signaling
 FILE_WATCHER_STOP_QUEUE = Queue()
@@ -218,8 +207,6 @@ GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/mes
 # NAS_PATH = "softwaremedia/IR_uat/"
 # APPVERSION = "1.2.7(UAT)"
 # GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
-
-
 
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -358,18 +345,14 @@ API_POLL_INTERVAL = 5000  # 5 seconds in milliseconds
 
 # === Google Chat transfer reporting (latency / speed) ===
 # Paste your Google Chat "Incoming Webhook" URL here (Space -> Apps & integrations -> Webhooks)
-# UAT CHAT
 # GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
-
-
-
-
 TRANSFER_REPORT_INTERVAL_SEC = 10  # send a report every 10 seconds while a transfer is active
 LATENCY_TARGET_HOST = None  # None => uses NAS_IP; set to a domain/IP to ping a different server
 LATENCY_TARGET_PORT = None  # None => uses NAS_PORT
 
 # === Network/server problem alarm thresholds ===
 LATENCY_WARNING_MS = 1000       # server latency above this = "server is very slow"
+LATENCY_MIN_MS = 1              # server latency below this (but not None) = suspicious/likely bad reading
 SPEED_WARNING_MBPS = 0.5        # transfer speed below this (mid-transfer) = "server is very slow"
 ALARM_COOLDOWN_SEC = 300        # don't repeat the same alarm type more than once per 5 minutes
 
@@ -392,9 +375,6 @@ USER_SYSTEM_INFO = {}
 THROTTLE_MBPS = None       # Set to e.g. 50, 100, or None for no limit (full speed)
 MIN_REQUIRED_MBPS = 50     # Optional: for warning if speed too low (in Mbps)
 PRINT_INTERVAL = 0.5       # Progress update frequency in seconds
-# MAX_UPLOAD_SIZE_BYTES = 2 * 1024 * 1024 * 1024   # 2 GB — hard cap on upload file size
-# To disable the upload size limit entirely, set the line above to:
-MAX_UPLOAD_SIZE_BYTES = None
 # ===================================
 # === Logging Setup ===
 logger = logging.getLogger("PremediaApp")
@@ -754,6 +734,7 @@ class NetworkAlarmWindow(QDialog):
             self.show()
         self.raise_()
         self.activateWindow()
+        _set_alarm_window_visible(True)
 
     def _rebuild_text(self):
         blocks = []
@@ -780,6 +761,7 @@ class NetworkAlarmWindow(QDialog):
         # (and re-registering) the singleton on the next alarm.
         event.ignore()
         self.hide()
+        _set_alarm_window_visible(False)
 
 
 def show_network_alarm_dialog(summary: str, report_text: str):
@@ -800,7 +782,17 @@ def show_network_alarm_dialog(summary: str, report_text: str):
 
 _ALARM_LOCK = Lock()
 _LAST_ALARM_TIME = {}
+_ALARM_WINDOW_VISIBLE_LOCK = Lock()
+_ALARM_WINDOW_VISIBLE = False
 
+def _set_alarm_window_visible(is_visible: bool):
+    global _ALARM_WINDOW_VISIBLE
+    with _ALARM_WINDOW_VISIBLE_LOCK:
+        _ALARM_WINDOW_VISIBLE = is_visible
+
+def _is_alarm_window_visible() -> bool:
+    with _ALARM_WINDOW_VISIBLE_LOCK:
+        return _ALARM_WINDOW_VISIBLE
 
 def raise_network_alarm(issue_type: str, summary: str, context: dict = None, error: str = None):
     """
@@ -817,7 +809,7 @@ def raise_network_alarm(issue_type: str, summary: str, context: dict = None, err
     now = time.time()
     with _ALARM_LOCK:
         last = _LAST_ALARM_TIME.get(issue_type, 0)
-        if now - last < ALARM_COOLDOWN_SEC:
+        if _is_alarm_window_visible() and (now - last < ALARM_COOLDOWN_SEC):
             logger.debug(f"[Alarm] Suppressed duplicate '{issue_type}' alarm (cooldown active)")
             return
         _LAST_ALARM_TIME[issue_type] = now
@@ -833,7 +825,7 @@ def raise_network_alarm(issue_type: str, summary: str, context: dict = None, err
     # The download/upload card had no idea anything was wrong and just kept
     # showing whatever progress % it last received — looking "frozen" or
     # "stuck" to the user instead of clearly indicating the network dropped.
-    if issue_type in ("ServerUnreachable", "ServerSlow", "TransferSlow"):
+    if issue_type in ("ServerUnreachable", "ServerSlow", "ServerLatencyAbnormal", "TransferSlow"):
         try:
             ctx = context or {}
             file_name = ctx.get("File")
@@ -1157,7 +1149,12 @@ def report_transfer_event(
             }
 
             # ---- Alarm: NAS/server unreachable ("not able to ping server") ----
-            if latency_ms is None:
+            # Treat both a None reading (connection failed / timed out) and an
+            # exact 0ms reading (measure_latency_ms() couldn't produce a real
+            # timing — e.g. socket error swallowed upstream) as "unreachable",
+            # since a legitimate TCP-connect latency of exactly 0ms is not
+            # realistically possible.
+            if latency_ms is None or latency_ms == 0:
                 target_host = LATENCY_TARGET_HOST or NAS_IP
                 target_port = LATENCY_TARGET_PORT or NAS_PORT
                 raise_network_alarm(
@@ -1172,6 +1169,18 @@ def report_transfer_event(
                     "ServerSlow",
                     f"Server latency is very high ({latency_ms} ms) — the connection to the "
                     f"server appears unstable or overloaded.",
+                    context={**alarm_context, "Latency": f"{latency_ms} ms"},
+                )
+            # ---- Alarm: server latency is abnormally/suspiciously low ----
+            # A very low but non-zero reading (below LATENCY_MIN_MS) can indicate
+            # an unreliable/flaky connection or a bad measurement rather than a
+            # genuinely healthy server, so flag it too instead of silently
+            # treating it as "all good".
+            elif latency_ms < LATENCY_MIN_MS:
+                raise_network_alarm(
+                    "ServerLatencyAbnormal",
+                    f"Server latency reading is abnormally low ({latency_ms} ms) — this may "
+                    f"indicate an unstable connection or an unreliable measurement.",
                     context={**alarm_context, "Latency": f"{latency_ms} ms"},
                 )
 
@@ -1227,7 +1236,7 @@ def report_transfer_event(
             if not ok:
                 raise_network_alarm(
                     "GoogleChatUnreachable",
-                    "Unable to send report to Engineering Team",
+                    f"Unable to send the transfer report to Google Chat for '{file_name}'.",
                     context=alarm_context,
                     error=result,
                 )
@@ -2988,50 +2997,7 @@ class FileWatcherWorker(QObject):
             )
             report_transfer_event("Failed", "upload", filename)
             raise FileNotFoundError(f"Source file does not exist: {src_path}")
-
-        # ── FIX: enforce max upload size (if configured) BEFORE opening ──
-        # any NAS connection or dispatching progress. Checked here — the
-        # single choke point every upload/replace/retry path goes through —
-        # so the file never starts transferring, no partial file ever
-        # lands on the NAS, and no NAS connection is wasted on a file that
-        # can never succeed.
-        #
-        # To disable this limit entirely, set MAX_UPLOAD_SIZE_BYTES = None
-        # near the top of the file (CONFIGURATION section) — no other code
-        # changes needed.
-        if MAX_UPLOAD_SIZE_BYTES is not None:
-            try:
-                _src_size_bytes = src_path.stat().st_size
-            except Exception as size_err:
-                _src_size_bytes = 0
-                logger.warning(f"[Transfer] Could not stat file size for {src_path}: {size_err}")
-
-            if _src_size_bytes > MAX_UPLOAD_SIZE_BYTES:
-                size_gb = _src_size_bytes / (1024 ** 3)
-                limit_gb = MAX_UPLOAD_SIZE_BYTES / (1024 ** 3)
-                size_msg = (
-                    f"File size ({size_gb:.2f} GB) exceeds the {limit_gb:.0f} GB "
-                    f"upload limit:\n{filename}"
-                )
-                logger.error(f"[Transfer] Upload blocked — {size_msg}")
-                app_signals.append_log.emit(f"[Transfer] Upload blocked: {size_msg}")
-
-                cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed - File Too Large"
-                save_cache(cache, significant_change=True)
-                update_download_upload_metadata(task_id, "failed")
-
-                self.alert_notification.emit("File Size Limit Exceeded", size_msg)
-
-                file_watcher.upload_progress.emit(spec_id, dest_path, filename, 0)
-                file_watcher.upload_status_detail.emit(
-                    dest_path, f"Upload Failed: File size above {limit_gb:.0f} GB", "upload", 0, True
-                )
-                report_transfer_event(
-                    "Failed", "upload", filename,
-                    file_size_mb=_src_size_bytes / 1024 / 1024, eta_text="-",
-                )
-                raise FileTooLargeError(size_msg)
-
+        
         print("========Continue upload=====matched_file======================")
         # dest_path = item.get("file_path", dest_path)
         # if matched_ext:
@@ -3651,17 +3617,6 @@ class FileWatcherWorker(QObject):
 
                         self._upload_to_nas(src_path, dest_path, item)
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
-                    except FileTooLargeError:
-                        # ── FIX: don't mask the size-limit error ──
-                        # This block used to catch every exception from
-                        # _upload_to_nas (network errors, stalls, this size
-                        # check, anything) and convert it into a generic
-                        # NotImplementedError, which meant the retry loop in
-                        # _process_task could never tell a "file too big"
-                        # failure apart from a transient network failure —
-                        # so it retried an error that can never succeed.
-                        # Let it propagate unchanged.
-                        raise
                     except Exception as e:
                         # self.alert_notification.emit("ERROR", f"2No completed file found in target folder. upload the file manually.")            
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
@@ -4131,20 +4086,6 @@ class FileWatcherWorker(QObject):
                                 'task_key': task_key,
                                 'success': True
                             }
-                    except FileTooLargeError as e:
-                        # ── FIX: don't retry oversized files ──
-                        # The size check in _upload_to_nas already raised the
-                        # alert popup and set status/cache. Retrying can
-                        # never succeed since the file size doesn't change
-                        # between attempts, so fail immediately instead of
-                        # burning through all retry delays.
-                        logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Upload blocked for {local_path} (Task {task_id}): {str(e)}")
-                        self.log_update.emit(f"[API Scan] Upload blocked (file too large): {local_path}")
-                        return {
-                            'update': (local_path, f"Upload Failed: {str(e)}", action_type, 0, not is_online),
-                            'task_key': task_key,
-                            'success': False
-                        }
                     except Exception as e:
                         logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Upload failed for {local_path} (Task {task_id}): {str(e)}, attempt {attempt + 1}, instance: {id(self)}")
                         self.log_update.emit(f"[API Scan] Upload failed for {local_path} (Task {task_id}): {str(e)}")
@@ -5463,28 +5404,17 @@ class FileDownloadListWindow(QDialog):
         # ------------------------------------------------------------------
         # 7. Dispatch retry to worker (NON-BLOCKING)
         # ------------------------------------------------------------------
-        # FIX: This used to call file_worker.perform_file_transfer(...)
-        # directly — a plain Python method call ignores the worker's
-        # moveToThread() affinity and just runs synchronously on whichever
-        # thread calls it. Since retry_file_process is triggered by a
-        # button click, that thread is the GUI thread — so the entire
-        # network transfer (SCP/SFTP, chunk-by-chunk) ran INSIDE the Qt
-        # event loop, freezing the whole application (no repaints, no
-        # signal delivery, no other UI response) until the transfer
-        # finished or failed. Dispatching it on a background daemon thread
-        # fixes both the hang AND the "progress not showing" symptom,
-        # since download_progress/download_status_detail are emitted with
-        # Qt.QueuedConnection and are safe to emit from any thread — the
-        # GUI thread stays free to actually process and paint them.
         try:
             file_worker = FileWatcherWorker.get_instance()
 
-            threading.Thread(
-                target=file_worker.perform_file_transfer,
-                args=(src_path, dest_path, "download", retry_item, is_nas_src, is_nas_dest),
-                daemon=True,
-                name=f"RetryDownload-{spec_id}",
-            ).start()
+            file_worker.perform_file_transfer(
+                src_path,
+                dest_path,
+                "download",
+                retry_item,       # 🔑 CORRECT ITEM PAYLOAD
+                is_nas_src,
+                is_nas_dest
+            )
 
             logger.info(
                 f"[Retry] Download retry dispatched "
@@ -5917,19 +5847,17 @@ class FileUploadListWindow(QDialog):
             "request_type": "upload",
         }
 
-        # FIX: same issue as the download retry — calling
-        # perform_file_transfer directly is a synchronous call on the GUI
-        # thread and freezes the whole application for the duration of the
-        # upload. Dispatch on a background daemon thread instead.
         try:
             file_worker = FileWatcherWorker.get_instance()
 
-            threading.Thread(
-                target=file_worker.perform_file_transfer,
-                args=(src_path, dest_path, "upload", retry_item, is_nas_src, is_nas_dest),
-                daemon=True,
-                name=f"RetryUpload-{spec_id}",
-            ).start()
+            file_worker.perform_file_transfer(
+                src_path,
+                dest_path,
+                "upload",
+                retry_item,
+                is_nas_src,
+                is_nas_dest
+            )
 
             logger.info(f"[Upload Retry] Upload retry dispatched (spec_id={spec_id}, task_id={task_id})")
 
