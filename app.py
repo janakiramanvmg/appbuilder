@@ -375,6 +375,13 @@ USER_SYSTEM_INFO = {}
 THROTTLE_MBPS = None       # Set to e.g. 50, 100, or None for no limit (full speed)
 MIN_REQUIRED_MBPS = 50     # Optional: for warning if speed too low (in Mbps)
 PRINT_INTERVAL = 0.5       # Progress update frequency in seconds
+
+# ---- TEMPORARY: Max upload file size limit ----
+# To DISABLE this limit, just set ENABLE_MAX_UPLOAD_SIZE_LIMIT = False below
+# (or delete/comment out these two lines) — no other code changes needed.
+ENABLE_MAX_UPLOAD_SIZE_LIMIT = True   # <-- flip to False to turn the limit off
+MAX_UPLOAD_SIZE_MB = 2048             # 2 GB
+# =================================================
 # ===================================
 # === Logging Setup ===
 logger = logging.getLogger("PremediaApp")
@@ -477,6 +484,31 @@ app_signals = AppSignals()
 class PSDUploadCancelled(Exception):
     """Raised when the user cancels an upload from the PSD validation dialog."""
     pass
+
+
+class UploadSizeLimitExceeded(Exception):
+    """Raised when a file exceeds the configured MAX_UPLOAD_SIZE_MB limit."""
+    pass
+
+
+def exceeds_max_upload_size(file_path):
+    """
+    Checks a file against the temporary MAX_UPLOAD_SIZE_MB limit.
+
+    TO DISABLE: set ENABLE_MAX_UPLOAD_SIZE_LIMIT = False near the top of
+    this file (in the CONFIGURATION block) — this function will then
+    always return (False, size_mb) and the limit has no effect anywhere.
+
+    Returns (exceeds: bool, size_mb: float).
+    """
+    if not ENABLE_MAX_UPLOAD_SIZE_LIMIT:
+        return False, 0.0
+    try:
+        size_mb = Path(file_path).stat().st_size / (1024 * 1024)
+    except Exception as e:
+        logger.warning(f"[UploadSizeLimit] Could not stat {file_path}: {e}")
+        return False, 0.0
+    return size_mb > MAX_UPLOAD_SIZE_MB, size_mb
 
 
 class PSDValidationResult:
@@ -4411,6 +4443,24 @@ class FileWatcherWorker(QObject):
                         #dest_dir = os.path.dirname(dest_path)
                         dest_path = dest_path.replace("\\", "/")
 
+                        # ── TEMPORARY: max upload file size limit ──────────
+                        # Applies to every upload/replace, any file type.
+                        # To disable: set ENABLE_MAX_UPLOAD_SIZE_LIMIT = False
+                        # near the top of this file — no other changes needed.
+                        too_big, size_mb = exceeds_max_upload_size(src_path)
+                        if too_big:
+                            cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Blocked (Too Large)"
+                            save_cache(cache, significant_change=True)
+                            self.alert_notification.emit(
+                                "Upload Blocked — File Too Large",
+                                f"'{Path(src_path).name}' is {size_mb:.1f} MB, which exceeds the "
+                                f"current {MAX_UPLOAD_SIZE_MB} MB upload limit.\n\n"
+                                "Please contact your administrator if this file needs to be uploaded."
+                            )
+                            raise UploadSizeLimitExceeded(
+                                f"{Path(src_path).name} ({size_mb:.1f} MB) exceeds the {MAX_UPLOAD_SIZE_MB} MB upload limit"
+                            )
+
                         # ── PSD/PSB pre-upload production-readiness validation ──
                         # For .psd/.psb files only: run the checklist and show
                         # the report + Upload/Cancel confirmation dialog to the
@@ -4432,9 +4482,9 @@ class FileWatcherWorker(QObject):
 
                         self._upload_to_nas(src_path, dest_path, item)
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
-                    except PSDUploadCancelled:
-                        # Do NOT mask this as "HTTP Not Implemented" — re-raise
-                        # as-is so the outer handler reports it accurately.
+                    except (PSDUploadCancelled, UploadSizeLimitExceeded):
+                        # Do NOT mask these as "HTTP Not Implemented" — re-raise
+                        # as-is so the outer handler reports them accurately.
                         raise
                     except Exception as e:
                         # self.alert_notification.emit("ERROR", f"2No completed file found in target folder. upload the file manually.")            
@@ -4525,6 +4575,26 @@ class FileWatcherWorker(QObject):
             self.log_update.emit(f"[Transfer] Cancelled by user (Task {task_id}): {str(e)}")
             self.progress_update.emit(f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}", dest_path, 0)
             self.download_status_detail.emit(dest_path, f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}", action_type, 0, True)
+
+            raise
+
+        except UploadSizeLimitExceeded as e:
+            # File exceeds the temporary MAX_UPLOAD_SIZE_MB limit — this is
+            # a policy block, not a transfer failure, so keep the status
+            # and logging distinct from a genuine "Failed" transfer.
+            cache.setdefault(metadata_key, {})
+            if spec_id not in cache[metadata_key]:
+                cache[metadata_key][spec_id] = {"local_path": dest_path, "status": f"{status_prefix} Blocked (Too Large)"}
+            else:
+                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Blocked (Too Large)"
+
+            save_cache(cache, significant_change=True)
+            update_download_upload_metadata(task_id, "blocked")
+            IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
+            logger.info(f"{status_prefix} blocked by size limit (Task {task_id}): {str(e)}")
+            self.log_update.emit(f"[Transfer] Blocked — exceeds size limit (Task {task_id}): {str(e)}")
+            self.progress_update.emit(f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}", dest_path, 0)
+            self.download_status_detail.emit(dest_path, f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}", action_type, 0, True)
 
             raise
 
@@ -4933,6 +5003,17 @@ class FileWatcherWorker(QObject):
                         self.log_update.emit(f"[API Scan] Upload cancelled by user (Task {task_id}): {str(e)}")
                         return {
                             'update': (local_path, "Upload Cancelled", action_type, 0, not is_online),
+                            'task_key': task_key,
+                            'success': False
+                        }
+                    except UploadSizeLimitExceeded as e:
+                        # File exceeds the configured size limit — retrying
+                        # won't change the file size, so stop immediately
+                        # instead of burning 3 retry attempts and re-alerting.
+                        logger.info(f"Upload blocked by size limit for {local_path} (Task {task_id}): {str(e)}")
+                        self.log_update.emit(f"[API Scan] Upload blocked — exceeds size limit (Task {task_id}): {str(e)}")
+                        return {
+                            'update': (local_path, "Upload Blocked (Too Large)", action_type, 0, not is_online),
                             'task_key': task_key,
                             'success': False
                         }
