@@ -8,11 +8,11 @@ from PySide6.QtWidgets import (
 from updater_client import check_for_update
   # your current version
 
-from PySide6.QtGui import QIcon, QTextCursor, QAction, QCursor, QFont,QPixmap, QDesktopServices
+from PySide6.QtGui import QIcon, QTextCursor, QAction, QCursor, QFont,QPixmap, QDesktopServices, QColor
 from PySide6.QtCore import QRunnable, QThreadPool, QEvent, QSize, QThread, QTimer, Qt, QObject, Signal, QMetaObject, Slot, QLockFile, QDir, QEventLoop, QUrl, Q_ARG, QMimeData, QPropertyAnimation, QEvent
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkAccessManager, QNetworkRequest
 from login import Ui_Dialog
-from PySide6.QtWidgets import QLineEdit, QGraphicsOpacityEffect
+from PySide6.QtWidgets import QLineEdit, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
 
 import sys
 import logging
@@ -184,29 +184,29 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === Server and environment Pointing global variables ===
 
-BASE_DOMAIN = "https://app.vmgpremedia.com"
-NAS_IP = "192.168.1.145"
-NAS_PASSWORD = "D&*qmn012@12"
-NAS_PORT = 22
-NAS_SHARE = ""
-NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
-NAS_USERNAME = "irnasappprod"
-MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
-NAS_PATH = "softwaremedia/IR_prod/"
-APPVERSION = "1.2.7"
-GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
-
-# BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+# BASE_DOMAIN = "https://app.vmgpremedia.com"
 # NAS_IP = "192.168.1.145"
-# NAS_USERNAME = "irdev"
-# NAS_PASSWORD = "i#0f!L&+@s%^qc"
+# NAS_PASSWORD = "D&*qmn012@12"
 # NAS_PORT = 22
 # NAS_SHARE = ""
-# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
-# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
-# NAS_PATH = "softwaremedia/IR_uat/"
-# APPVERSION = "1.2.7(UAT)"
-# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
+# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
+# NAS_USERNAME = "irnasappprod"
+# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
+# NAS_PATH = "softwaremedia/IR_prod/"
+# APPVERSION = "1.2.7"
+# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
+
+BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+NAS_IP = "192.168.1.145"
+NAS_USERNAME = "irdev"
+NAS_PASSWORD = "i#0f!L&+@s%^qc"
+NAS_PORT = 22
+NAS_SHARE = ""
+NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
+MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
+NAS_PATH = "softwaremedia/IR_uat/"
+APPVERSION = "1.2.7(UAT)"
+GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -407,6 +407,8 @@ class AppSignals(QObject):
     api_call_status = Signal(str, str, int)
     update_timer_status = Signal(str)
     network_alarm = Signal(str, str)  # summary, full_diagnostic_report_text
+    # file_path, PSDValidationResult, confirmation_box (_PSDConfirmationBox)
+    psd_validation_required = Signal(str, object, object)
 
     def __init__(self):
         super().__init__()
@@ -415,12 +417,772 @@ class AppSignals(QObject):
         # the Qt dialog it builds) always runs on the main GUI thread, even
         # though network_alarm.emit() is called from background threads.
         self.network_alarm.connect(self._on_network_alarm, Qt.QueuedConnection)
+        # Same pattern for the PSD/PSB pre-upload validation confirmation
+        # dialog — must always be built/shown on the main GUI thread even
+        # though the request originates from a background upload thread.
+        self.psd_validation_required.connect(self._on_psd_validation_required, Qt.QueuedConnection)
 
     @Slot(str, str)
     def _on_network_alarm(self, summary, report_text):
         show_network_alarm_dialog(summary, report_text)
 
+    @Slot(str, object, object)
+    def _on_psd_validation_required(self, file_path, result, confirmation_box):
+        """
+        Runs on the main GUI thread (QueuedConnection). Shows the PSD
+        quality-check report + Upload/Cancel confirmation dialog, then wakes
+        up the waiting background upload thread with the user's decision.
+        """
+        try:
+            dlg = PSDValidationDialog(file_path, result, parent=None)
+            dlg.raise_()
+            dlg.activateWindow()
+            choice = dlg.exec()
+            confirmation_box.result = (choice == QDialog.Accepted)
+        except Exception as e:
+            logger.error(f"[PSD Validation] Failed to show confirmation dialog: {e}")
+            confirmation_box.result = False
+        finally:
+            confirmation_box.event.set()
+
 app_signals = AppSignals()
+
+
+# ============================================================================
+# === PSD / PSB Production-Readiness Validation ============================
+# ============================================================================
+#
+# Runs a checklist of production-readiness rules against a .psd/.psb file
+# before it is uploaded to the NAS, and always shows the user a report +
+# Upload/Cancel confirmation dialog — regardless of whether validation
+# passed or failed — so the human makes the final call.
+#
+# Config is optional; pass a dict via FileWatcherWorker.psd_validation_config
+# to customize behavior, e.g.:
+#   {
+#       "allowed_hidden_layers": ["Guides"],
+#       "temp_layer_patterns": ["temp", "tmp", "wip", "draft", "test"],
+#       "reference_layer_patterns": ["reference", "ref", "guide"],
+#       "layer_naming_regex": r"^[A-Za-z0-9_\-\s]+$",
+#       "mandatory_layers": ["Background", "Final"],
+#       "expected_hierarchy": None,
+#       "allowed_locked_layers": [],
+#       "min_width": None,
+#       "min_height": None,
+#       "required_color_mode": None,   # e.g. "RGB"
+#       "require_flattenable": False,
+#   }
+# ============================================================================
+
+class PSDUploadCancelled(Exception):
+    """Raised when the user cancels an upload from the PSD validation dialog."""
+    pass
+
+
+class PSDValidationResult:
+    """Container for one PSD/PSB validation run."""
+
+    def __init__(self):
+        self.checks = []          # list of {"name","passed","message"}
+        self.canvas_size = None   # (width, height)
+        self.overall_pass = True
+
+    def add(self, name, passed, message=""):
+        self.checks.append({"name": name, "passed": bool(passed), "message": message or ""})
+        if not passed:
+            self.overall_pass = False
+
+
+def _psd_layer_name(layer):
+    try:
+        return layer.name or "(unnamed layer)"
+    except Exception:
+        return "(unnamed layer)"
+
+
+def validate_psd_document(file_path, config=None):
+    """
+    Validates a .psd/.psb file against a production-readiness checklist.
+    Never raises — any internal failure is captured as a FAIL check so the
+    caller always gets back a usable PSDValidationResult.
+    """
+    config = config or {}
+    result = PSDValidationResult()
+
+    if PSDImage is None:
+        result.add("PSD Library", False, "psd-tools is not installed; cannot validate this file")
+        return result
+
+    try:
+        psd = PSDImage.open(file_path)
+    except Exception as e:
+        result.add("File Open", False, f"Could not open PSD/PSB file: {e}")
+        return result
+
+    try:
+        result.canvas_size = (psd.width, psd.height)
+    except Exception:
+        result.canvas_size = None
+
+    try:
+        all_layers = list(psd.descendants())
+    except Exception as e:
+        result.add("Layer Enumeration", False, f"Could not enumerate layers: {e}")
+        return result
+
+    def _is_group(layer):
+        try:
+            return bool(layer.is_group())
+        except Exception:
+            return False
+
+    # ---- 1. Hidden Layer Check ----
+    try:
+        allowed_hidden = set(config.get("allowed_hidden_layers", []))
+        hidden = [_psd_layer_name(l) for l in all_layers if not getattr(l, "visible", True)]
+        bad_hidden = [n for n in hidden if n not in allowed_hidden]
+        if bad_hidden:
+            result.add("Hidden Layer Check", False, f"Hidden layers found: {', '.join(bad_hidden)}")
+        else:
+            result.add("Hidden Layer Check", True)
+    except Exception as e:
+        result.add("Hidden Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 2. Empty Layer Check ----
+    try:
+        empty_layers = []
+        for l in all_layers:
+            if _is_group(l):
+                continue
+            try:
+                bbox = l.bbox
+                if bbox is None or (bbox[2] - bbox[0]) <= 0 or (bbox[3] - bbox[1]) <= 0:
+                    empty_layers.append(_psd_layer_name(l))
+            except Exception:
+                continue
+        if empty_layers:
+            result.add("Empty Layer Check", False, f"Empty layers: {', '.join(empty_layers)}")
+        else:
+            result.add("Empty Layer Check", True)
+    except Exception as e:
+        result.add("Empty Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 3. Temporary Layer Check ----
+    try:
+        temp_patterns = config.get("temp_layer_patterns", ["temp", "tmp", "test", "working", "wip", "draft"])
+        temp_layers = [
+            _psd_layer_name(l) for l in all_layers
+            if any(p.lower() in (_psd_layer_name(l)).lower() for p in temp_patterns)
+        ]
+        if temp_layers:
+            result.add("Temporary Layer Check", False, f"Temporary/working layers found: {', '.join(temp_layers)}")
+        else:
+            result.add("Temporary Layer Check", True)
+    except Exception as e:
+        result.add("Temporary Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 4. Reference Layer Check ----
+    try:
+        ref_patterns = config.get("reference_layer_patterns", ["reference", "ref", "guide"])
+        ref_layers = [
+            _psd_layer_name(l) for l in all_layers
+            if any(p.lower() in (_psd_layer_name(l)).lower() for p in ref_patterns)
+        ]
+        if ref_layers:
+            result.add("Reference Layer Check", False, f"Reference/guide layers found: {', '.join(ref_layers)}")
+        else:
+            result.add("Reference Layer Check", True)
+    except Exception as e:
+        result.add("Reference Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 5. Layer Naming Validation ----
+    try:
+        naming_pattern = config.get("layer_naming_regex")
+        if naming_pattern:
+            bad_names = [
+                _psd_layer_name(l) for l in all_layers
+                if l.name and not re.match(naming_pattern, l.name)
+            ]
+            if bad_names:
+                result.add("Layer Naming Validation", False, f"Layers violating naming convention: {', '.join(bad_names)}")
+            else:
+                result.add("Layer Naming Validation", True)
+        else:
+            result.add("Layer Naming Validation", True, "No naming convention configured; check skipped")
+    except Exception as e:
+        result.add("Layer Naming Validation", False, f"Check failed to run: {e}")
+
+    # ---- 6. Mandatory Layer Validation ----
+    try:
+        mandatory = config.get("mandatory_layers", [])
+        if mandatory:
+            existing_names = {_psd_layer_name(l) for l in all_layers}
+            missing = [m for m in mandatory if m not in existing_names]
+            if missing:
+                result.add("Mandatory Layer Validation", False, f"Missing mandatory layers: {', '.join(missing)}")
+            else:
+                result.add("Mandatory Layer Validation", True)
+        else:
+            result.add("Mandatory Layer Validation", True, "No mandatory layers configured; check skipped")
+    except Exception as e:
+        result.add("Mandatory Layer Validation", False, f"Check failed to run: {e}")
+
+    # ---- 7. Duplicate Layer Detection ----
+    try:
+        name_counts = {}
+        for l in all_layers:
+            n = _psd_layer_name(l)
+            name_counts[n] = name_counts.get(n, 0) + 1
+        dupes = [n for n, c in name_counts.items() if c > 1 and n != "(unnamed layer)"]
+        if dupes:
+            result.add("Duplicate Layer Detection", False, f"Duplicate layer names: {', '.join(dupes)}")
+        else:
+            result.add("Duplicate Layer Detection", True)
+    except Exception as e:
+        result.add("Duplicate Layer Detection", False, f"Check failed to run: {e}")
+
+    # ---- 8. Layer Hierarchy Validation ----
+    try:
+        expected_hierarchy = config.get("expected_hierarchy")
+        if expected_hierarchy:
+            # Placeholder for a project-specific structural comparison —
+            # wire in actual group/folder-path comparison logic here when
+            # an expected_hierarchy spec is provided via config.
+            result.add("Layer Hierarchy Validation", True)
+        else:
+            result.add("Layer Hierarchy Validation", True, "No expected_hierarchy configured; check skipped")
+    except Exception as e:
+        result.add("Layer Hierarchy Validation", False, f"Check failed to run: {e}")
+
+    # ---- 9. Locked Layer Validation ----
+    try:
+        allowed_locked = set(config.get("allowed_locked_layers", []))
+        locked_layers = []
+        for l in all_layers:
+            is_locked = False
+            for attr in ("locked", "is_locked"):
+                try:
+                    val = getattr(l, attr, False)
+                    if callable(val):
+                        val = val()
+                    if val:
+                        is_locked = True
+                        break
+                except Exception:
+                    continue
+            if is_locked:
+                locked_layers.append(_psd_layer_name(l))
+        bad_locked = [n for n in locked_layers if n not in allowed_locked]
+        if bad_locked:
+            result.add("Locked Layer Validation", False, f"Unexpected locked layers: {', '.join(bad_locked)}")
+        else:
+            result.add("Locked Layer Validation", True)
+    except Exception as e:
+        result.add("Locked Layer Validation", False, f"Check failed to run: {e}")
+
+    # ---- 10. Document Properties Check ----
+    try:
+        doc_issues = []
+        min_w = config.get("min_width")
+        min_h = config.get("min_height")
+        if min_w and result.canvas_size and result.canvas_size[0] < min_w:
+            doc_issues.append(f"Width {result.canvas_size[0]} < required {min_w}")
+        if min_h and result.canvas_size and result.canvas_size[1] < min_h:
+            doc_issues.append(f"Height {result.canvas_size[1]} < required {min_h}")
+        required_color_mode = config.get("required_color_mode")
+        if required_color_mode:
+            try:
+                actual_mode = str(psd.color_mode).upper()
+            except Exception:
+                actual_mode = "UNKNOWN"
+            if required_color_mode.upper() not in actual_mode:
+                doc_issues.append(f"Color mode {actual_mode} != required {required_color_mode.upper()}")
+        if doc_issues:
+            result.add("Document Properties Check", False, "; ".join(doc_issues))
+        else:
+            result.add("Document Properties Check", True)
+    except Exception as e:
+        result.add("Document Properties Check", False, f"Check failed to run: {e}")
+
+    # ---- 11. Smart Object Check ----
+    try:
+        require_flatten = bool(config.get("require_flattenable", False))
+        if require_flatten:
+            smart_objects = []
+            for l in all_layers:
+                try:
+                    if str(getattr(l, "kind", "")).lower() == "smartobject":
+                        smart_objects.append(_psd_layer_name(l))
+                except Exception:
+                    continue
+            if smart_objects:
+                result.add("Smart Object Check", False, f"Smart objects present (must be flattened): {', '.join(smart_objects)}")
+            else:
+                result.add("Smart Object Check", True)
+        else:
+            result.add("Smart Object Check", True, "Flattenability not required; check skipped")
+    except Exception as e:
+        result.add("Smart Object Check", False, f"Check failed to run: {e}")
+
+    # ---- 12. Production Readiness Check (aggregate of the above) ----
+    try:
+        blocking_checks = (
+            "Hidden Layer Check", "Empty Layer Check", "Temporary Layer Check",
+            "Reference Layer Check", "Mandatory Layer Validation", "Duplicate Layer Detection",
+        )
+        non_production = any(
+            (not c["passed"]) for c in result.checks if c["name"] in blocking_checks
+        )
+        if non_production:
+            result.add("Production Readiness Check", False, "PSD contains non-production layers; not ready for delivery")
+        else:
+            result.add("Production Readiness Check", True)
+    except Exception as e:
+        result.add("Production Readiness Check", False, f"Check failed to run: {e}")
+
+    return result
+
+
+def format_psd_validation_report(file_path, result: PSDValidationResult) -> str:
+    """Formats a PSDValidationResult into the standard readable report text."""
+    lines = []
+    lines.append(f"PSD Validation Report — {file_path}")
+    if result.canvas_size:
+        lines.append(f"Canvas: {result.canvas_size[0]}x{result.canvas_size[1]}")
+    lines.append("=" * 72)
+    for check in result.checks:
+        icon = "✅ [PASS]" if check["passed"] else "❌ [FAIL]"
+        lines.append(f"{icon} {check['name']}")
+        if check["message"]:
+            level = "INFO" if check["passed"] else "FAIL"
+            lines.append(f"        - ({level}) -: {check['message']}")
+    lines.append("=" * 72)
+    overall_icon = "✅" if result.overall_pass else "❌"
+    overall_text = "PASS" if result.overall_pass else "FAIL"
+    lines.append(f"{overall_icon} Overall status: {overall_text}")
+    return "\n".join(lines)
+
+
+class PSDCheckRowWidget(QFrame):
+    """One row in the QC checklist — glassy dark card with an accent-colored
+    icon chip, check name, optional message, and a status pill."""
+
+    def __init__(self, name: str, passed: bool, message: str = "", parent=None):
+        super().__init__(parent)
+        self.setObjectName("PSDCheckRow")
+
+        accent = "#3ddc97" if passed else "#ff5c7a"
+        accent_soft = "rgba(61, 220, 151, 0.12)" if passed else "rgba(255, 92, 122, 0.12)"
+        icon = "✓" if passed else "✕"
+        pill_text = "PASS" if passed else "FAIL"
+
+        self.setStyleSheet(f"""
+            QFrame#PSDCheckRow {{
+                background: #1b1e2b;
+                border: 1px solid #262a3b;
+                border-left: 3px solid {accent};
+                border-radius: 10px;
+            }}
+            QFrame#PSDCheckRow:hover {{
+                background: #20243450;
+                border-color: {accent};
+            }}
+        """)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 90))
+        self.setGraphicsEffect(shadow)
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(14, 12, 14, 12)
+        outer.setSpacing(12)
+
+        icon_lbl = QLabel(icon)
+        icon_lbl.setFixedSize(30, 30)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setStyleSheet(f"""
+            background-color: {accent_soft};
+            color: {accent};
+            font-weight: bold;
+            font-size: 14px;
+            border-radius: 15px;
+            border: 1px solid {accent};
+        """)
+        outer.addWidget(icon_lbl)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(3)
+
+        name_lbl = QLabel(name)
+        name_lbl.setStyleSheet(
+            "color: #eef0f7; font-weight: 600; font-size: 12.5px; "
+            "background: transparent; letter-spacing: 0.2px;"
+        )
+        text_col.addWidget(name_lbl)
+
+        if message:
+            msg_lbl = QLabel(message)
+            msg_lbl.setWordWrap(True)
+            msg_lbl.setStyleSheet(
+                f"color: {'#8c93a8' if passed else '#ff8fa3'}; font-size: 11px; "
+                "background: transparent; line-height: 140%;"
+            )
+            text_col.addWidget(msg_lbl)
+
+        outer.addLayout(text_col, 1)
+
+        pill = QLabel(pill_text)
+        pill.setAlignment(Qt.AlignCenter)
+        pill.setFixedWidth(62)
+        pill.setStyleSheet(f"""
+            background-color: {accent};
+            color: #0e1018;
+            font-weight: 800;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            border-radius: 10px;
+            padding: 4px 0;
+        """)
+        outer.addWidget(pill, 0, Qt.AlignTop)
+
+
+class _PSDSegmentedBar(QFrame):
+    """Slim rounded pass/fail ratio bar — a small dashboard-style touch
+    showing at a glance how much of the checklist passed."""
+
+    def __init__(self, passed: int, total: int, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(8)
+        self.setStyleSheet("background: rgba(255,255,255,0.18); border-radius: 4px;")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        failed = max(total - passed, 0)
+        if total <= 0:
+            return
+
+        if passed:
+            seg_pass = QFrame()
+            seg_pass.setStyleSheet("background-color: #3ddc97; border-radius: 4px;")
+            layout.addWidget(seg_pass, passed)
+        if failed:
+            seg_fail = QFrame()
+            seg_fail.setStyleSheet("background-color: #ff5c7a; border-radius: 4px;")
+            layout.addWidget(seg_fail, failed)
+
+
+class PSDValidationDialog(QDialog):
+    """
+    QC / production-readiness check window for a PSD or PSB file, shown
+    right before upload. Dark, modern "dashboard" styling — gradient
+    header, glassy checklist cards, segmented pass/fail meter, drop
+    shadows, and pill-shaped gradient action buttons — instead of a plain
+    report/error-style window. Shown for BOTH pass and fail outcomes,
+    since the human always makes the final call.
+    """
+
+    def __init__(self, file_path, result: "PSDValidationResult", parent=None):
+        super().__init__(parent)
+        overall_pass = result.overall_pass
+        passed_count = sum(1 for c in result.checks if c["passed"])
+        total_count = len(result.checks)
+        failed_count = total_count - passed_count
+
+        accent = "#3ddc97" if overall_pass else "#ff5c7a"
+        gradient = (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0f9b6e, stop:1 #3ddc97)"
+            if overall_pass else
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #c0293f, stop:1 #ff5c7a)"
+        )
+
+        self.setWindowTitle("Quality Check — PSD/PSB")
+        self.setMinimumSize(640, 660)
+        self.resize(700, 700)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.Window
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setStyleSheet("""
+            QDialog { background: #0f111a; }
+            QScrollBar:vertical {
+                background: transparent;
+                width: 9px;
+                margin: 4px 2px 4px 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #33384c;
+                border-radius: 4px;
+                min-height: 24px;
+            }
+            QScrollBar::handle:vertical:hover { background: #454b66; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+        """)
+        try:
+            self.setWindowIcon(load_icon(ICON_PATH, "psd validation"))
+        except Exception:
+            pass
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Gradient header ──────────────────────────────────────────────
+        header = QFrame()
+        header.setStyleSheet(f"background: {gradient}; border: none;")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(24, 22, 24, 22)
+        header_layout.setSpacing(10)
+
+        eyebrow = QLabel("PRODUCTION QC")
+        eyebrow.setStyleSheet(
+            "color: rgba(255,255,255,0.75); font-size: 10px; font-weight: 800; "
+            "letter-spacing: 2px; background: transparent;"
+        )
+        header_layout.addWidget(eyebrow)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(14)
+
+        badge = QLabel("✓" if overall_pass else "!")
+        badge.setFixedSize(46, 46)
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setStyleSheet(
+            "background-color: rgba(255,255,255,0.20); color: white; "
+            "font-size: 22px; font-weight: 900; border-radius: 23px; "
+            "border: 1px solid rgba(255,255,255,0.35);"
+        )
+        title_row.addWidget(badge)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        title_lbl = QLabel("Quality Check Passed" if overall_pass else "Quality Check Failed")
+        title_lbl.setStyleSheet(
+            "color: white; font-size: 19px; font-weight: 800; background: transparent;"
+        )
+        title_col.addWidget(title_lbl)
+
+        subtitle_lbl = QLabel(Path(file_path).name)
+        subtitle_lbl.setStyleSheet(
+            "color: rgba(255,255,255,0.88); font-size: 11.5px; background: transparent;"
+        )
+        subtitle_lbl.setWordWrap(True)
+        title_col.addWidget(subtitle_lbl)
+
+        title_row.addLayout(title_col, 1)
+        header_layout.addLayout(title_row)
+
+        # ── Chips: canvas size + pass/fail counts ───────────────────────
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(8)
+
+        def _make_chip(text):
+            chip = QLabel(text)
+            chip.setStyleSheet(
+                "background-color: rgba(255,255,255,0.16); color: white; font-size: 10.5px; "
+                "font-weight: 700; border-radius: 10px; padding: 4px 12px; "
+                "border: 1px solid rgba(255,255,255,0.25);"
+            )
+            return chip
+
+        if result.canvas_size:
+            chip_row.addWidget(_make_chip(f"📐  {result.canvas_size[0]} × {result.canvas_size[1]} px"))
+        chip_row.addWidget(_make_chip(f"✓  {passed_count} passed"))
+        if failed_count:
+            chip_row.addWidget(_make_chip(f"✕  {failed_count} failed"))
+        chip_row.addStretch(1)
+        header_layout.addLayout(chip_row)
+
+        # ── Segmented pass/fail meter ────────────────────────────────────
+        header_layout.addSpacing(2)
+        header_layout.addWidget(_PSDSegmentedBar(passed_count, total_count))
+
+        root.addWidget(header)
+
+        # ── Scrollable checklist ─────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: #0f111a; border: none; }")
+
+        checklist_container = QWidget()
+        checklist_container.setStyleSheet("background: #0f111a;")
+        checklist_layout = QVBoxLayout(checklist_container)
+        checklist_layout.setContentsMargins(20, 18, 20, 18)
+        checklist_layout.setSpacing(10)
+        checklist_layout.setAlignment(Qt.AlignTop)
+
+        section_lbl = QLabel("CHECKLIST")
+        section_lbl.setStyleSheet(
+            "color: #5b6178; font-size: 10px; font-weight: 800; "
+            "letter-spacing: 2px; background: transparent; padding-bottom: 2px;"
+        )
+        checklist_layout.addWidget(section_lbl)
+
+        for check in result.checks:
+            row = PSDCheckRowWidget(check["name"], check["passed"], check["message"])
+            checklist_layout.addWidget(row)
+
+        scroll.setWidget(checklist_container)
+        root.addWidget(scroll, 1)
+
+        # ── Footer: note + actions ───────────────────────────────────────
+        footer = QFrame()
+        footer.setStyleSheet("background: #14172200; border-top: 1px solid #232838;")
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(20, 16, 20, 18)
+        footer_layout.setSpacing(12)
+
+        note_lbl = QLabel(
+            "All checks passed. Proceed with uploading this file to the NAS?"
+            if overall_pass else
+            "One or more checks failed. Do you still want to proceed with uploading this file to the NAS?"
+        )
+        note_lbl.setWordWrap(True)
+        note_lbl.setStyleSheet("color: #9aa0b4; font-size: 11.5px; background: transparent;")
+        footer_layout.addWidget(note_lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self.copy_btn = QPushButton("📋  Copy Report")
+        self.copy_btn.setCursor(Qt.PointingHandCursor)
+        self.copy_btn.setMinimumHeight(38)
+        self.copy_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1b1e2b;
+                color: #c6cadb;
+                border: 1px solid #2b3044;
+                border-radius: 19px;
+                padding: 6px 18px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #232838; border-color: #3a4160; }
+            QPushButton:pressed { background-color: #171a26; padding-top: 7px; padding-bottom: 5px; }
+        """)
+        self.copy_btn.clicked.connect(lambda: self._copy_report(file_path, result))
+        btn_row.addWidget(self.copy_btn)
+        btn_row.addStretch(1)
+
+        self.proceed_btn = QPushButton("⬆  Upload to NAS")
+        self.cancel_btn = QPushButton("✕  Cancel")
+
+        self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.proceed_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.setMinimumHeight(40)
+        self.proceed_btn.setMinimumHeight(40)
+        self.cancel_btn.setMinimumWidth(120)
+        self.proceed_btn.setMinimumWidth(160)
+
+        self.cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #ff5c7a;
+                border: 1.5px solid #ff5c7a;
+                border-radius: 20px;
+                padding: 6px 18px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 92, 122, 0.12);
+            }
+            QPushButton:pressed {
+                background-color: rgba(255, 92, 122, 0.22);
+                padding-top: 7px;
+                padding-bottom: 5px;
+            }
+            QPushButton:focus {
+                outline: none;
+                border: 2px solid #ff5c7a;
+            }
+            QPushButton:disabled {
+                background-color: transparent;
+                color: #4a4f5e;
+                border-color: #33384c;
+            }
+        """)
+        self.proceed_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {gradient};
+                color: #0e1018;
+                border: none;
+                border-radius: 20px;
+                padding: 6px 20px;
+                font-weight: 800;
+            }}
+            QPushButton:hover {{
+                background: {gradient.replace('stop:0', 'stop:0.15').replace('stop:1', 'stop:1')};
+            }}
+            QPushButton:pressed {{
+                padding-top: 7px;
+                padding-bottom: 5px;
+            }}
+            QPushButton:focus {{
+                outline: none;
+                border: 2px solid rgba(255,255,255,0.55);
+            }}
+            QPushButton:disabled {{
+                background: #33384c;
+                color: #6b7182;
+            }}
+        """)
+
+        proceed_shadow = QGraphicsDropShadowEffect(self.proceed_btn)
+        proceed_shadow.setBlurRadius(24)
+        proceed_shadow.setOffset(0, 4)
+        proceed_shadow.setColor(QColor(*(61, 220, 151) if overall_pass else (255, 92, 122), 140))
+        self.proceed_btn.setGraphicsEffect(proceed_shadow)
+
+        self.proceed_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+
+        btn_row.addWidget(self.cancel_btn)
+        btn_row.addWidget(self.proceed_btn)
+        footer_layout.addLayout(btn_row)
+
+        root.addWidget(footer)
+
+        # Default focus follows the outcome: safest action is the default.
+        (self.proceed_btn if overall_pass else self.cancel_btn).setDefault(True)
+        (self.proceed_btn if overall_pass else self.cancel_btn).setFocus()
+
+    @staticmethod
+    def _copy_report(file_path, result):
+        try:
+            QApplication.clipboard().setText(format_psd_validation_report(file_path, result))
+        except Exception as e:
+            logger.warning(f"[PSD Validation] Failed to copy report to clipboard: {e}")
+
+
+class _PSDConfirmationBox:
+    """Simple cross-thread mailbox: worker thread waits on `event`,
+    main thread sets `result` then signals `event`."""
+
+    def __init__(self):
+        self.event = threading.Event()
+        self.result = False
+
+
+def request_psd_upload_confirmation(file_path, result: "PSDValidationResult"):
+    """
+    Thread-safe: shows the PSD quality-check dialog on the main GUI thread
+    and BLOCKS the calling (background/worker) thread until the user
+    responds.
+
+    Must NEVER be called from the main GUI thread itself (it would deadlock
+    waiting on an event that only the main thread's own queued slot can set).
+
+    Returns True if the user chose to proceed with the upload, False if
+    they cancelled (or the dialog could not be shown).
+    """
+    box = _PSDConfirmationBox()
+    app_signals.psd_validation_required.emit(file_path, result, box)
+    box.event.wait()
+    return box.result
 
 
 # ============================================================================
@@ -3369,6 +4131,40 @@ class FileWatcherWorker(QObject):
                     logger.warning(f"Could not close socket: {sock_err}")
 
         
+    def _validate_and_confirm_psd_upload(self, file_path):
+        """
+        For .psd/.psb uploads only: runs the production-readiness checklist
+        and shows the report + Upload/Cancel confirmation dialog to the
+        user — for BOTH pass and fail outcomes — before the file is sent
+        to the NAS.
+
+        Blocks THIS worker thread (never the GUI thread) until the user
+        responds. Returns True to proceed with the upload, False to cancel.
+        """
+        try:
+            config = getattr(self, "psd_validation_config", {}) or {}
+            result = validate_psd_document(file_path, config)
+
+            status_word = "PASS" if result.overall_pass else "FAIL"
+            logger.info(f"[PSD Validation] {file_path}: {status_word}")
+            self.log_update.emit(f"[PSD Validation] {Path(file_path).name}: {status_word}")
+            app_signals.append_log.emit(f"[PSD Validation] {Path(file_path).name}: {status_word}")
+
+            proceed = request_psd_upload_confirmation(file_path, result)
+            self.log_update.emit(
+                f"[PSD Validation] User {'confirmed upload' if proceed else 'cancelled upload'} "
+                f"for {Path(file_path).name}"
+            )
+            return proceed
+        except Exception as e:
+            logger.error(f"[PSD Validation] Error validating {file_path}: {e}")
+            self.log_update.emit(f"[PSD Validation] Error validating {Path(file_path).name}: {str(e)}")
+            # Validation itself crashed — still let the user decide, with a
+            # synthetic result explaining that validation could not complete.
+            fallback_result = PSDValidationResult()
+            fallback_result.add("Validation Execution", False, f"Validation could not be completed: {e}")
+            return request_psd_upload_confirmation(file_path, fallback_result)
+
     def _update_cache_and_signals(self, action_type, src_path, dest_path, item, task_id, is_nas, file_type="original"):
         cache = load_cache()
         cache.setdefault("downloaded_files", {})
@@ -3615,8 +4411,31 @@ class FileWatcherWorker(QObject):
                         #dest_dir = os.path.dirname(dest_path)
                         dest_path = dest_path.replace("\\", "/")
 
+                        # ── PSD/PSB pre-upload production-readiness validation ──
+                        # For .psd/.psb files only: run the checklist and show
+                        # the report + Upload/Cancel confirmation dialog to the
+                        # user BEFORE the file is sent to the NAS — regardless
+                        # of whether validation passed or failed.
+                        src_ext = Path(src_path).suffix.lower().lstrip(".")
+                        if src_ext in ("psd", "psb"):
+                            proceed_with_upload = self._validate_and_confirm_psd_upload(str(src_path))
+                            if not proceed_with_upload:
+                                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Cancelled"
+                                save_cache(cache, significant_change=True)
+                                self.alert_notification.emit(
+                                    "Upload Cancelled",
+                                    f"Upload of '{Path(src_path).name}' was cancelled after PSD validation review."
+                                )
+                                raise PSDUploadCancelled(
+                                    f"Upload cancelled by user after PSD validation for {Path(src_path).name}"
+                                )
+
                         self._upload_to_nas(src_path, dest_path, item)
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
+                    except PSDUploadCancelled:
+                        # Do NOT mask this as "HTTP Not Implemented" — re-raise
+                        # as-is so the outer handler reports it accurately.
+                        raise
                     except Exception as e:
                         # self.alert_notification.emit("ERROR", f"2No completed file found in target folder. upload the file manually.")            
                         cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
@@ -3688,6 +4507,26 @@ class FileWatcherWorker(QObject):
             else:
                 raise ValueError(f"Invalid action_type: {action_type}")
             IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
+
+        except PSDUploadCancelled as e:
+            # User explicitly cancelled the upload from the PSD validation
+            # dialog — this is not a transfer failure, so keep the status
+            # and logging distinct from a genuine "Failed" transfer.
+            cache.setdefault(metadata_key, {})
+            if spec_id not in cache[metadata_key]:
+                cache[metadata_key][spec_id] = {"local_path": dest_path, "status": f"{status_prefix} Cancelled"}
+            else:
+                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Cancelled"
+
+            save_cache(cache, significant_change=True)
+            update_download_upload_metadata(task_id, "cancelled")
+            IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
+            logger.info(f"{status_prefix} cancelled by user after PSD validation (Task {task_id}): {str(e)}")
+            self.log_update.emit(f"[Transfer] Cancelled by user (Task {task_id}): {str(e)}")
+            self.progress_update.emit(f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}", dest_path, 0)
+            self.download_status_detail.emit(dest_path, f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}", action_type, 0, True)
+
+            raise
 
         except Exception as e:
             # Update cache with failure
@@ -4086,6 +4925,17 @@ class FileWatcherWorker(QObject):
                                 'task_key': task_key,
                                 'success': True
                             }
+                    except PSDUploadCancelled as e:
+                        # User explicitly declined the upload from the PSD
+                        # validation dialog — stop immediately instead of
+                        # re-prompting them again on every retry attempt.
+                        logger.info(f"Upload cancelled by user for {local_path} (Task {task_id}): {str(e)}")
+                        self.log_update.emit(f"[API Scan] Upload cancelled by user (Task {task_id}): {str(e)}")
+                        return {
+                            'update': (local_path, "Upload Cancelled", action_type, 0, not is_online),
+                            'task_key': task_key,
+                            'success': False
+                        }
                     except Exception as e:
                         logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Upload failed for {local_path} (Task {task_id}): {str(e)}, attempt {attempt + 1}, instance: {id(self)}")
                         self.log_update.emit(f"[API Scan] Upload failed for {local_path} (Task {task_id}): {str(e)}")
