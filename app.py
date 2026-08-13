@@ -532,14 +532,115 @@ def _psd_layer_name(layer):
         return "(unnamed layer)"
 
 
+def _psd_layer_path(layer):
+    """
+    Full breadcrumb path of a layer through its parent groups, e.g.
+    'Background / Details / Shadow'. Falls back to the bare name if the
+    parent chain can't be walked. Used so that a flagged layer can always
+    be pinpointed even when the same layer name is reused in different
+    groups (a very common case in production PSDs).
+    """
+    try:
+        parts = [_psd_layer_name(layer)]
+        parent = getattr(layer, "parent", None)
+        seen = set()
+        while parent is not None and not (hasattr(parent, "kind") and str(getattr(parent, "kind", "")).lower() == "psdimage"):
+            pid = id(parent)
+            if pid in seen:
+                break
+            seen.add(pid)
+            try:
+                p_name = _psd_layer_name(parent)
+            except Exception:
+                break
+            if not p_name or p_name == "(unnamed layer)":
+                break
+            parts.append(p_name)
+            parent = getattr(parent, "parent", None)
+        return " / ".join(reversed(parts))
+    except Exception:
+        return _psd_layer_name(layer)
+
+
+def _format_layer_list(names, limit=20):
+    """
+    Formats a list of offending layer names/paths into a readable,
+    de-duplicated, order-preserving, length-capped string for use inside a
+    check's failure message.
+    """
+    seen = []
+    for n in names:
+        if n and n not in seen:
+            seen.append(n)
+    if not seen:
+        return ""
+    if len(seen) > limit:
+        shown = seen[:limit]
+        return ", ".join(shown) + f"  (+{len(seen) - limit} more)"
+    return ", ".join(seen)
+
+
+# Layer kinds that are content-bearing by design but carry NO pixel bbox
+# (they don't rasterize their own pixels — an adjustment layer tweaks
+# whatever is below it, a fill layer is defined by its fill, not a bbox).
+# The Empty Layer Check must skip these kinds entirely, otherwise a
+# perfectly valid Hue/Saturation, Curves, Solid Color, etc. layer gets
+# incorrectly flagged as "empty".
+PSD_NON_RASTER_LAYER_KINDS = {
+    # Fill layers
+    "solidcolorfill", "patternfill", "gradientfill",
+    # Adjustment layers
+    "brightnesscontrast", "curves", "exposure", "levels", "vibrance",
+    "huesaturation", "colorbalance", "blackandwhite", "photofilter",
+    "channelmixer", "colorlookup", "invert", "posterize", "threshold",
+    "selectivecolor", "gradientmap",
+}
+
+# Photoshop's default auto-generated duplicate naming: "Layer 1 copy",
+# "Layer 1 copy 2", "copy of Background", etc. — used by the Duplicate
+# Layer Detection check to catch un-renamed duplicated layers even when
+# their name doesn't exactly collide with another layer's name.
+_PSD_COPY_SUFFIX_RE = re.compile(r'(?:^|[\s_\-])copy(?:[\s_\-]?\d+)?$', re.IGNORECASE)
+_PSD_COPY_OF_PREFIX_RE = re.compile(r'^copy of\b', re.IGNORECASE)
+
+
+def _psd_layer_content_hash(layer):
+    """
+    Best-effort exact hash of a layer's rendered pixel content, used to
+    catch duplicate image/pixel layers that were copy-pasted and renamed
+    to something different rather than left with the default "copy" name.
+    Uses exact pixel bytes (not a perceptual hash), so only genuinely
+    identical image data is matched — a resized/edited copy will not.
+    Returns None if the layer has no renderable content or hashing fails
+    for any reason (never raises).
+    """
+    try:
+        img = layer.topil()
+        if img is None:
+            return None
+        img = img.convert("RGBA")
+        return hashlib.sha256(img.tobytes()).hexdigest()
+    except Exception:
+        return None
+
+
 def validate_psd_document(file_path, config=None):
     """
     Validates a .psd/.psb file against a production-readiness checklist.
+    Every failing check names the exact offending layer(s) — using a full
+    group-path breadcrumb where relevant so nested/duplicate-named layers
+    are unambiguous — so the QC report always tells you precisely which
+    layer(s) need fixing, never just "some layers failed".
+
     Never raises — any internal failure is captured as a FAIL check so the
     caller always gets back a usable PSDValidationResult.
     """
     config = config or {}
     result = PSDValidationResult()
+
+    # offending layer paths collected per-check, used to build the
+    # Production Readiness Check rollup message at the end
+    offenders_by_check = {}
 
     if PSDImage is None:
         result.add("PSD Library", False, "psd-tools is not installed; cannot validate this file")
@@ -571,10 +672,16 @@ def validate_psd_document(file_path, config=None):
     # ---- 1. Hidden Layer Check ----
     try:
         allowed_hidden = set(config.get("allowed_hidden_layers", []))
-        hidden = [_psd_layer_name(l) for l in all_layers if not getattr(l, "visible", True)]
-        bad_hidden = [n for n in hidden if n not in allowed_hidden]
+        bad_hidden = [
+            _psd_layer_path(l) for l in all_layers
+            if not getattr(l, "visible", True) and _psd_layer_name(l) not in allowed_hidden
+        ]
         if bad_hidden:
-            result.add("Hidden Layer Check", False, f"Hidden layers found: {', '.join(bad_hidden)}")
+            offenders_by_check["Hidden Layer Check"] = bad_hidden
+            result.add(
+                "Hidden Layer Check", False,
+                f"{len(bad_hidden)} hidden layer(s) found — must be visible or removed: {_format_layer_list(bad_hidden)}"
+            )
         else:
             result.add("Hidden Layer Check", True)
     except Exception as e:
@@ -582,18 +689,35 @@ def validate_psd_document(file_path, config=None):
 
     # ---- 2. Empty Layer Check ----
     try:
+        # Allow project config to add extra "non-raster, never empty" kinds
+        # on top of the built-in adjustment/fill layer list, if needed.
+        non_raster_kinds = PSD_NON_RASTER_LAYER_KINDS | set(
+            k.lower() for k in config.get("extra_non_raster_layer_kinds", [])
+        )
+
         empty_layers = []
         for l in all_layers:
             if _is_group(l):
                 continue
             try:
+                kind = str(getattr(l, "kind", "")).lower()
+                if kind in non_raster_kinds:
+                    # Adjustment/fill layers (Hue-Saturation, Curves, Levels,
+                    # Solid Color, Gradient Map, etc.) don't carry pixel
+                    # content by design — a missing/zero bbox on these is
+                    # normal and does NOT mean the layer is empty.
+                    continue
                 bbox = l.bbox
                 if bbox is None or (bbox[2] - bbox[0]) <= 0 or (bbox[3] - bbox[1]) <= 0:
-                    empty_layers.append(_psd_layer_name(l))
+                    empty_layers.append(_psd_layer_path(l))
             except Exception:
                 continue
         if empty_layers:
-            result.add("Empty Layer Check", False, f"Empty layers: {', '.join(empty_layers)}")
+            offenders_by_check["Empty Layer Check"] = empty_layers
+            result.add(
+                "Empty Layer Check", False,
+                f"{len(empty_layers)} empty layer(s) with no content: {_format_layer_list(empty_layers)}"
+            )
         else:
             result.add("Empty Layer Check", True)
     except Exception as e:
@@ -601,13 +725,34 @@ def validate_psd_document(file_path, config=None):
 
     # ---- 3. Temporary Layer Check ----
     try:
-        temp_patterns = config.get("temp_layer_patterns", ["temp", "tmp", "test", "working", "wip", "draft"])
-        temp_layers = [
-            _psd_layer_name(l) for l in all_layers
-            if any(p.lower() in (_psd_layer_name(l)).lower() for p in temp_patterns)
-        ]
+        # "background" is included by default: a plain (non-group) layer
+        # named/containing "background" is NOT allowed (usually the
+        # untouched original canvas layer left in by mistake), but a
+        # "Background" GROUP/FOLDER is explicitly fine and must NOT be
+        # flagged — teams commonly organize layers under a Background group.
+        temp_patterns = config.get(
+            "temp_layer_patterns",
+            ["temp", "tmp", "test", "working", "wip", "draft", "background"]
+        )
+        temp_layers = []
+        for l in all_layers:
+            name_lower = _psd_layer_name(l).lower()
+            is_grp = _is_group(l)
+            for p in temp_patterns:
+                p_lower = p.lower()
+                if p_lower not in name_lower:
+                    continue
+                if p_lower == "background" and is_grp:
+                    # Background group/folder — allowed, skip this pattern
+                    continue
+                temp_layers.append(_psd_layer_path(l))
+                break
         if temp_layers:
-            result.add("Temporary Layer Check", False, f"Temporary/working layers found: {', '.join(temp_layers)}")
+            offenders_by_check["Temporary Layer Check"] = temp_layers
+            result.add(
+                "Temporary Layer Check", False,
+                f"{len(temp_layers)} temporary/working layer(s) must be removed before delivery: {_format_layer_list(temp_layers)}"
+            )
         else:
             result.add("Temporary Layer Check", True)
     except Exception as e:
@@ -617,11 +762,15 @@ def validate_psd_document(file_path, config=None):
     try:
         ref_patterns = config.get("reference_layer_patterns", ["reference", "ref", "guide"])
         ref_layers = [
-            _psd_layer_name(l) for l in all_layers
+            _psd_layer_path(l) for l in all_layers
             if any(p.lower() in (_psd_layer_name(l)).lower() for p in ref_patterns)
         ]
         if ref_layers:
-            result.add("Reference Layer Check", False, f"Reference/guide layers found: {', '.join(ref_layers)}")
+            offenders_by_check["Reference Layer Check"] = ref_layers
+            result.add(
+                "Reference Layer Check", False,
+                f"{len(ref_layers)} reference/guide layer(s) must be removed: {_format_layer_list(ref_layers)}"
+            )
         else:
             result.add("Reference Layer Check", True)
     except Exception as e:
@@ -629,18 +778,41 @@ def validate_psd_document(file_path, config=None):
 
     # ---- 5. Layer Naming Validation ----
     try:
+        bad_names = []
+        space_issue_paths = []
+        pattern_issue_paths = []
+
+        # Built-in rule (always enforced, no config needed): a layer name
+        # must not have leading or trailing whitespace, e.g. " Layer 1" or
+        # "Layer 1 " are both rejected.
+        for l in all_layers:
+            raw_name = l.name if l.name is not None else ""
+            if raw_name != raw_name.strip():
+                path_label = f"{_psd_layer_path(l)} [leading/trailing space in name]"
+                bad_names.append(path_label)
+                space_issue_paths.append(_psd_layer_path(l))
+
         naming_pattern = config.get("layer_naming_regex")
         if naming_pattern:
-            bad_names = [
-                _psd_layer_name(l) for l in all_layers
-                if l.name and not re.match(naming_pattern, l.name)
-            ]
-            if bad_names:
-                result.add("Layer Naming Validation", False, f"Layers violating naming convention: {', '.join(bad_names)}")
-            else:
-                result.add("Layer Naming Validation", True)
+            for l in all_layers:
+                if l.name and not re.match(naming_pattern, l.name):
+                    path_label = f"{_psd_layer_path(l)} [violates naming convention]"
+                    bad_names.append(path_label)
+                    pattern_issue_paths.append(_psd_layer_path(l))
+
+        if bad_names:
+            offenders_by_check["Layer Naming Validation"] = list(set(space_issue_paths + pattern_issue_paths))
+            result.add(
+                "Layer Naming Validation", False,
+                f"{len(bad_names)} layer naming issue(s) found: {_format_layer_list(bad_names)}"
+            )
+        elif naming_pattern:
+            result.add("Layer Naming Validation", True)
         else:
-            result.add("Layer Naming Validation", True, "No naming convention configured; check skipped")
+            result.add(
+                "Layer Naming Validation", True,
+                "No custom naming convention configured; leading/trailing-space rule applied"
+            )
     except Exception as e:
         result.add("Layer Naming Validation", False, f"Check failed to run: {e}")
 
@@ -651,7 +823,10 @@ def validate_psd_document(file_path, config=None):
             existing_names = {_psd_layer_name(l) for l in all_layers}
             missing = [m for m in mandatory if m not in existing_names]
             if missing:
-                result.add("Mandatory Layer Validation", False, f"Missing mandatory layers: {', '.join(missing)}")
+                result.add(
+                    "Mandatory Layer Validation", False,
+                    f"{len(missing)} required layer(s) are missing from this file: {_format_layer_list(missing)}"
+                )
             else:
                 result.add("Mandatory Layer Validation", True)
         else:
@@ -661,13 +836,68 @@ def validate_psd_document(file_path, config=None):
 
     # ---- 7. Duplicate Layer Detection ----
     try:
-        name_counts = {}
+        occurrences_by_name = {}
+        copy_named_layers = []
+        content_hash_groups = {}   # (kind, content_hash) -> [paths]
+
         for l in all_layers:
             n = _psd_layer_name(l)
-            name_counts[n] = name_counts.get(n, 0) + 1
-        dupes = [n for n, c in name_counts.items() if c > 1 and n != "(unnamed layer)"]
-        if dupes:
-            result.add("Duplicate Layer Detection", False, f"Duplicate layer names: {', '.join(dupes)}")
+            path = _psd_layer_path(l)
+
+            # a) same layer name
+            if n != "(unnamed layer)":
+                occurrences_by_name.setdefault(n, []).append(path)
+
+            # b) Photoshop's default "... copy" / "copy of ..." naming —
+            #    an un-renamed duplicate, not allowed even if the name no
+            #    longer collides with the original.
+            if n != "(unnamed layer)" and (
+                _PSD_COPY_SUFFIX_RE.search(n) or _PSD_COPY_OF_PREFIX_RE.match(n)
+            ):
+                copy_named_layers.append(path)
+
+            # c) same kind + identical rendered image content, EVEN when
+            #    given a different name — catches a layer that was
+            #    duplicated then manually renamed to hide that it's a copy.
+            if not _is_group(l):
+                try:
+                    kind = str(getattr(l, "kind", "")).lower()
+                except Exception:
+                    kind = ""
+                if kind and kind not in PSD_NON_RASTER_LAYER_KINDS:
+                    content_hash = _psd_layer_content_hash(l)
+                    if content_hash:
+                        content_hash_groups.setdefault((kind, content_hash), []).append(path)
+
+        dupe_details = []
+        dupe_paths_flat = []
+
+        for name, paths in occurrences_by_name.items():
+            if len(paths) > 1:
+                dupe_details.append(f"'{name}' ×{len(paths)} same name [{'; '.join(paths)}]")
+                dupe_paths_flat.extend(paths)
+
+        if copy_named_layers:
+            dupe_details.append(
+                f"{len(copy_named_layers)} layer(s) left with default 'copy' naming — "
+                f"rename or remove: {_format_layer_list(copy_named_layers)}"
+            )
+            dupe_paths_flat.extend(copy_named_layers)
+
+        for (kind, _hash), paths in content_hash_groups.items():
+            if len(paths) > 1:
+                dupe_details.append(
+                    f"{len(paths)} '{kind}' layer(s) with identical image content despite different names "
+                    f"[{'; '.join(paths)}]"
+                )
+                dupe_paths_flat.extend(paths)
+
+        if dupe_details:
+            offenders_by_check["Duplicate Layer Detection"] = list(dict.fromkeys(dupe_paths_flat))
+            result.add(
+                "Duplicate Layer Detection", False,
+                f"{len(dupe_details)} duplicate/copy issue(s) found: {_format_layer_list(dupe_details, limit=15)}"
+            )
         else:
             result.add("Duplicate Layer Detection", True)
     except Exception as e:
@@ -677,10 +907,28 @@ def validate_psd_document(file_path, config=None):
     try:
         expected_hierarchy = config.get("expected_hierarchy")
         if expected_hierarchy:
-            # Placeholder for a project-specific structural comparison —
-            # wire in actual group/folder-path comparison logic here when
-            # an expected_hierarchy spec is provided via config.
-            result.add("Layer Hierarchy Validation", True)
+            # Compares the top-level group names against the expected list.
+            # Extend this comparison if you need deeper (nested) structural
+            # validation — the offending group names are still always named
+            # explicitly in the failure message either way.
+            try:
+                actual_top_level = [_psd_layer_name(l) for l in psd if _is_group(l)]
+            except Exception:
+                actual_top_level = [_psd_layer_name(l) for l in all_layers if _is_group(l)]
+
+            missing_groups = [g for g in expected_hierarchy if g not in actual_top_level]
+            extra_groups = [g for g in actual_top_level if g not in expected_hierarchy]
+
+            issues = []
+            if missing_groups:
+                issues.append(f"missing expected group(s): {_format_layer_list(missing_groups)}")
+            if extra_groups:
+                issues.append(f"unexpected group(s) present: {_format_layer_list(extra_groups)}")
+
+            if issues:
+                result.add("Layer Hierarchy Validation", False, "; ".join(issues))
+            else:
+                result.add("Layer Hierarchy Validation", True)
         else:
             result.add("Layer Hierarchy Validation", True, "No expected_hierarchy configured; check skipped")
     except Exception as e:
@@ -689,7 +937,7 @@ def validate_psd_document(file_path, config=None):
     # ---- 9. Locked Layer Validation ----
     try:
         allowed_locked = set(config.get("allowed_locked_layers", []))
-        locked_layers = []
+        bad_locked = []
         for l in all_layers:
             is_locked = False
             for attr in ("locked", "is_locked"):
@@ -702,11 +950,15 @@ def validate_psd_document(file_path, config=None):
                         break
                 except Exception:
                     continue
-            if is_locked:
-                locked_layers.append(_psd_layer_name(l))
-        bad_locked = [n for n in locked_layers if n not in allowed_locked]
+            if is_locked and _psd_layer_name(l) not in allowed_locked:
+                bad_locked.append(_psd_layer_path(l))
+
         if bad_locked:
-            result.add("Locked Layer Validation", False, f"Unexpected locked layers: {', '.join(bad_locked)}")
+            offenders_by_check["Locked Layer Validation"] = bad_locked
+            result.add(
+                "Locked Layer Validation", False,
+                f"{len(bad_locked)} unexpected locked layer(s): {_format_layer_list(bad_locked)}"
+            )
         else:
             result.add("Locked Layer Validation", True)
     except Exception as e:
@@ -718,9 +970,9 @@ def validate_psd_document(file_path, config=None):
         min_w = config.get("min_width")
         min_h = config.get("min_height")
         if min_w and result.canvas_size and result.canvas_size[0] < min_w:
-            doc_issues.append(f"Width {result.canvas_size[0]} < required {min_w}")
+            doc_issues.append(f"Width {result.canvas_size[0]}px < required {min_w}px")
         if min_h and result.canvas_size and result.canvas_size[1] < min_h:
-            doc_issues.append(f"Height {result.canvas_size[1]} < required {min_h}")
+            doc_issues.append(f"Height {result.canvas_size[1]}px < required {min_h}px")
         required_color_mode = config.get("required_color_mode")
         if required_color_mode:
             try:
@@ -744,11 +996,15 @@ def validate_psd_document(file_path, config=None):
             for l in all_layers:
                 try:
                     if str(getattr(l, "kind", "")).lower() == "smartobject":
-                        smart_objects.append(_psd_layer_name(l))
+                        smart_objects.append(_psd_layer_path(l))
                 except Exception:
                     continue
             if smart_objects:
-                result.add("Smart Object Check", False, f"Smart objects present (must be flattened): {', '.join(smart_objects)}")
+                offenders_by_check["Smart Object Check"] = smart_objects
+                result.add(
+                    "Smart Object Check", False,
+                    f"{len(smart_objects)} smart object layer(s) must be flattened: {_format_layer_list(smart_objects)}"
+                )
             else:
                 result.add("Smart Object Check", True)
         else:
@@ -762,11 +1018,27 @@ def validate_psd_document(file_path, config=None):
             "Hidden Layer Check", "Empty Layer Check", "Temporary Layer Check",
             "Reference Layer Check", "Mandatory Layer Validation", "Duplicate Layer Detection",
         )
-        non_production = any(
-            (not c["passed"]) for c in result.checks if c["name"] in blocking_checks
-        )
-        if non_production:
-            result.add("Production Readiness Check", False, "PSD contains non-production layers; not ready for delivery")
+        failed_blocking = [name for name in blocking_checks
+                            if any(c["name"] == name and not c["passed"] for c in result.checks)]
+
+        if failed_blocking:
+            # Roll up every offending layer named across the blocking
+            # checks so the reader gets one consolidated "fix these" list.
+            all_offenders = []
+            for check_name in failed_blocking:
+                all_offenders.extend(offenders_by_check.get(check_name, []))
+            failed_labels = ", ".join(failed_blocking)
+            if all_offenders:
+                result.add(
+                    "Production Readiness Check", False,
+                    f"Not ready for delivery — failed: {failed_labels}. "
+                    f"Layer(s) to fix: {_format_layer_list(all_offenders)}"
+                )
+            else:
+                result.add(
+                    "Production Readiness Check", False,
+                    f"Not ready for delivery — failed: {failed_labels}"
+                )
         else:
             result.add("Production Readiness Check", True)
     except Exception as e:
