@@ -1,18 +1,75 @@
 import socket
 import uuid
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QMessageBox, QProgressDialog, QTextEdit, QSystemTrayIcon,
-    QMenu, QVBoxLayout, QStatusBar, QWidget, QTableWidget, QTableWidgetItem,
-    QPushButton, QHBoxLayout, QHeaderView, QProgressBar, QSizePolicy,QLabel, QFrame, QScrollArea, QGridLayout
+    QApplication,
+    QDialog,
+    QMessageBox,
+    QProgressDialog,
+    QTextEdit,
+    QSystemTrayIcon,
+    QMenu,
+    QVBoxLayout,
+    QStatusBar,
+    QWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QPushButton,
+    QHBoxLayout,
+    QHeaderView,
+    QProgressBar,
+    QSizePolicy,
+    QLabel,
+    QFrame,
+    QScrollArea,
+    QGridLayout,
 )
 from updater_client import check_for_update
-  # your current version
 
-from PySide6.QtGui import QIcon, QTextCursor, QAction, QCursor, QFont,QPixmap, QDesktopServices, QColor
-from PySide6.QtCore import QRunnable, QThreadPool, QEvent, QSize, QThread, QTimer, Qt, QObject, Signal, QMetaObject, Slot, QLockFile, QDir, QEventLoop, QUrl, Q_ARG, QMimeData, QPropertyAnimation, QEvent
-from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkAccessManager, QNetworkRequest
+# your current version
+
+from PySide6.QtGui import (
+    QIcon,
+    QTextCursor,
+    QAction,
+    QCursor,
+    QFont,
+    QPixmap,
+    QDesktopServices,
+    QColor,
+)
+from PySide6.QtCore import (
+    QRunnable,
+    QThreadPool,
+    QEvent,
+    QSize,
+    QThread,
+    QTimer,
+    Qt,
+    QObject,
+    Signal,
+    QMetaObject,
+    Slot,
+    QLockFile,
+    QDir,
+    QEventLoop,
+    QUrl,
+    Q_ARG,
+    QMimeData,
+    QPropertyAnimation,
+    QEvent,
+)
+from PySide6.QtNetwork import (
+    QLocalServer,
+    QLocalSocket,
+    QNetworkAccessManager,
+    QNetworkRequest,
+)
 from login import Ui_Dialog
-from PySide6.QtWidgets import QLineEdit, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
+from PySide6.QtWidgets import (
+    QLineEdit,
+    QGraphicsOpacityEffect,
+    QGraphicsDropShadowEffect,
+)
 
 import sys
 import logging
@@ -23,9 +80,9 @@ import requests
 from requests.exceptions import RequestException
 import urllib3
 import json
-from urllib.parse import urlparse, parse_qs, quote
+from urllib.parse import urlparse, parse_qs, quote, unquote
 from pathlib import Path
-from datetime import datetime, timedelta, timezone 
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from PIL import Image, ImageSequence
 import subprocess
@@ -50,6 +107,7 @@ from PySide6.QtWidgets import QLabel
 if platform.system() != "Windows":
     import fcntl
 import numpy as np
+
 try:
     from psd_tools import PSDImage
 except ImportError:
@@ -64,6 +122,23 @@ except ImportError:
     tifffile = None
 import pytz
 import shutil
+
+# === S3 client support (used with `rclone serve s3`) ===
+try:
+    import boto3
+    from boto3.s3.transfer import TransferConfig
+    from botocore.config import Config as BotoConfig
+
+    S3_AVAILABLE = True
+except ImportError as e:
+    boto3 = None
+    TransferConfig = None
+    BotoConfig = None
+    S3_AVAILABLE = False
+    logging.warning(
+        f"boto3/botocore not installed: {e}. Rclone S3 functionality disabled."
+    )
+
 # Lazy import — keyring blocks on Windows credential store at import time
 keyring = None
 # def _load_keyring():
@@ -80,12 +155,14 @@ try:
 except ImportError:
     logger.warning("imagecodecs not installed, LZW-compressed TIFFs may not work")
 from httpx import Timeout
+
 if platform.system() == "Windows":
     import pythoncom
     import win32com.client
     import win32gui
     import win32con
 from scp import SCPClient
+
 if platform.system() == "Windows":
     import msvcrt
 else:
@@ -119,11 +196,12 @@ def ensure_single_instance(app_name: str):
 
     return lock_file  # MUST stay referenced
 
+
 def _show_already_running_popup(app_name: str):
     """
     Shows a blocking popup even if QApplication is not yet created.
     """
-    print ("------------------------------ one instancee ---------------------")
+    print("------------------------------ one instancee ---------------------")
     try:
         from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -139,7 +217,11 @@ def _show_already_running_popup(app_name: str):
         #     f"{app_name} Already Running",
         #     f"{app_name} is already running on your machine. Only one instance is allowed.",
         # )
-        show_alert(f"{app_name} Already Running", f"{app_name} is already running on your machine. Only one instance is allowed.", QMessageBox.Warning)
+        show_alert(
+            f"{app_name} Already Running",
+            f"{app_name} is already running on your machine. Only one instance is allowed.",
+            QMessageBox.Warning,
+        )
         if owns_app:
             app.quit()
 
@@ -149,15 +231,32 @@ def _show_already_running_popup(app_name: str):
 
 
 SUPPORTED_EXTENSIONS = [
-    "jpg", "jpeg", "png", "gif", "tiff", "tif", "bmp", "webp",
-    "psd", "psb", "cr2", "nef", "arw", "dng", "raf", "pef", "srw"
+    "jpg",
+    "jpeg",
+    "png",
+    "gif",
+    "tiff",
+    "tif",
+    "bmp",
+    "webp",
+    "psd",
+    "psb",
+    "cr2",
+    "nef",
+    "arw",
+    "dng",
+    "raf",
+    "pef",
+    "srw",
 ]
 import shlex
+
 # Global stop queue for signaling
 FILE_WATCHER_STOP_QUEUE = Queue()
 # Handle paramiko import
 try:
     import paramiko
+
     NAS_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"paramiko not installed: {e}. NAS functionality disabled.")
@@ -174,6 +273,7 @@ except ImportError as e:
 # At the top of the file, ensure all imports are explicit
 try:
     from PIL import Image
+
     PIL_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"PIL not installed: {e}. Image conversion disabled.")
@@ -202,10 +302,21 @@ NAS_USERNAME = "irdev"
 NAS_PASSWORD = "i#0f!L&+@s%^qc"
 NAS_PORT = 22
 NAS_SHARE = ""
-NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
-MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
+NAS_PREFIX = "/mnt/nas/softwaremedia/IR_uat"
+MOUNTED_NAS_PATH = "/mnt/nas/softwaremedia/IR_uat"
 NAS_PATH = "softwaremedia/IR_uat/"
 APPVERSION = "1.2.7(UAT)"
+
+# === Rclone S3-compatible object storage (UAT) ===
+# `rclone serve s3` endpoint. Bucket is the root directory name exposed by rclone.
+# Environment variables override these values, which is recommended outside UAT/POC.
+S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://192.168.2.199:9000").rstrip("/")
+S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
+S3_SECRET_KEY = os.getenv("PREMEDIA_S3_SECRET_KEY", "KJDSKJNOIWEBNSSDEW")
+S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
+S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "IR_uat")
+S3_MULTIPART_CHUNK_MB = 16
+S3_MAX_CONCURRENCY = 2
 GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 
 
@@ -227,8 +338,11 @@ BASE_TARGET_DIR.mkdir(parents=True, exist_ok=True)
 
 # Cache icon paths
 ICON_CACHE = {}
+
+
 def load_icon(path, description):
     return QIcon(path)
+
 
 def add_version_footer(window, version_text):
     """
@@ -253,7 +367,8 @@ def add_version_footer(window, version_text):
 
 
 ICON_CACHE = {}
-BASE_DIR = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
+BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+
 
 def get_icon_path(icon_name: str) -> str:
     """
@@ -263,7 +378,7 @@ def get_icon_path(icon_name: str) -> str:
         return str(ICON_CACHE[icon_name])
 
     # Detect icon directory (inside _MEIPASS for frozen apps)
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         icons_dir = Path(sys._MEIPASS) / "icons"
     else:
         icons_dir = BASE_DIR / "icons"
@@ -277,18 +392,21 @@ def get_icon_path(icon_name: str) -> str:
     ICON_CACHE[icon_name] = icon_path
     return str(icon_path)
 
-# OS-specific main icon
-ICON_PATH = get_icon_path({
-    "Windows": "premedia.ico",
-    "Darwin": "premedia.icns",
-    "Linux": "premedia.png"
-}.get(platform.system(), "premedia.png"))
 
-LOGGEDIN_ICON_PATH = get_icon_path({
-    "Windows": "login-logo.ico",
-    "Darwin": "login-logo.icns",
-    "Linux": "login-logo.png"
-}.get(platform.system(), "login-logo.png"))
+# OS-specific main icon
+ICON_PATH = get_icon_path(
+    {"Windows": "premedia.ico", "Darwin": "premedia.icns", "Linux": "premedia.png"}.get(
+        platform.system(), "premedia.png"
+    )
+)
+
+LOGGEDIN_ICON_PATH = get_icon_path(
+    {
+        "Windows": "login-logo.ico",
+        "Darwin": "login-logo.icns",
+        "Linux": "login-logo.png",
+    }.get(platform.system(), "login-logo.png")
+)
 
 # PHOTOSHOP_ICON_PATH = get_icon_path("photoshop.png") if (BASE_DIR / "icons" / "photoshop.png").exists() else ""
 # COPY_ICON_PATH = get_icon_path("copy_icon.png") if (BASE_DIR / "icons" / "folder.png").exists() else ""
@@ -301,6 +419,182 @@ RETRY_ICON_PATH = get_icon_path("retry.png")
 FOLDER_ICON_PATH = get_icon_path("folder.png")
 
 
+def _coerce_bool(value, default=None):
+    """Convert bool/int/string API values to bool without bool("0") surprises."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    value = str(value).strip().lower()
+    if value in ("1", "true", "yes", "y", "on"):
+        return True
+    if value in ("0", "false", "no", "n", "off", ""):
+        return False
+    return default
+
+
+def _task_uses_s3(item, file_path=""):
+    """
+    Decide whether a task should use rclone S3 instead of SFTP.
+
+    Preferred API contract:
+      download -> is_nas_src=false means S3
+      upload   -> is_nas_dest=false means S3
+
+    Also accepts storage_type/storage_backend values such as "s3" or
+    "rclone_s3". URL detection is retained only as a backward-compatible
+    fallback for existing tasks.
+    """
+    item = item if isinstance(item, dict) else {}
+    request_type = str(item.get("request_type", "")).strip().lower()
+
+    flag_name = "is_nas_src" if request_type == "download" else "is_nas_dest"
+    if flag_name in item:
+        is_nas = _coerce_bool(item.get(flag_name), default=None)
+        if is_nas is not None:
+            return not is_nas
+
+    backend = (
+        str(
+            item.get("storage_type")
+            or item.get("storage_backend")
+            or item.get("transfer_backend")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    if backend in ("s3", "rclone_s3", "rclone-s3", "object_storage", "object-storage"):
+        return True
+    if backend in ("nas", "sftp", "ssh"):
+        return False
+
+    raw = str(file_path or item.get("file_path") or "").strip().lower()
+    endpoint = S3_ENDPOINT.lower()
+    return raw.startswith("s3://") or raw.startswith(endpoint + "/")
+
+
+def _resolve_s3_location(remote_path):
+    """
+    Return (bucket, object_key) for any of these input styles:
+      s3://IR_uat/client/project/file.psd
+      http://192.168.2.199:9000/IR_uat/client/project/file.psd
+      IR_uat/client/project/file.psd
+      /mnt/nas/softwaremedia/IR_uat/client/project/file.psd
+      softwaremedia/IR_uat/client/project/file.psd
+      client/project/file.psd
+    """
+    raw = str(remote_path or "").strip().replace("\\", "/")
+    if not raw:
+        raise ValueError("Empty S3 object path")
+
+    bucket = S3_BUCKET
+
+    if raw.lower().startswith("s3://"):
+        parsed = urlparse(raw)
+        bucket = parsed.netloc or S3_BUCKET
+        key = unquote(parsed.path).lstrip("/")
+    elif raw.lower().startswith(("http://", "https://")):
+        parsed = urlparse(raw)
+        key = unquote(parsed.path).lstrip("/")
+        # A browser/console URL may contain /files/<bucket>/... .
+        # The S3 API endpoint itself must still be S3_ENDPOINT (port 9000 here).
+        if key.startswith("files/"):
+            key = key[len("files/") :]
+    else:
+        key = raw.lstrip("/")
+
+    # Strip the bucket name when it is already embedded in the path.
+    if key == bucket:
+        key = ""
+    elif key.startswith(bucket + "/"):
+        key = key[len(bucket) + 1 :]
+
+    # Backward compatibility with the existing NAS paths stored in the API/cache.
+    legacy_prefixes = [
+        str(NAS_PREFIX).replace("\\", "/").lstrip("/").rstrip("/"),
+        str(MOUNTED_NAS_PATH).replace("\\", "/").lstrip("/").rstrip("/"),
+        str(NAS_PATH).replace("\\", "/").lstrip("/").rstrip("/"),
+    ]
+    for prefix in legacy_prefixes:
+        if not prefix:
+            continue
+        if key == prefix:
+            key = ""
+            break
+        prefix_with_slash = prefix + "/"
+        if key.startswith(prefix_with_slash):
+            key = key[len(prefix_with_slash) :]
+            break
+
+    # One more bucket strip may be needed after removing a legacy prefix.
+    if key.startswith(bucket + "/"):
+        key = key[len(bucket) + 1 :]
+
+    key = key.strip("/")
+    if not key:
+        raise ValueError(f"S3 object key is empty for path: {remote_path}")
+
+    parts = key.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"Invalid S3 object key: {key}")
+
+    return bucket, key
+
+
+def _replace_remote_suffix(remote_path, new_ext):
+    """Replace only the final filename suffix without mangling URL prefixes."""
+    value = str(remote_path).replace("\\", "/")
+    new_ext = str(new_ext).lstrip(".")
+    if "/" in value:
+        prefix, name = value.rsplit("/", 1)
+        new_name = str(Path(name).with_suffix(f".{new_ext}"))
+        return f"{prefix}/{new_name}"
+    return str(Path(value).with_suffix(f".{new_ext}"))
+
+
+def _create_s3_client():
+    """Create a path-style SigV4 S3 client for `rclone serve s3`."""
+    if not S3_AVAILABLE:
+        raise RuntimeError(
+            "boto3 is required for rclone S3 transfers. Install with: pip install boto3"
+        )
+    if not S3_ACCESS_KEY or not S3_SECRET_KEY:
+        raise RuntimeError("S3 access key/secret key are not configured")
+
+    return boto3.client(
+        "s3",
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id=S3_ACCESS_KEY,
+        aws_secret_access_key=S3_SECRET_KEY,
+        region_name=S3_REGION,
+        config=BotoConfig(
+            signature_version="s3v4",
+            s3={"addressing_style": "path"},
+            connect_timeout=10,
+            read_timeout=120,
+            retries={"max_attempts": 3, "mode": "standard"},
+        ),
+    )
+
+
+def _s3_transfer_config():
+    """
+    Conservative multipart settings for rclone serve s3.
+    Low concurrency keeps out-of-order buffered parts small on the rclone server.
+    """
+    mb = 1024 * 1024
+    return TransferConfig(
+        multipart_threshold=S3_MULTIPART_CHUNK_MB * mb,
+        multipart_chunksize=S3_MULTIPART_CHUNK_MB * mb,
+        max_concurrency=S3_MAX_CONCURRENCY,
+        num_download_attempts=3,
+        use_threads=True,
+    )
+
+
 def get_cache_file_path():
     # Use BASE_TARGET_DIR as the base for cache file generation
     cache_dir = Path(BASE_TARGET_DIR) / "PremediaApp"
@@ -309,7 +603,9 @@ def get_cache_file_path():
         print(f"Ensured cache directory exists: {cache_dir}")
     except Exception as e:
         print(f"Failed to create cache directory {cache_dir}: {e}")
-        app_signals.append_log.emit(f"[Cache] Failed to create cache directory {cache_dir}: {str(e)}")
+        app_signals.append_log.emit(
+            f"[Cache] Failed to create cache directory {cache_dir}: {str(e)}"
+        )
         # Fallback to a default directory if creation fails
         cache_dir = Path.home() / ".cache" / "PremediaApp"
         try:
@@ -317,10 +613,13 @@ def get_cache_file_path():
             print(f"Fell back to default cache directory: {cache_dir}")
         except Exception as e2:
             print(f"Failed to create fallback cache directory {cache_dir}: {e2}")
-            app_signals.append_log.emit(f"[Cache] Failed to create fallback cache directory {cache_dir}: {str(e2)}")
-    
+            app_signals.append_log.emit(
+                f"[Cache] Failed to create fallback cache directory {cache_dir}: {str(e2)}"
+            )
+
     cache_file = cache_dir / "cache.json"
     return str(cache_file)
+
 
 CACHE_FILE = get_cache_file_path()
 CACHE_DAYS = 10
@@ -346,22 +645,32 @@ API_POLL_INTERVAL = 5000  # 5 seconds in milliseconds
 # === Google Chat transfer reporting (latency / speed) ===
 # Paste your Google Chat "Incoming Webhook" URL here (Space -> Apps & integrations -> Webhooks)
 # GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
-TRANSFER_REPORT_INTERVAL_SEC = 10  # send a report every 10 seconds while a transfer is active
-LATENCY_TARGET_HOST = None  # None => uses NAS_IP; set to a domain/IP to ping a different server
+TRANSFER_REPORT_INTERVAL_SEC = (
+    10  # send a report every 10 seconds while a transfer is active
+)
+LATENCY_TARGET_HOST = (
+    None  # None => uses NAS_IP; set to a domain/IP to ping a different server
+)
 LATENCY_TARGET_PORT = None  # None => uses NAS_PORT
 
 # === Network/server problem alarm thresholds ===
-LATENCY_WARNING_MS = 1000       # server latency above this = "server is very slow"
-LATENCY_MIN_MS = 1              # server latency below this (but not None) = suspicious/likely bad reading
-SPEED_WARNING_MBPS = 0.5        # transfer speed below this (mid-transfer) = "server is very slow"
-ALARM_COOLDOWN_SEC = 300        # don't repeat the same alarm type more than once per 5 minutes
+LATENCY_WARNING_MS = 1000  # server latency above this = "server is very slow"
+LATENCY_MIN_MS = (
+    1  # server latency below this (but not None) = suspicious/likely bad reading
+)
+SPEED_WARNING_MBPS = (
+    0.5  # transfer speed below this (mid-transfer) = "server is very slow"
+)
+ALARM_COOLDOWN_SEC = (
+    300  # don't repeat the same alarm type more than once per 5 minutes
+)
 
 log_window_handler = None
 # === Global State ===
 GLOBAL_CACHE = None
 CACHE_WRITE_LOCK = threading.Lock()
-_MEMORY_CACHE = None          # in-memory cache object
-_MEMORY_CACHE_DIRTY = False   # True when memory cache differs from disk
+_MEMORY_CACHE = None  # in-memory cache object
+_MEMORY_CACHE_DIRTY = False  # True when memory cache differs from disk
 HTTP_SESSION = requests.Session()
 FILE_WATCHER_RUNNING = False
 LOGGING_ACTIVE = True
@@ -372,15 +681,15 @@ NEXT_API_HIT_TIME = None
 USER_SYSTEM_INFO = {}
 
 # ========== CONFIGURATION ==========
-THROTTLE_MBPS = None       # Set to e.g. 50, 100, or None for no limit (full speed)
-MIN_REQUIRED_MBPS = 50     # Optional: for warning if speed too low (in Mbps)
-PRINT_INTERVAL = 0.5       # Progress update frequency in seconds
+THROTTLE_MBPS = None  # Set to e.g. 50, 100, or None for no limit (full speed)
+MIN_REQUIRED_MBPS = 50  # Optional: for warning if speed too low (in Mbps)
+PRINT_INTERVAL = 0.5  # Progress update frequency in seconds
 
 # ---- TEMPORARY: Max upload file size limit ----
 # To DISABLE this limit, just set ENABLE_MAX_UPLOAD_SIZE_LIMIT = False below
 # (or delete/comment out these two lines) — no other code changes needed.
-ENABLE_MAX_UPLOAD_SIZE_LIMIT = True   # <-- flip to False to turn the limit off
-MAX_UPLOAD_SIZE_MB = 2048             # 2 GB
+ENABLE_MAX_UPLOAD_SIZE_LIMIT = True  # <-- flip to False to turn the limit off
+MAX_UPLOAD_SIZE_MB = 2048  # 2 GB
 # =================================================
 # ===================================
 # === Logging Setup ===
@@ -427,7 +736,9 @@ class AppSignals(QObject):
         # Same pattern for the PSD/PSB pre-upload validation confirmation
         # dialog — must always be built/shown on the main GUI thread even
         # though the request originates from a background upload thread.
-        self.psd_validation_required.connect(self._on_psd_validation_required, Qt.QueuedConnection)
+        self.psd_validation_required.connect(
+            self._on_psd_validation_required, Qt.QueuedConnection
+        )
 
     @Slot(str, str)
     def _on_network_alarm(self, summary, report_text):
@@ -445,12 +756,13 @@ class AppSignals(QObject):
             dlg.raise_()
             dlg.activateWindow()
             choice = dlg.exec()
-            confirmation_box.result = (choice == QDialog.Accepted)
+            confirmation_box.result = choice == QDialog.Accepted
         except Exception as e:
             logger.error(f"[PSD Validation] Failed to show confirmation dialog: {e}")
             confirmation_box.result = False
         finally:
             confirmation_box.event.set()
+
 
 app_signals = AppSignals()
 
@@ -481,13 +793,16 @@ app_signals = AppSignals()
 #   }
 # ============================================================================
 
+
 class PSDUploadCancelled(Exception):
     """Raised when the user cancels an upload from the PSD validation dialog."""
+
     pass
 
 
 class UploadSizeLimitExceeded(Exception):
     """Raised when a file exceeds the configured MAX_UPLOAD_SIZE_MB limit."""
+
     pass
 
 
@@ -515,12 +830,14 @@ class PSDValidationResult:
     """Container for one PSD/PSB validation run."""
 
     def __init__(self):
-        self.checks = []          # list of {"name","passed","message"}
-        self.canvas_size = None   # (width, height)
+        self.checks = []  # list of {"name","passed","message"}
+        self.canvas_size = None  # (width, height)
         self.overall_pass = True
 
     def add(self, name, passed, message=""):
-        self.checks.append({"name": name, "passed": bool(passed), "message": message or ""})
+        self.checks.append(
+            {"name": name, "passed": bool(passed), "message": message or ""}
+        )
         if not passed:
             self.overall_pass = False
 
@@ -544,7 +861,10 @@ def _psd_layer_path(layer):
         parts = [_psd_layer_name(layer)]
         parent = getattr(layer, "parent", None)
         seen = set()
-        while parent is not None and not (hasattr(parent, "kind") and str(getattr(parent, "kind", "")).lower() == "psdimage"):
+        while parent is not None and not (
+            hasattr(parent, "kind")
+            and str(getattr(parent, "kind", "")).lower() == "psdimage"
+        ):
             pid = id(parent)
             if pid in seen:
                 break
@@ -588,20 +908,34 @@ def _format_layer_list(names, limit=20):
 # incorrectly flagged as "empty".
 PSD_NON_RASTER_LAYER_KINDS = {
     # Fill layers
-    "solidcolorfill", "patternfill", "gradientfill",
+    "solidcolorfill",
+    "patternfill",
+    "gradientfill",
     # Adjustment layers
-    "brightnesscontrast", "curves", "exposure", "levels", "vibrance",
-    "huesaturation", "colorbalance", "blackandwhite", "photofilter",
-    "channelmixer", "colorlookup", "invert", "posterize", "threshold",
-    "selectivecolor", "gradientmap",
+    "brightnesscontrast",
+    "curves",
+    "exposure",
+    "levels",
+    "vibrance",
+    "huesaturation",
+    "colorbalance",
+    "blackandwhite",
+    "photofilter",
+    "channelmixer",
+    "colorlookup",
+    "invert",
+    "posterize",
+    "threshold",
+    "selectivecolor",
+    "gradientmap",
 }
 
 # Photoshop's default auto-generated duplicate naming: "Layer 1 copy",
 # "Layer 1 copy 2", "copy of Background", etc. — used by the Duplicate
 # Layer Detection check to catch un-renamed duplicated layers even when
 # their name doesn't exactly collide with another layer's name.
-_PSD_COPY_SUFFIX_RE = re.compile(r'(?:^|[\s_\-])copy(?:[\s_\-]?\d+)?$', re.IGNORECASE)
-_PSD_COPY_OF_PREFIX_RE = re.compile(r'^copy of\b', re.IGNORECASE)
+_PSD_COPY_SUFFIX_RE = re.compile(r"(?:^|[\s_\-])copy(?:[\s_\-]?\d+)?$", re.IGNORECASE)
+_PSD_COPY_OF_PREFIX_RE = re.compile(r"^copy of\b", re.IGNORECASE)
 
 
 def _psd_layer_content_hash(layer):
@@ -643,7 +977,11 @@ def validate_psd_document(file_path, config=None):
     offenders_by_check = {}
 
     if PSDImage is None:
-        result.add("PSD Library", False, "psd-tools is not installed; cannot validate this file")
+        result.add(
+            "PSD Library",
+            False,
+            "psd-tools is not installed; cannot validate this file",
+        )
         return result
 
     try:
@@ -673,14 +1011,17 @@ def validate_psd_document(file_path, config=None):
     try:
         allowed_hidden = set(config.get("allowed_hidden_layers", []))
         bad_hidden = [
-            _psd_layer_path(l) for l in all_layers
-            if not getattr(l, "visible", True) and _psd_layer_name(l) not in allowed_hidden
+            _psd_layer_path(l)
+            for l in all_layers
+            if not getattr(l, "visible", True)
+            and _psd_layer_name(l) not in allowed_hidden
         ]
         if bad_hidden:
             offenders_by_check["Hidden Layer Check"] = bad_hidden
             result.add(
-                "Hidden Layer Check", False,
-                f"{len(bad_hidden)} hidden layer(s) found — must be visible or removed: {_format_layer_list(bad_hidden)}"
+                "Hidden Layer Check",
+                False,
+                f"{len(bad_hidden)} hidden layer(s) found — must be visible or removed: {_format_layer_list(bad_hidden)}",
             )
         else:
             result.add("Hidden Layer Check", True)
@@ -715,8 +1056,9 @@ def validate_psd_document(file_path, config=None):
         if empty_layers:
             offenders_by_check["Empty Layer Check"] = empty_layers
             result.add(
-                "Empty Layer Check", False,
-                f"{len(empty_layers)} empty layer(s) with no content: {_format_layer_list(empty_layers)}"
+                "Empty Layer Check",
+                False,
+                f"{len(empty_layers)} empty layer(s) with no content: {_format_layer_list(empty_layers)}",
             )
         else:
             result.add("Empty Layer Check", True)
@@ -732,7 +1074,7 @@ def validate_psd_document(file_path, config=None):
         # flagged — teams commonly organize layers under a Background group.
         temp_patterns = config.get(
             "temp_layer_patterns",
-            ["temp", "tmp", "test", "working", "wip", "draft", "background"]
+            ["temp", "tmp", "test", "working", "wip", "draft", "background"],
         )
         temp_layers = []
         for l in all_layers:
@@ -750,8 +1092,9 @@ def validate_psd_document(file_path, config=None):
         if temp_layers:
             offenders_by_check["Temporary Layer Check"] = temp_layers
             result.add(
-                "Temporary Layer Check", False,
-                f"{len(temp_layers)} temporary/working layer(s) must be removed before delivery: {_format_layer_list(temp_layers)}"
+                "Temporary Layer Check",
+                False,
+                f"{len(temp_layers)} temporary/working layer(s) must be removed before delivery: {_format_layer_list(temp_layers)}",
             )
         else:
             result.add("Temporary Layer Check", True)
@@ -760,16 +1103,20 @@ def validate_psd_document(file_path, config=None):
 
     # ---- 4. Reference Layer Check ----
     try:
-        ref_patterns = config.get("reference_layer_patterns", ["reference", "ref", "guide"])
+        ref_patterns = config.get(
+            "reference_layer_patterns", ["reference", "ref", "guide"]
+        )
         ref_layers = [
-            _psd_layer_path(l) for l in all_layers
+            _psd_layer_path(l)
+            for l in all_layers
             if any(p.lower() in (_psd_layer_name(l)).lower() for p in ref_patterns)
         ]
         if ref_layers:
             offenders_by_check["Reference Layer Check"] = ref_layers
             result.add(
-                "Reference Layer Check", False,
-                f"{len(ref_layers)} reference/guide layer(s) must be removed: {_format_layer_list(ref_layers)}"
+                "Reference Layer Check",
+                False,
+                f"{len(ref_layers)} reference/guide layer(s) must be removed: {_format_layer_list(ref_layers)}",
             )
         else:
             result.add("Reference Layer Check", True)
@@ -801,17 +1148,21 @@ def validate_psd_document(file_path, config=None):
                     pattern_issue_paths.append(_psd_layer_path(l))
 
         if bad_names:
-            offenders_by_check["Layer Naming Validation"] = list(set(space_issue_paths + pattern_issue_paths))
+            offenders_by_check["Layer Naming Validation"] = list(
+                set(space_issue_paths + pattern_issue_paths)
+            )
             result.add(
-                "Layer Naming Validation", False,
-                f"{len(bad_names)} layer naming issue(s) found: {_format_layer_list(bad_names)}"
+                "Layer Naming Validation",
+                False,
+                f"{len(bad_names)} layer naming issue(s) found: {_format_layer_list(bad_names)}",
             )
         elif naming_pattern:
             result.add("Layer Naming Validation", True)
         else:
             result.add(
-                "Layer Naming Validation", True,
-                "No custom naming convention configured; leading/trailing-space rule applied"
+                "Layer Naming Validation",
+                True,
+                "No custom naming convention configured; leading/trailing-space rule applied",
             )
     except Exception as e:
         result.add("Layer Naming Validation", False, f"Check failed to run: {e}")
@@ -824,13 +1175,18 @@ def validate_psd_document(file_path, config=None):
             missing = [m for m in mandatory if m not in existing_names]
             if missing:
                 result.add(
-                    "Mandatory Layer Validation", False,
-                    f"{len(missing)} required layer(s) are missing from this file: {_format_layer_list(missing)}"
+                    "Mandatory Layer Validation",
+                    False,
+                    f"{len(missing)} required layer(s) are missing from this file: {_format_layer_list(missing)}",
                 )
             else:
                 result.add("Mandatory Layer Validation", True)
         else:
-            result.add("Mandatory Layer Validation", True, "No mandatory layers configured; check skipped")
+            result.add(
+                "Mandatory Layer Validation",
+                True,
+                "No mandatory layers configured; check skipped",
+            )
     except Exception as e:
         result.add("Mandatory Layer Validation", False, f"Check failed to run: {e}")
 
@@ -838,7 +1194,7 @@ def validate_psd_document(file_path, config=None):
     try:
         occurrences_by_name = {}
         copy_named_layers = []
-        content_hash_groups = {}   # (kind, content_hash) -> [paths]
+        content_hash_groups = {}  # (kind, content_hash) -> [paths]
 
         for l in all_layers:
             n = _psd_layer_name(l)
@@ -867,14 +1223,18 @@ def validate_psd_document(file_path, config=None):
                 if kind and kind not in PSD_NON_RASTER_LAYER_KINDS:
                     content_hash = _psd_layer_content_hash(l)
                     if content_hash:
-                        content_hash_groups.setdefault((kind, content_hash), []).append(path)
+                        content_hash_groups.setdefault((kind, content_hash), []).append(
+                            path
+                        )
 
         dupe_details = []
         dupe_paths_flat = []
 
         for name, paths in occurrences_by_name.items():
             if len(paths) > 1:
-                dupe_details.append(f"'{name}' ×{len(paths)} same name [{'; '.join(paths)}]")
+                dupe_details.append(
+                    f"'{name}' ×{len(paths)} same name [{'; '.join(paths)}]"
+                )
                 dupe_paths_flat.extend(paths)
 
         if copy_named_layers:
@@ -893,10 +1253,13 @@ def validate_psd_document(file_path, config=None):
                 dupe_paths_flat.extend(paths)
 
         if dupe_details:
-            offenders_by_check["Duplicate Layer Detection"] = list(dict.fromkeys(dupe_paths_flat))
+            offenders_by_check["Duplicate Layer Detection"] = list(
+                dict.fromkeys(dupe_paths_flat)
+            )
             result.add(
-                "Duplicate Layer Detection", False,
-                f"{len(dupe_details)} duplicate/copy issue(s) found: {_format_layer_list(dupe_details, limit=15)}"
+                "Duplicate Layer Detection",
+                False,
+                f"{len(dupe_details)} duplicate/copy issue(s) found: {_format_layer_list(dupe_details, limit=15)}",
             )
         else:
             result.add("Duplicate Layer Detection", True)
@@ -914,23 +1277,35 @@ def validate_psd_document(file_path, config=None):
             try:
                 actual_top_level = [_psd_layer_name(l) for l in psd if _is_group(l)]
             except Exception:
-                actual_top_level = [_psd_layer_name(l) for l in all_layers if _is_group(l)]
+                actual_top_level = [
+                    _psd_layer_name(l) for l in all_layers if _is_group(l)
+                ]
 
-            missing_groups = [g for g in expected_hierarchy if g not in actual_top_level]
+            missing_groups = [
+                g for g in expected_hierarchy if g not in actual_top_level
+            ]
             extra_groups = [g for g in actual_top_level if g not in expected_hierarchy]
 
             issues = []
             if missing_groups:
-                issues.append(f"missing expected group(s): {_format_layer_list(missing_groups)}")
+                issues.append(
+                    f"missing expected group(s): {_format_layer_list(missing_groups)}"
+                )
             if extra_groups:
-                issues.append(f"unexpected group(s) present: {_format_layer_list(extra_groups)}")
+                issues.append(
+                    f"unexpected group(s) present: {_format_layer_list(extra_groups)}"
+                )
 
             if issues:
                 result.add("Layer Hierarchy Validation", False, "; ".join(issues))
             else:
                 result.add("Layer Hierarchy Validation", True)
         else:
-            result.add("Layer Hierarchy Validation", True, "No expected_hierarchy configured; check skipped")
+            result.add(
+                "Layer Hierarchy Validation",
+                True,
+                "No expected_hierarchy configured; check skipped",
+            )
     except Exception as e:
         result.add("Layer Hierarchy Validation", False, f"Check failed to run: {e}")
 
@@ -956,8 +1331,9 @@ def validate_psd_document(file_path, config=None):
         if bad_locked:
             offenders_by_check["Locked Layer Validation"] = bad_locked
             result.add(
-                "Locked Layer Validation", False,
-                f"{len(bad_locked)} unexpected locked layer(s): {_format_layer_list(bad_locked)}"
+                "Locked Layer Validation",
+                False,
+                f"{len(bad_locked)} unexpected locked layer(s): {_format_layer_list(bad_locked)}",
             )
         else:
             result.add("Locked Layer Validation", True)
@@ -980,7 +1356,9 @@ def validate_psd_document(file_path, config=None):
             except Exception:
                 actual_mode = "UNKNOWN"
             if required_color_mode.upper() not in actual_mode:
-                doc_issues.append(f"Color mode {actual_mode} != required {required_color_mode.upper()}")
+                doc_issues.append(
+                    f"Color mode {actual_mode} != required {required_color_mode.upper()}"
+                )
         if doc_issues:
             result.add("Document Properties Check", False, "; ".join(doc_issues))
         else:
@@ -1002,24 +1380,34 @@ def validate_psd_document(file_path, config=None):
             if smart_objects:
                 offenders_by_check["Smart Object Check"] = smart_objects
                 result.add(
-                    "Smart Object Check", False,
-                    f"{len(smart_objects)} smart object layer(s) must be flattened: {_format_layer_list(smart_objects)}"
+                    "Smart Object Check",
+                    False,
+                    f"{len(smart_objects)} smart object layer(s) must be flattened: {_format_layer_list(smart_objects)}",
                 )
             else:
                 result.add("Smart Object Check", True)
         else:
-            result.add("Smart Object Check", True, "Flattenability not required; check skipped")
+            result.add(
+                "Smart Object Check", True, "Flattenability not required; check skipped"
+            )
     except Exception as e:
         result.add("Smart Object Check", False, f"Check failed to run: {e}")
 
     # ---- 12. Production Readiness Check (aggregate of the above) ----
     try:
         blocking_checks = (
-            "Hidden Layer Check", "Empty Layer Check", "Temporary Layer Check",
-            "Reference Layer Check", "Mandatory Layer Validation", "Duplicate Layer Detection",
+            "Hidden Layer Check",
+            "Empty Layer Check",
+            "Temporary Layer Check",
+            "Reference Layer Check",
+            "Mandatory Layer Validation",
+            "Duplicate Layer Detection",
         )
-        failed_blocking = [name for name in blocking_checks
-                            if any(c["name"] == name and not c["passed"] for c in result.checks)]
+        failed_blocking = [
+            name
+            for name in blocking_checks
+            if any(c["name"] == name and not c["passed"] for c in result.checks)
+        ]
 
         if failed_blocking:
             # Roll up every offending layer named across the blocking
@@ -1030,14 +1418,16 @@ def validate_psd_document(file_path, config=None):
             failed_labels = ", ".join(failed_blocking)
             if all_offenders:
                 result.add(
-                    "Production Readiness Check", False,
+                    "Production Readiness Check",
+                    False,
                     f"Not ready for delivery — failed: {failed_labels}. "
-                    f"Layer(s) to fix: {_format_layer_list(all_offenders)}"
+                    f"Layer(s) to fix: {_format_layer_list(all_offenders)}",
                 )
             else:
                 result.add(
-                    "Production Readiness Check", False,
-                    f"Not ready for delivery — failed: {failed_labels}"
+                    "Production Readiness Check",
+                    False,
+                    f"Not ready for delivery — failed: {failed_labels}",
                 )
         else:
             result.add("Production Readiness Check", True)
@@ -1076,7 +1466,9 @@ class PSDCheckRowWidget(QFrame):
         self.setObjectName("PSDCheckRow")
 
         accent = "#3ddc97" if passed else "#ff5c7a"
-        accent_soft = "rgba(61, 220, 151, 0.12)" if passed else "rgba(255, 92, 122, 0.12)"
+        accent_soft = (
+            "rgba(61, 220, 151, 0.12)" if passed else "rgba(255, 92, 122, 0.12)"
+        )
         icon = "✓" if passed else "✕"
         pill_text = "PASS" if passed else "FAIL"
 
@@ -1198,8 +1590,8 @@ class PSDValidationDialog(QDialog):
         accent = "#3ddc97" if overall_pass else "#ff5c7a"
         gradient = (
             "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0f9b6e, stop:1 #3ddc97)"
-            if overall_pass else
-            "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #c0293f, stop:1 #ff5c7a)"
+            if overall_pass
+            else "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #c0293f, stop:1 #ff5c7a)"
         )
 
         self.setWindowTitle("Quality Check — PSD/PSB")
@@ -1264,7 +1656,9 @@ class PSDValidationDialog(QDialog):
 
         title_col = QVBoxLayout()
         title_col.setSpacing(2)
-        title_lbl = QLabel("Quality Check Passed" if overall_pass else "Quality Check Failed")
+        title_lbl = QLabel(
+            "Quality Check Passed" if overall_pass else "Quality Check Failed"
+        )
         title_lbl.setStyleSheet(
             "color: white; font-size: 19px; font-weight: 800; background: transparent;"
         )
@@ -1294,7 +1688,9 @@ class PSDValidationDialog(QDialog):
             return chip
 
         if result.canvas_size:
-            chip_row.addWidget(_make_chip(f"📐  {result.canvas_size[0]} × {result.canvas_size[1]} px"))
+            chip_row.addWidget(
+                _make_chip(f"📐  {result.canvas_size[0]} × {result.canvas_size[1]} px")
+            )
         chip_row.addWidget(_make_chip(f"✓  {passed_count} passed"))
         if failed_count:
             chip_row.addWidget(_make_chip(f"✕  {failed_count} failed"))
@@ -1343,11 +1739,13 @@ class PSDValidationDialog(QDialog):
 
         note_lbl = QLabel(
             "All checks passed. Proceed with uploading this file to the NAS?"
-            if overall_pass else
-            "One or more checks failed. Do you still want to proceed with uploading this file to the NAS?"
+            if overall_pass
+            else "One or more checks failed. Do you still want to proceed with uploading this file to the NAS?"
         )
         note_lbl.setWordWrap(True)
-        note_lbl.setStyleSheet("color: #9aa0b4; font-size: 11.5px; background: transparent;")
+        note_lbl.setStyleSheet(
+            "color: #9aa0b4; font-size: 11.5px; background: transparent;"
+        )
         footer_layout.addWidget(note_lbl)
 
         btn_row = QHBoxLayout()
@@ -1438,7 +1836,9 @@ class PSDValidationDialog(QDialog):
         proceed_shadow = QGraphicsDropShadowEffect(self.proceed_btn)
         proceed_shadow.setBlurRadius(24)
         proceed_shadow.setOffset(0, 4)
-        proceed_shadow.setColor(QColor(*(61, 220, 151) if overall_pass else (255, 92, 122), 140))
+        proceed_shadow.setColor(
+            QColor(*(61, 220, 151) if overall_pass else (255, 92, 122), 140)
+        )
         self.proceed_btn.setGraphicsEffect(proceed_shadow)
 
         self.proceed_btn.clicked.connect(self.accept)
@@ -1457,7 +1857,9 @@ class PSDValidationDialog(QDialog):
     @staticmethod
     def _copy_report(file_path, result):
         try:
-            QApplication.clipboard().setText(format_psd_validation_report(file_path, result))
+            QApplication.clipboard().setText(
+                format_psd_validation_report(file_path, result)
+            )
         except Exception as e:
             logger.warning(f"[PSD Validation] Failed to copy report to clipboard: {e}")
 
@@ -1499,7 +1901,7 @@ def request_psd_upload_confirmation(file_path, result: "PSDValidationResult"):
 _TRANSFER_MONITOR_LOCK = Lock()
 _CURRENT_TRANSFER_STATS = {
     "active": False,
-    "action": None,       # "download" or "upload"
+    "action": None,  # "download" or "upload"
     "file_name": None,
     "file_type": None,
     "file_size_mb": 0.0,
@@ -1507,6 +1909,7 @@ _CURRENT_TRANSFER_STATS = {
     "percent": 0,
     "elapsed_sec": 0.0,
     "eta_text": "-",
+    "backend": "sftp",
 }
 
 
@@ -1530,21 +1933,32 @@ def _format_elapsed(seconds: float) -> str:
         return "-"
 
 
-def _update_transfer_stats(action: str, file_name: str, speed_mbps: float, percent: int,
-                            file_size_mb: float = 0.0, elapsed_sec: float = 0.0, eta_text: str = "-"):
+def _update_transfer_stats(
+    action: str,
+    file_name: str,
+    speed_mbps: float,
+    percent: int,
+    file_size_mb: float = 0.0,
+    elapsed_sec: float = 0.0,
+    eta_text: str = "-",
+    backend: str = "sftp",
+):
     """Called from the download/upload progress callbacks to record current speed/size/ETA."""
     with _TRANSFER_MONITOR_LOCK:
-        _CURRENT_TRANSFER_STATS.update({
-            "active": True,
-            "action": action,
-            "file_name": file_name,
-            "file_type": _file_type_of(file_name),
-            "file_size_mb": file_size_mb,
-            "speed_mbps": speed_mbps,
-            "percent": percent,
-            "elapsed_sec": elapsed_sec,
-            "eta_text": eta_text,
-        })
+        _CURRENT_TRANSFER_STATS.update(
+            {
+                "active": True,
+                "action": action,
+                "file_name": file_name,
+                "file_type": _file_type_of(file_name),
+                "file_size_mb": file_size_mb,
+                "speed_mbps": speed_mbps,
+                "percent": percent,
+                "elapsed_sec": elapsed_sec,
+                "eta_text": eta_text,
+                "backend": backend,
+            }
+        )
 
 
 def _clear_transfer_stats():
@@ -1601,7 +2015,9 @@ def _tcp_check(host: str, port: int, timeout: float = 3.0):
                 pass
 
 
-def build_network_diagnostics_report(issue_type: str, summary: str, context: dict = None, error: str = None) -> str:
+def build_network_diagnostics_report(
+    issue_type: str, summary: str, context: dict = None, error: str = None
+) -> str:
     """
     Builds a full, human-readable diagnostics report suitable for a screenshot
     or copy/paste to the development team: who/what/where, plus live
@@ -1627,7 +2043,9 @@ def build_network_diagnostics_report(issue_type: str, summary: str, context: dic
     if isinstance(USER_SYSTEM_INFO, dict):
         identifiers = USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
     hostname = identifiers.get("hostname") or socket.gethostname()
-    ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
+    ip_address = (
+        identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
+    )
 
     lines.append("-- User / System --")
     lines.append(f"User: {username}")
@@ -1652,7 +2070,21 @@ def build_network_diagnostics_report(issue_type: str, summary: str, context: dic
     )
 
     try:
-        api_host = BASE_DOMAIN.replace("https://", "").replace("http://", "").split("/")[0]
+        _s3_url = urlparse(S3_ENDPOINT)
+        _s3_host = _s3_url.hostname or "192.168.2.199"
+        _s3_port = _s3_url.port or (443 if _s3_url.scheme == "https" else 80)
+        s3_ok, s3_latency, s3_err = _tcp_check(_s3_host, _s3_port)
+        lines.append(
+            f"Rclone S3 ({_s3_host}:{_s3_port}): "
+            + (f"Reachable — {s3_latency} ms" if s3_ok else f"UNREACHABLE — {s3_err}")
+        )
+    except Exception as s3_diag_err:
+        lines.append(f"Rclone S3 ({S3_ENDPOINT}): diagnostic failed — {s3_diag_err}")
+
+    try:
+        api_host = (
+            BASE_DOMAIN.replace("https://", "").replace("http://", "").split("/")[0]
+        )
     except Exception:
         api_host = BASE_DOMAIN
     api_ok, api_latency, api_err = _tcp_check(api_host, 443)
@@ -1664,7 +2096,11 @@ def build_network_diagnostics_report(issue_type: str, summary: str, context: dic
     gchat_ok, gchat_latency, gchat_err = _tcp_check("chat.googleapis.com", 443)
     lines.append(
         f"Google Chat (chat.googleapis.com:443): "
-        + (f"Reachable — {gchat_latency} ms" if gchat_ok else f"UNREACHABLE — {gchat_err}")
+        + (
+            f"Reachable — {gchat_latency} ms"
+            if gchat_ok
+            else f"UNREACHABLE — {gchat_err}"
+        )
     )
 
     inet_ok, inet_latency, inet_err = _tcp_check("8.8.8.8", 53)
@@ -1717,7 +2153,9 @@ class NetworkAlarmWindow(QDialog):
 
     def __init__(self):
         super().__init__(None)
-        self._entries = []  # list of (timestamp_str, summary, report_text) — newest first
+        self._entries = (
+            []
+        )  # list of (timestamp_str, summary, report_text) — newest first
         self._alert_count = 0
 
         self.setWindowTitle("⚠ PremediaApp — Network / Server Alarms")
@@ -1754,7 +2192,9 @@ class NetworkAlarmWindow(QDialog):
 
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setFont(QFont("Consolas" if platform.system() == "Windows" else "Monospace", 10))
+        self.text_edit.setFont(
+            QFont("Consolas" if platform.system() == "Windows" else "Monospace", 10)
+        )
         layout.addWidget(self.text_edit)
 
         btn_row = QHBoxLayout()
@@ -1851,16 +2291,21 @@ _LAST_ALARM_TIME = {}
 _ALARM_WINDOW_VISIBLE_LOCK = Lock()
 _ALARM_WINDOW_VISIBLE = False
 
+
 def _set_alarm_window_visible(is_visible: bool):
     global _ALARM_WINDOW_VISIBLE
     with _ALARM_WINDOW_VISIBLE_LOCK:
         _ALARM_WINDOW_VISIBLE = is_visible
 
+
 def _is_alarm_window_visible() -> bool:
     with _ALARM_WINDOW_VISIBLE_LOCK:
         return _ALARM_WINDOW_VISIBLE
 
-def raise_network_alarm(issue_type: str, summary: str, context: dict = None, error: str = None):
+
+def raise_network_alarm(
+    issue_type: str, summary: str, context: dict = None, error: str = None
+):
     """
     Raises a popup alarm (with sound + full diagnostics) for network/server
     problems: can't reach Google Chat, can't reach the NAS/server, server
@@ -1876,7 +2321,9 @@ def raise_network_alarm(issue_type: str, summary: str, context: dict = None, err
     with _ALARM_LOCK:
         last = _LAST_ALARM_TIME.get(issue_type, 0)
         if _is_alarm_window_visible() and (now - last < ALARM_COOLDOWN_SEC):
-            logger.debug(f"[Alarm] Suppressed duplicate '{issue_type}' alarm (cooldown active)")
+            logger.debug(
+                f"[Alarm] Suppressed duplicate '{issue_type}' alarm (cooldown active)"
+            )
             return
         _LAST_ALARM_TIME[issue_type] = now
 
@@ -1891,7 +2338,12 @@ def raise_network_alarm(issue_type: str, summary: str, context: dict = None, err
     # The download/upload card had no idea anything was wrong and just kept
     # showing whatever progress % it last received — looking "frozen" or
     # "stuck" to the user instead of clearly indicating the network dropped.
-    if issue_type in ("ServerUnreachable", "ServerSlow", "ServerLatencyAbnormal", "TransferSlow"):
+    if issue_type in (
+        "ServerUnreachable",
+        "ServerSlow",
+        "ServerLatencyAbnormal",
+        "TransferSlow",
+    ):
         try:
             ctx = context or {}
             file_name = ctx.get("File")
@@ -1910,7 +2362,9 @@ def raise_network_alarm(issue_type: str, summary: str, context: dict = None, err
             logger.debug(f"[Alarm] Could not surface alarm on transfer UI: {ui_err}")
 
     try:
-        report_text = build_network_diagnostics_report(issue_type, summary, context, error)
+        report_text = build_network_diagnostics_report(
+            issue_type, summary, context, error
+        )
     except Exception as e:
         report_text = f"Failed to build full diagnostics report: {e}\n\nOriginal issue: {issue_type} - {summary}"
 
@@ -1918,7 +2372,9 @@ def raise_network_alarm(issue_type: str, summary: str, context: dict = None, err
     app_signals.network_alarm.emit(summary, report_text)
 
 
-def report_api_failure(api_name: str, url: str, status_code=None, response_text=None, error: str = None):
+def report_api_failure(
+    api_name: str, url: str, status_code=None, response_text=None, error: str = None
+):
     """
     Notifies Google Chat whenever a POST/GET API call fails — either a
     non-2xx status code or a request exception (timeout, connection error,
@@ -1936,7 +2392,9 @@ def report_api_failure(api_name: str, url: str, status_code=None, response_text=
     else:
         summary = f"API call failed: {api_name} — {error or 'Unknown error'}"
 
-    logger.error(f"[APIFailure] {summary} | url={url} | response={str(response_text)[:300]}")
+    logger.error(
+        f"[APIFailure] {summary} | url={url} | response={str(response_text)[:300]}"
+    )
     try:
         app_signals.append_log.emit(f"[APIFailure] {summary}")
     except Exception:
@@ -1961,7 +2419,9 @@ def report_api_failure(api_name: str, url: str, status_code=None, response_text=
         try:
             ok, result = send_google_chat_message(text, thread_key=thread_key)
             if not ok:
-                logger.warning(f"[APIFailure] Could not deliver failure report to Google Chat: {result}")
+                logger.warning(
+                    f"[APIFailure] Could not deliver failure report to Google Chat: {result}"
+                )
 
             raise_network_alarm(
                 "APICallFailed",
@@ -1975,9 +2435,13 @@ def report_api_failure(api_name: str, url: str, status_code=None, response_text=
                 error=error,
             )
         except Exception as e:
-            logger.warning(f"[APIFailure] Failed while reporting API failure for {api_name}: {e}")
+            logger.warning(
+                f"[APIFailure] Failed while reporting API failure for {api_name}: {e}"
+            )
 
-    threading.Thread(target=_worker, daemon=True, name=f"APIFailureReport-{api_name}").start()
+    threading.Thread(
+        target=_worker, daemon=True, name=f"APIFailureReport-{api_name}"
+    ).start()
 
 
 def _gchat_webhook_url_with_threading():
@@ -2122,9 +2586,13 @@ class TransferMonitorReporter:
         if self._thread and self._thread.is_alive():
             return
         self._stop_flag.clear()
-        self._thread = threading.Thread(target=self._run_loop, name="TransferMonitorReporter", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run_loop, name="TransferMonitorReporter", daemon=True
+        )
         self._thread.start()
-        logger.info(f"[TransferMonitorReporter] Started (interval={self.interval_sec}s)")
+        logger.info(
+            f"[TransferMonitorReporter] Started (interval={self.interval_sec}s)"
+        )
 
     def stop(self):
         self._stop_flag.set()
@@ -2153,9 +2621,12 @@ class TransferMonitorReporter:
                     file_size_mb=stats.get("file_size_mb", 0.0),
                     elapsed_sec=stats.get("elapsed_sec", 0.0),
                     eta_text=stats.get("eta_text", "-"),
+                    backend=stats.get("backend", "sftp"),
                 )
             except Exception as e:
-                logger.warning(f"[TransferMonitorReporter] Failed to build/send report: {e}")
+                logger.warning(
+                    f"[TransferMonitorReporter] Failed to build/send report: {e}"
+                )
 
 
 # Single shared instance — .start() is called once near app startup below.
@@ -2171,6 +2642,7 @@ def report_transfer_event(
     file_size_mb: float = 0.0,
     elapsed_sec: float = 0.0,
     eta_text: str = "-",
+    backend: str = "sftp",
 ):
     """
     Post one Google Chat message per event ("Started", "Progress",
@@ -2191,6 +2663,7 @@ def report_transfer_event(
 
     Runs on its own daemon thread so it never blocks the actual transfer.
     """
+
     def _worker():
         try:
             cache = load_cache()
@@ -2198,12 +2671,29 @@ def report_transfer_event(
 
             identifiers = {}
             if isinstance(USER_SYSTEM_INFO, dict):
-                identifiers = USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
+                identifiers = (
+                    USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
+                )
 
             hostname = identifiers.get("hostname") or socket.gethostname()
-            ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
+            ip_address = (
+                identifiers.get("ip_address")
+                or USER_SYSTEM_INFO.get("ip_address", "")
+                or ""
+            )
 
-            latency_ms = measure_latency_ms()
+            backend_name = (backend or "sftp").lower()
+            if backend_name == "s3":
+                parsed_s3 = urlparse(S3_ENDPOINT)
+                latency_host = parsed_s3.hostname or "192.168.2.199"
+                latency_port = parsed_s3.port or (
+                    443 if parsed_s3.scheme == "https" else 80
+                )
+                latency_ms = measure_latency_ms(latency_host, latency_port)
+            else:
+                latency_host = LATENCY_TARGET_HOST or NAS_IP
+                latency_port = LATENCY_TARGET_PORT or NAS_PORT
+                latency_ms = measure_latency_ms(latency_host, latency_port)
             latency_text = f"{latency_ms} ms" if latency_ms is not None else "N/A"
 
             alarm_context = {
@@ -2212,6 +2702,8 @@ def report_transfer_event(
                 "Event": event,
                 "Progress": f"{percent}%",
                 "Speed": f"{speed_mbps:.2f} MB/s",
+                "Backend": backend_name.upper(),
+                "Endpoint": f"{latency_host}:{latency_port}",
             }
 
             # ---- Alarm: NAS/server unreachable ("not able to ping server") ----
@@ -2221,8 +2713,8 @@ def report_transfer_event(
             # since a legitimate TCP-connect latency of exactly 0ms is not
             # realistically possible.
             if latency_ms is None or latency_ms == 0:
-                target_host = LATENCY_TARGET_HOST or NAS_IP
-                target_port = LATENCY_TARGET_PORT or NAS_PORT
+                target_host = latency_host
+                target_port = latency_port
                 raise_network_alarm(
                     "ServerUnreachable",
                     f"Cannot reach the server ({target_host}:{target_port}) — it may be down "
@@ -2251,7 +2743,11 @@ def report_transfer_event(
                 )
 
             # ---- Alarm: transfer speed is critically slow mid-transfer ----
-            if event == "Progress" and 0 < percent < 100 and 0 < speed_mbps < SPEED_WARNING_MBPS:
+            if (
+                event == "Progress"
+                and 0 < percent < 100
+                and 0 < speed_mbps < SPEED_WARNING_MBPS
+            ):
                 raise_network_alarm(
                     "TransferSlow",
                     f"Transfer speed is very slow ({speed_mbps:.2f} MB/s) for '{file_name}' — "
@@ -2316,7 +2812,9 @@ def report_transfer_event(
                 error=str(e),
             )
 
-    threading.Thread(target=_worker, daemon=True, name=f"TransferReport-{event}").start()
+    threading.Thread(
+        target=_worker, daemon=True, name=f"TransferReport-{event}"
+    ).start()
 
 
 def show_alert(title: str, message: str, icon=QMessageBox.Warning, parent=None):
@@ -2332,9 +2830,7 @@ def show_alert(title: str, message: str, icon=QMessageBox.Warning, parent=None):
     # ── FIX: WindowType and WindowState cannot be OR'd together in PySide6 ──
     # Set window flags (WindowType flags only)
     msg.setWindowFlags(
-        msg.windowFlags()
-        | Qt.WindowType.Window
-        | Qt.WindowType.WindowStaysOnTopHint
+        msg.windowFlags() | Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint
     )
     # Set window state separately (WindowState flags only)
     msg.setWindowState(Qt.WindowState.WindowActive)
@@ -2344,6 +2840,7 @@ def show_alert(title: str, message: str, icon=QMessageBox.Warning, parent=None):
     if platform.system() == "Windows":
         try:
             import ctypes
+
             msg.show()
             hwnd = int(msg.winId())
             ctypes.windll.user32.SetForegroundWindow(hwnd)
@@ -2356,6 +2853,7 @@ def show_alert(title: str, message: str, icon=QMessageBox.Warning, parent=None):
     msg.raise_()
     msg.activateWindow()
     return msg.exec()
+
 
 # === Custom Log Handler ===
 class LogWindowHandler(logging.Handler):
@@ -2373,17 +2871,22 @@ class LogWindowHandler(logging.Handler):
 
     def emit(self, record):
         msg = self.format(record)
-        if self.log_window and hasattr(app_signals, 'append_log'):
+        if self.log_window and hasattr(app_signals, "append_log"):
             try:
                 app_signals.append_log.emit(msg)
             except Exception as e:
                 self.log_queue.append(record)
-                logging.getLogger("PremediaApp").warning(f"Failed to emit log to LogWindow: {e}")
+                logging.getLogger("PremediaApp").warning(
+                    f"Failed to emit log to LogWindow: {e}"
+                )
         else:
             self.log_queue.append(record)
 
+
 # === Async Logging ===
 log_queue = Queue()
+
+
 def async_log_worker():
     global LOGGING_ACTIVE
     while LOGGING_ACTIVE:
@@ -2393,9 +2896,11 @@ def async_log_worker():
         logger = logging.getLogger(record.name)
         logger.handle(record)
 
+
 log_thread = threading.Thread(target=async_log_worker, daemon=True)
 
 # log_window_handler = None  # Global variable to store LogWindowHandler
+
 
 def setup_logger(log_window=None):
     logger = logging.getLogger("PremediaApp")
@@ -2406,7 +2911,9 @@ def setup_logger(log_window=None):
     # Add StreamHandler for fallback logging
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.INFO)
-    stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    stream_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    )
     logger.addHandler(stream_handler)
 
     # Add LogWindowHandler
@@ -2419,8 +2926,12 @@ def setup_logger(log_window=None):
     if log_window:
         log_window_handler.set_log_window(log_window)
         app_signals.append_log.connect(log_window.append_log, Qt.QueuedConnection)
-        app_signals.api_call_status.connect(log_window.append_api_status, Qt.QueuedConnection)
-        app_signals.update_timer_status.connect(log_window.update_timer_status, Qt.QueuedConnection)
+        app_signals.api_call_status.connect(
+            log_window.append_api_status, Qt.QueuedConnection
+        )
+        app_signals.update_timer_status.connect(
+            log_window.update_timer_status, Qt.QueuedConnection
+        )
         logger.info("Connected logger signals to LogWindow")
     else:
         logger.info("No LogWindow provided; using StreamHandler for logging")
@@ -2435,6 +2946,7 @@ def stop_logging():
     if log_thread.is_alive():
         log_thread.join(timeout=2.0)
 
+
 def load_icon(path, context=""):
     if not path:
         logger.error(f"No icon path provided for {context}")
@@ -2444,15 +2956,19 @@ def load_icon(path, context=""):
         return QIcon(path)
     if not Path(path).exists():
         logger.error(f"Icon file does not exist for {context}: {path}")
-        app_signals.append_log.emit(f"[Init] Icon file does not exist for {context}: {path}")
+        app_signals.append_log.emit(
+            f"[Init] Icon file does not exist for {context}: {path}"
+        )
         return QIcon()
     icon = QIcon(path)
     if icon.isNull():
         logger.error(f"Failed to load icon for {context}: {path}")
         app_signals.append_log.emit(f"[Init] Failed to load icon for {context}: {path}")
     return icon
-    
+
+
 CACHE_DAYS = 7
+
 
 def get_system_info():
     try:
@@ -2462,8 +2978,7 @@ def get_system_info():
         print("uname not found")
 
     info = {}
-    
-    
+
     # === CPU Info ===
     try:
         info["cpu"] = {
@@ -2471,14 +2986,14 @@ def get_system_info():
             "total_cores": psutil.cpu_count(logical=True),
             "max_frequency_mhz": psutil.cpu_freq().max if psutil.cpu_freq() else None,
             "min_frequency_mhz": psutil.cpu_freq().min if psutil.cpu_freq() else None,
-            "current_frequency_mhz": psutil.cpu_freq().current if psutil.cpu_freq() else None,
+            "current_frequency_mhz": (
+                psutil.cpu_freq().current if psutil.cpu_freq() else None
+            ),
             "cpu_usage_percent": psutil.cpu_percent(interval=None),
-            "per_core_usage_percent": psutil.cpu_percent(interval=None, percpu=True)
+            "per_core_usage_percent": psutil.cpu_percent(interval=None, percpu=True),
         }
     except Exception as e:
         info["cpu"] = {"error": str(e)}
-
-
 
     # === OS and System Info ===
     info["system"] = {
@@ -2493,43 +3008,53 @@ def get_system_info():
     try:
         system = platform.system().lower()
         if system == "darwin":  # macOS
-            print('darwin')
-            serial = subprocess.check_output(["system_profiler", "SPHardwareDataType"], text=True)
-            info["system"]["hardware_serial"] = next((line.split(":")[1].strip()
-                                                    for line in serial.splitlines()
-                                                    if "Serial Number" in line), None)
+            print("darwin")
+            serial = subprocess.check_output(
+                ["system_profiler", "SPHardwareDataType"], text=True
+            )
+            info["system"]["hardware_serial"] = next(
+                (
+                    line.split(":")[1].strip()
+                    for line in serial.splitlines()
+                    if "Serial Number" in line
+                ),
+                None,
+            )
         elif system == "windows":
             serial = subprocess.check_output(
                 ["wmic", "bios", "get", "serialnumber"],
                 text=True,
-                timeout=5,          # ADD timeout — wmic hangs on some machines
-                creationflags=subprocess.CREATE_NO_WINDOW  # don't flash a console
+                timeout=5,  # ADD timeout — wmic hangs on some machines
+                creationflags=subprocess.CREATE_NO_WINDOW,  # don't flash a console
             )
             lines = [line.strip() for line in serial.split("\n") if line.strip()]
             if len(lines) >= 2:
                 # First line is usually "SerialNumber", second is actual value
                 info["system"]["hardware_serial"] = lines[1]
             else:
-                info["system"]["hardware_serial"] = 'None'
-            
+                info["system"]["hardware_serial"] = "None"
+
     except Exception:
-        info["system"]["hardware_serial"] = 'None'
-        
-        
+        info["system"]["hardware_serial"] = "None"
+
     # === System Identifiers ===
     try:
         if platform.system().lower() == "windows":
             info["identifiers"] = {
                 "hostname": socket.gethostname(),
                 "ip_address": socket.gethostbyname(socket.gethostname()),
-                "mac_address": ':'.join(['{:02x}'.format((uuid.getnode() >> elements) & 0xff)
-                                        for elements in range(0, 2 * 6, 8)][::-1]),
-                "uuid": str(uuid.uuid1())
+                "mac_address": ":".join(
+                    [
+                        "{:02x}".format((uuid.getnode() >> elements) & 0xFF)
+                        for elements in range(0, 2 * 6, 8)
+                    ][::-1]
+                ),
+                "uuid": str(uuid.uuid1()),
             }
         elif platform.system().lower() == "darwin":
             # safer way to get local IP address
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.settimeout(3)          # ADD 3 second timeout
+            s.settimeout(3)  # ADD 3 second timeout
             try:
                 s.connect(("8.8.8.8", 80))
                 ip_address = s.getsockname()[0]
@@ -2539,14 +3064,16 @@ def get_system_info():
             info["identifiers"] = {
                 "hostname": socket.gethostname(),
                 "ip_address": ip_address,
-                "mac_address": ':'.join(['{:02x}'.format((uuid.getnode() >> elements) & 0xff)
-                                        for elements in range(0, 2 * 6, 8)][::-1]),
-                "uuid": str(uuid.uuid1())
+                "mac_address": ":".join(
+                    [
+                        "{:02x}".format((uuid.getnode() >> elements) & 0xFF)
+                        for elements in range(0, 2 * 6, 8)
+                    ][::-1]
+                ),
+                "uuid": str(uuid.uuid1()),
             }
     except Exception as e:
         info["identifiers"] = {"error": str(e)}
-
-
 
     # === Additional macOS/Windows Specific Info ===
     try:
@@ -2554,28 +3081,38 @@ def get_system_info():
         net_if_stats = psutil.net_if_stats()
         network_info = []
         for interface_name, addrs in net_if_addrs.items():
-            iface = {"name": interface_name, "mac": None, "ipv4": [], "ipv6": [], "is_up": False}
+            iface = {
+                "name": interface_name,
+                "mac": None,
+                "ipv4": [],
+                "ipv6": [],
+                "is_up": False,
+            }
             for addr in addrs:
                 if addr.family == socket.AF_INET:
-                    iface["ipv4"].append({
-                        "address": addr.address,
-                        "netmask": addr.netmask,
-                        "broadcast": addr.broadcast
-                    })
+                    iface["ipv4"].append(
+                        {
+                            "address": addr.address,
+                            "netmask": addr.netmask,
+                            "broadcast": addr.broadcast,
+                        }
+                    )
                 elif addr.family == socket.AF_INET6:
-                    iface["ipv6"].append({
-                        "address": addr.address.split('%')[0],
-                        "netmask": addr.netmask
-                    })
+                    iface["ipv6"].append(
+                        {"address": addr.address.split("%")[0], "netmask": addr.netmask}
+                    )
                 elif getattr(psutil, "AF_LINK", None) and addr.family == psutil.AF_LINK:
                     iface["mac"] = addr.address
-            iface["is_up"] = net_if_stats.get(interface_name, None) and net_if_stats[interface_name].isup
+            iface["is_up"] = (
+                net_if_stats.get(interface_name, None)
+                and net_if_stats[interface_name].isup
+            )
             network_info.append(iface)
         info["network"] = network_info
         data = {}
         data["ip_address"] = info.get("identifiers", {}).get("ip_address", "")
         data["mac_address"] = info.get("identifiers", {}).get("mac_address", "")
-        
+
         mac_address = info.get("identifiers", {}).get("mac_address", "")
         if mac_address:
             encoded_mac = hashlib.md5(mac_address.encode()).hexdigest()
@@ -2583,7 +3120,7 @@ def get_system_info():
             encoded_mac = ""
 
         data["encoded_mac"] = encoded_mac
-        
+
         data["details"] = info
         global USER_SYSTEM_INFO
         USER_SYSTEM_INFO = data
@@ -2604,8 +3141,9 @@ def get_default_cache():
         "data": "",
         "downloaded_files": {},
         "uploaded_files": [],
-        "created_at": int(time.time())  # only when initialized
+        "created_at": int(time.time()),  # only when initialized
     }
+
 
 # def initialize_cache():
 #     """Create a new cache file safely."""
@@ -2617,6 +3155,7 @@ def get_default_cache():
 #     except OSError as e:
 #         print(f"[WARN] Could not initialize cache file: {e}")
 #     return cache
+
 
 def initialize_cache():
     """Create a new cache file safely and reset in-memory cache."""
@@ -2631,6 +3170,7 @@ def initialize_cache():
     _MEMORY_CACHE = cache
     _MEMORY_CACHE_DIRTY = False
     return cache
+
 
 # def load_cache():
 #     """Load cache safely. If missing/corrupted, reinitialize."""
@@ -2687,6 +3227,7 @@ def load_cache():
 #     except OSError as e:
 #         print(f"[WARN] Could not save cache file: {e}")
 
+
 def save_cache(cache, significant_change=True):
     """
     Update in-memory cache immediately.
@@ -2708,6 +3249,7 @@ def save_cache(cache, significant_change=True):
             _MEMORY_CACHE_DIRTY = True
     else:
         _MEMORY_CACHE_DIRTY = True
+
 
 def get_cache_age(cache):
     """Get cache age in seconds."""
@@ -2733,12 +3275,15 @@ def parse_custom_url():
         query_params = parse_qs(parsed_url.query)
         key = query_params.get("key", [""])[0]
         logger.info(f"Parsed key: {key[:8]}..." if key else "No key found")
-        app_signals.append_log.emit(f"[Init] Parsed key: {key[:8]}..." if key else "[Init] No key found")
+        app_signals.append_log.emit(
+            f"[Init] Parsed key: {key[:8]}..." if key else "[Init] No key found"
+        )
         return key
     except Exception as e:
         logger.error(f"Error parsing custom URL: {e}")
         app_signals.append_log.emit(f"[Init] Failed to parse custom URL: {str(e)}")
         return ""
+
 
 def validate_user(access_key, status_bar=None):
     """
@@ -2755,56 +3300,71 @@ def validate_user(access_key, status_bar=None):
         if not access_key:
             access_key = "e0d6aa4baffc84333faa65356d78e439"
             logger.info("No access_key provided, using default key")
-            app_signals.append_log.emit("[API Scan] No access_key provided, using default key")
-        
+            app_signals.append_log.emit(
+                "[API Scan] No access_key provided, using default key"
+            )
+
         machine_id = USER_SYSTEM_INFO.get("encoded_mac", "")
         cache = load_cache()
         validation_url = USER_VALIDATE_URL
-        logger.debug(f"Validating user with access_key: {access_key[:8]}... at {validation_url}")
-        app_signals.append_log.emit(f"[API Scan] Validating user with access_key: {access_key[:8]}...")
-        
+        logger.debug(
+            f"Validating user with access_key: {access_key[:8]}... at {validation_url}"
+        )
+        app_signals.append_log.emit(
+            f"[API Scan] Validating user with access_key: {access_key[:8]}..."
+        )
+
         resp = HTTP_SESSION.get(
             validation_url,
             params={"key": access_key, "machine_id": machine_id},
             # headers={"Authorization": f"Bearer {cache.get('token', '')}"},
             verify=False,  # Replace with verify="/path/to/server-ca.pem" in production
-            timeout=30
+            timeout=30,
         )
         print(f"Request URL: {resp.url}")
         app_signals.api_call_status.emit(
             validation_url,
             f"Status: {resp.status_code}, Response: {resp.text}",
-            resp.status_code
+            resp.status_code,
         )
-        app_signals.append_log.emit(f"[API Scan] User validation API response: {resp.status_code}")
-        
+        app_signals.append_log.emit(
+            f"[API Scan] User validation API response: {resp.status_code}"
+        )
+
         if status_bar:
             status_bar.showMessage(f"User validation API response: {resp.status_code}")
-        
+
         resp.raise_for_status()
         result = resp.json()
         if result.get("status") == 403:
             return result
-        
+
         if not result.get("uuid"):
-            raise ValueError(f"Validation failed: {result.get('message', 'No uuid in response')}")
-        
+            raise ValueError(
+                f"Validation failed: {result.get('message', 'No uuid in response')}"
+            )
+
         logger.info("User validation successful")
         app_signals.append_log.emit("[API Scan] User validation successful")
         return result  # Return full API response as per original function
-    
+
     except Exception as e:
         logger.error(f"User validation error: {e}")
-        app_signals.append_log.emit(f"[API Scan] Failed: User validation error - {str(e)}")
+        app_signals.append_log.emit(
+            f"[API Scan] Failed: User validation error - {str(e)}"
+        )
         if status_bar:
             status_bar.showMessage(f"User validation failed: {str(e)}")
         return {"status": False, "message": str(e), "user": "", "token": ""}
+
 
 def create_folders_from_response(response):
     try:
         cache = load_cache()
         projects = cache.get("user_data", {}).get("projects", [])
-        project_name = response.get("project_name", response.get("name", "unknown")).replace(" ", "_")
+        project_name = response.get(
+            "project_name", response.get("name", "unknown")
+        ).replace(" ", "_")
         client_name = response.get("client_name", "").replace(" ", "_")
         project_path = BASE_TARGET_DIR / client_name / project_name
         project_path.mkdir(parents=True, exist_ok=True)
@@ -2817,6 +3377,7 @@ def create_folders_from_response(response):
         logger.error(f"Failed to create folders: {e}")
         app_signals.append_log.emit(f"[Folder] Failed to create folders: {str(e)}")
 
+
 def start_timer_api(file_path, token):
     try:
         response = HTTP_SESSION.post(
@@ -2824,20 +3385,27 @@ def start_timer_api(file_path, token):
             json={"file_path": file_path},
             headers={"Authorization": f"Bearer {token}"},
             verify=False,
-            timeout=30
+            timeout=30,
         )
         app_signals.api_call_status.emit(
             f"{BASE_DOMAIN}/api/ir_production/timer/start",
-            "Success" if response.status_code == 200 else f"Failed: {response.status_code}",
-            response.status_code
+            (
+                "Success"
+                if response.status_code == 200
+                else f"Failed: {response.status_code}"
+            ),
+            response.status_code,
         )
-        app_signals.append_log.emit(f"[API Scan] Timer start API response: {response.status_code}")
+        app_signals.append_log.emit(
+            f"[API Scan] Timer start API response: {response.status_code}"
+        )
         response.raise_for_status()
         return response.json()
     except Exception as e:
         logger.error(f"Failed to start timer: {e}")
         app_signals.append_log.emit(f"[API Scan] Failed to start timer: {str(e)}")
         return None
+
 
 def end_timer_api(file_path, timer_response, token):
     try:
@@ -2846,20 +3414,27 @@ def end_timer_api(file_path, timer_response, token):
             json={"file_path": file_path, "timer_response": timer_response},
             headers={"Authorization": f"Bearer {token}"},
             verify=False,
-            timeout=30
+            timeout=30,
         )
         app_signals.api_call_status.emit(
             f"{BASE_DOMAIN}/api/ir_production/timer/end",
-            "Success" if response.status_code == 200 else f"Failed: {response.status_code}",
-            response.status_code
+            (
+                "Success"
+                if response.status_code == 200
+                else f"Failed: {response.status_code}"
+            ),
+            response.status_code,
         )
-        app_signals.append_log.emit(f"[API Scan] Timer end API response: {response.status_code}")
+        app_signals.append_log.emit(
+            f"[API Scan] Timer end API response: {response.status_code}"
+        )
         response.raise_for_status()
         return response.json()
     except Exception as e:
         logger.error(f"Failed to end timer: {e}")
         app_signals.append_log.emit(f"[API Scan] Failed to end timer: {str(e)}")
         return None
+
 
 # def connect_to_nas():
 #     if not NAS_AVAILABLE:
@@ -2894,12 +3469,12 @@ def end_timer_api(file_path, timer_response, token):
 #             sftp.makedirs(nas_parent, mode=0o770)
 #             logger.info(f"Created directory {nas_parent} with permissions 770")
 #             app_signals.append_log.emit(f"[Transfer] Created directory {nas_parent} with permissions 770")
-        
+
 #         # Test write access
 #         temp_file = f"{nas_parent}/.test_write_{int(time.time())}.tmp"
 #         sftp.open(temp_file, 'w').close()
 #         sftp.remove(temp_file)
-        
+
 #         # Handle existing file
 #         try:
 #             stat = sftp.stat(nas_path)
@@ -2916,7 +3491,7 @@ def end_timer_api(file_path, timer_response, token):
 #                 app_signals.append_log.emit(f"[Transfer] Removed existing file {nas_path} due to permission issue")
 #         except FileNotFoundError:
 #             pass  # File doesn't exist, which is fine
-        
+
 #         logger.info(f"Write permission confirmed for {nas_parent}")
 #         app_signals.append_log.emit(f"[Transfer] Write permission confirmed for {nas_parent}")
 #         return True
@@ -2931,7 +3506,9 @@ TIMEOUT = 1000  # seconds
 
 
 def call_api(api_url, payload, local_file_path=None):
-    logger.info("+++++++++++++++++++++++++++++++ Posting operator upload ++++++++++++++++++++++++++++++")
+    logger.info(
+        "+++++++++++++++++++++++++++++++ Posting operator upload ++++++++++++++++++++++++++++++"
+    )
     attempt = 0
     while attempt < MAX_RETRIES:
         files = None
@@ -2942,11 +3519,17 @@ def call_api(api_url, payload, local_file_path=None):
                     logger.error(f"File not found: {local_file_path}")
                     return {"error": "File not found"}
                 mime_type, _ = mimetypes.guess_type(local_file_path)
-                mime_type = mime_type or 'application/octet-stream'
+                mime_type = mime_type or "application/octet-stream"
                 files = {
-                    'creative_files': (file_name, open(local_file_path, 'rb'), mime_type)
+                    "creative_files": (
+                        file_name,
+                        open(local_file_path, "rb"),
+                        mime_type,
+                    )
                 }
-                logger.debug(f"File Name: {file_name}, MIME Type: {mime_type}, File Size: {os.path.getsize(local_file_path)} bytes")
+                logger.debug(
+                    f"File Name: {file_name}, MIME Type: {mime_type}, File Size: {os.path.getsize(local_file_path)} bytes"
+                )
             logger.debug(f"Payload being sent: {payload}")
             logger.debug(f"Files being sent: {'Yes' if files else 'No'}")
             with httpx.Client(timeout=TIMEOUT, verify=False) as client:
@@ -2955,8 +3538,10 @@ def call_api(api_url, payload, local_file_path=None):
             logger.debug(f"Response Text: {response.text[:500]}...")
             if response.status_code >= 400:
                 report_api_failure(
-                    "operator_upload", api_url,
-                    status_code=response.status_code, response_text=response.text
+                    "operator_upload",
+                    api_url,
+                    status_code=response.status_code,
+                    response_text=response.text,
                 )
             response.raise_for_status()
             return response.json()
@@ -2964,7 +3549,7 @@ def call_api(api_url, payload, local_file_path=None):
             logger.warning(f"[Attempt {attempt+1}] Request error: {req_err}")
             attempt += 1
             if attempt < MAX_RETRIES:
-                sleep_time = RETRY_BACKOFF ** attempt
+                sleep_time = RETRY_BACKOFF**attempt
                 logger.debug(f"Retrying after {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
             else:
@@ -2979,8 +3564,11 @@ def call_api(api_url, payload, local_file_path=None):
                 for _, file_obj, _ in files.values():
                     file_obj.close()
 
+
 def call_api_qc_qa(api_url, payload, local_file_path=None):
-    logger.info("_____________________________ Posting Qc Qa Replace _______________________")
+    logger.info(
+        "_____________________________ Posting Qc Qa Replace _______________________"
+    )
     attempt = 0
     while attempt < MAX_RETRIES:
         files = None
@@ -2991,11 +3579,11 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
                     logger.error(f"File not found: {local_file_path}")
                     return {"error": "File not found"}
                 mime_type, _ = mimetypes.guess_type(local_file_path)
-                mime_type = mime_type or 'application/octet-stream'
-                files = {
-                    'files[]': (file_name, open(local_file_path, 'rb'), mime_type)
-                }
-                logger.debug(f"File Name: {file_name}, MIME Type: {mime_type}, File Size: {os.path.getsize(local_file_path)} bytes")
+                mime_type = mime_type or "application/octet-stream"
+                files = {"files[]": (file_name, open(local_file_path, "rb"), mime_type)}
+                logger.debug(
+                    f"File Name: {file_name}, MIME Type: {mime_type}, File Size: {os.path.getsize(local_file_path)} bytes"
+                )
             logger.debug(f"Payload being sent: {payload}")
             logger.debug(f"Files being sent: {'Yes' if files else 'No'}")
             with httpx.Client(timeout=TIMEOUT, verify=False) as client:
@@ -3004,8 +3592,10 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
             logger.debug(f"Response Text: {response.text[:500]}...")
             if response.status_code >= 400:
                 report_api_failure(
-                    "qc_qa_replace", api_url,
-                    status_code=response.status_code, response_text=response.text
+                    "qc_qa_replace",
+                    api_url,
+                    status_code=response.status_code,
+                    response_text=response.text,
                 )
             response.raise_for_status()
             return response.json()
@@ -3013,7 +3603,7 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
             logger.warning(f"[Attempt {attempt+1}] Request error: {req_err}")
             attempt += 1
             if attempt < MAX_RETRIES:
-                sleep_time = RETRY_BACKOFF ** attempt
+                sleep_time = RETRY_BACKOFF**attempt
                 logger.debug(f"Retrying after {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
             else:
@@ -3030,49 +3620,63 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
 
 
 def post_metadata_to_api_upload(spec_id, user_id):
-    logger.info("============================ Posting Metadata to Upload API ==============================")
-    
+    logger.info(
+        "============================ Posting Metadata to Upload API =============================="
+    )
+
     try:
         payload = {
-            'business': 'image_retouching',
-            'operator_uid': user_id,
-            'spec_id': spec_id
+            "business": "image_retouching",
+            "operator_uid": user_id,
+            "spec_id": spec_id,
         }
         response = requests.post(API_URL_UPLOAD, json=payload, verify=False)
         logger.info(response)
         if response.status_code == 200:
             logger.info(f"Successfully posted metadata to API (Upload).")
         else:
-            logger.error(f"Failed to post metadata to API (Upload): {response.status_code} {response.text}")
+            logger.error(
+                f"Failed to post metadata to API (Upload): {response.status_code} {response.text}"
+            )
             report_api_failure(
-                "post_metadata_upload", API_URL_UPLOAD,
-                status_code=response.status_code, response_text=response.text
+                "post_metadata_upload",
+                API_URL_UPLOAD,
+                status_code=response.status_code,
+                response_text=response.text,
             )
     except Exception as e:
         logger.error(f"Error posting metadata to API (Upload): {e}")
         report_api_failure("post_metadata_upload", API_URL_UPLOAD, error=str(e))
 
 
-def post_api(api_url,payload):
-    logger.info("-------------------------------------------------- Posting update -------------------------------")
-    try:        
+def post_api(api_url, payload):
+    logger.info(
+        "-------------------------------------------------- Posting update -------------------------------"
+    )
+    try:
         response = requests.post(api_url, data=payload, verify=False)
         logger.info(response)
         if response.status_code == 200:
             logger.info(f"Successfully posted metadata to API (Upload).")
         else:
-            logger.error(f"Failed to post metadata to API (Upload): {response.status_code} {response.text}")
+            logger.error(
+                f"Failed to post metadata to API (Upload): {response.status_code} {response.text}"
+            )
             report_api_failure(
-                "post_api", api_url,
-                status_code=response.status_code, response_text=response.text
+                "post_api",
+                api_url,
+                status_code=response.status_code,
+                response_text=response.text,
             )
     except Exception as e:
         logger.error(f"Error posting metadata to API (Upload): {e}")
         report_api_failure("post_api", api_url, error=str(e))
 
 
-def update_download_upload_metadata(task_id, request_status, retries=3, timeout=10.0, base_retry_delay=2):
-   
+def update_download_upload_metadata(
+    task_id, request_status, retries=3, timeout=10.0, base_retry_delay=2
+):
+
     payload = {"id": task_id, "request_status": request_status}
     headers = {"Content-Type": "application/json"}
 
@@ -3085,7 +3689,9 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
                 verify=False,
                 timeout=timeout,
             )
-            print(f"================================================ Status Code {task_id} : {request_status}")
+            print(
+                f"================================================ Status Code {task_id} : {request_status}"
+            )
             if response.status_code == 200:
                 return response.json()
 
@@ -3094,18 +3700,28 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
             )
             if attempt == retries:
                 report_api_failure(
-                    "update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE,
-                    status_code=response.status_code, response_text=response.text
+                    "update_download_upload_metadata",
+                    API_URL_UPLOAD_DOWNLOAD_UPDATE,
+                    status_code=response.status_code,
+                    response_text=response.text,
                 )
 
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             logger.error(f"Attempt {attempt}: Request error -> {e}")
             if attempt == retries:
-                report_api_failure("update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE, error=str(e))
+                report_api_failure(
+                    "update_download_upload_metadata",
+                    API_URL_UPLOAD_DOWNLOAD_UPDATE,
+                    error=str(e),
+                )
         except Exception as e:
             logger.error(f"Attempt {attempt}: Unexpected error -> {e}")
             if attempt == retries:
-                report_api_failure("update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE, error=str(e))
+                report_api_failure(
+                    "update_download_upload_metadata",
+                    API_URL_UPLOAD_DOWNLOAD_UPDATE,
+                    error=str(e),
+                )
 
         if attempt < retries:
             delay = base_retry_delay * (2 ** (attempt - 1))  # exponential backoff
@@ -3113,13 +3729,16 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
 
     return {"error": "Failed after retries"}
 
+
 def get_file_types_from_api(job_id):
     api_url = f"{FILE_FORMAT_API}?job_id={job_id}"
     try:
         cache = load_cache()
-        token = cache.get('token', '')
+        token = cache.get("token", "")
         headers = {"Authorization": f"Bearer {token}"}
-        format_response = HTTP_SESSION.get(api_url, headers=headers, verify=False, timeout=60)
+        format_response = HTTP_SESSION.get(
+            api_url, headers=headers, verify=False, timeout=60
+        )
         try:
             response_data = format_response.json()
             print(response_data)
@@ -3127,17 +3746,21 @@ def get_file_types_from_api(job_id):
 
             if response_data:
                 return response_data
-            else: False
+            else:
+                False
         except:
             False
     except:
         print(f"=============API GET FORMAT FAILS=============={response_data}========")
         return False
 
+
 # ===================== image convertion logic =====================
 
+
 def sanitize_filename(filename):
-    return re.sub(r'[^\w\-.]', '_', filename)
+    return re.sub(r"[^\w\-.]", "_", filename)
+
 
 def get_file_hash(file_path):
     """Calculate SHA256 hash of a file for integrity check."""
@@ -3150,6 +3773,7 @@ def get_file_hash(file_path):
     except Exception as e:
         logger.error(f"Failed to compute hash for {file_path}: {e}")
         return None
+
 
 # def check_nas_write_permission(sftp, nas_path):
 #     """Verify and set write permission for NAS directory and file."""
@@ -3170,12 +3794,12 @@ def get_file_hash(file_path):
 #             sftp.makedirs(nas_parent, mode=0o777)
 #             logger.info(f"Created directory {nas_parent} with permissions 777")
 #             app_signals.append_log.emit(f"[Transfer] Created directory {nas_parent} with permissions 777")
-        
+
 #         # Test write access
 #         temp_file = f"{nas_parent}/.test_write_{int(time.time())}.tmp"
 #         sftp.open(temp_file, 'w').close()
 #         sftp.remove(temp_file)
-        
+
 #         # Handle existing file
 #         try:
 #             stat = sftp.stat(nas_path)
@@ -3192,7 +3816,7 @@ def get_file_hash(file_path):
 #                 app_signals.append_log.emit(f"[Transfer] Removed existing file {nas_path} due to permission issue")
 #         except FileNotFoundError:
 #             pass  # File doesn't exist, which is fine
-        
+
 #         logger.info(f"Write permission confirmed for {nas_parent}")
 #         app_signals.append_log.emit(f"[Transfer] Write permission confirmed for {nas_parent}")
 #         return True
@@ -3214,12 +3838,14 @@ def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
     Returns:
         True on success, raises on failure.
     """
+
     def _log(msg):
         if log_callback:
             log_callback(msg)
         print(msg)
 
     import platform as _platform
+
     system = _platform.system()
     file_path = str(Path(file_path).resolve())
 
@@ -3233,25 +3859,37 @@ def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
         try:
             import win32gui, win32con, win32com.client, win32api, win32process, ctypes
         except ImportError as e:
-            raise ImportError("Required pywin32 modules not found. Run: pip install pywin32") from e
+            raise ImportError(
+                "Required pywin32 modules not found. Run: pip install pywin32"
+            ) from e
 
         photoshop_path = os.getenv("PHOTOSHOP_PATH")
         if photoshop_path and Path(photoshop_path).exists():
             _log(f"[Photoshop] Using PHOTOSHOP_PATH: {photoshop_path}")
         else:
-            for base_dir in [Path("C:/Program Files/Adobe"), Path("C:/Program Files (x86)/Adobe")]:
+            for base_dir in [
+                Path("C:/Program Files/Adobe"),
+                Path("C:/Program Files (x86)/Adobe"),
+            ]:
                 if not base_dir.exists():
                     continue
-                exes = sorted(base_dir.glob("Adobe Photoshop */Photoshop.exe"),
-                              key=lambda x: x.parent.name, reverse=True)
+                exes = sorted(
+                    base_dir.glob("Adobe Photoshop */Photoshop.exe"),
+                    key=lambda x: x.parent.name,
+                    reverse=True,
+                )
                 if exes:
                     photoshop_path = str(exes[0])
                     break
             if not photoshop_path:
-                raise FileNotFoundError("Adobe Photoshop executable not found in Program Files")
+                raise FileNotFoundError(
+                    "Adobe Photoshop executable not found in Program Files"
+                )
 
         if not os.access(photoshop_path, os.X_OK):
-            raise PermissionError(f"Photoshop executable not accessible: {photoshop_path}")
+            raise PermissionError(
+                f"Photoshop executable not accessible: {photoshop_path}"
+            )
 
         # Try COM first
         try:
@@ -3261,17 +3899,24 @@ def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
 
             def _bring_to_front():
                 def _enum(hwnd, _):
-                    if win32gui.IsWindowVisible(hwnd) and \
-                            "adobe photoshop" in win32gui.GetWindowText(hwnd).lower():
+                    if (
+                        win32gui.IsWindowVisible(hwnd)
+                        and "adobe photoshop" in win32gui.GetWindowText(hwnd).lower()
+                    ):
                         try:
                             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                             this = win32api.GetCurrentThreadId()
                             target = win32process.GetWindowThreadProcessId(hwnd)[0]
-                            if ctypes.windll.user32.AttachThreadInput(this, target, True):
+                            if ctypes.windll.user32.AttachThreadInput(
+                                this, target, True
+                            ):
                                 win32gui.SetForegroundWindow(hwnd)
-                                ctypes.windll.user32.AttachThreadInput(this, target, False)
+                                ctypes.windll.user32.AttachThreadInput(
+                                    this, target, False
+                                )
                         except Exception:
                             pass
+
                 win32gui.EnumWindows(_enum, None)
 
             time.sleep(1.5)
@@ -3284,15 +3929,19 @@ def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
         # Fallback: subprocess
         for attempt in range(3):
             try:
-                subprocess.Popen([photoshop_path, file_path], stderr=subprocess.PIPE, text=True)
+                subprocess.Popen(
+                    [photoshop_path, file_path], stderr=subprocess.PIPE, text=True
+                )
                 time.sleep(2)
                 hwnds = []
                 win32gui.EnumWindows(
-                    lambda h, l: l.append(h)
-                    if win32gui.IsWindowVisible(h) and
-                       "adobe photoshop" in win32gui.GetWindowText(h).lower()
-                    else None,
-                    hwnds
+                    lambda h, l: (
+                        l.append(h)
+                        if win32gui.IsWindowVisible(h)
+                        and "adobe photoshop" in win32gui.GetWindowText(h).lower()
+                        else None
+                    ),
+                    hwnds,
                 )
                 if hwnds:
                     win32gui.ShowWindow(hwnds[0], win32con.SW_RESTORE)
@@ -3313,10 +3962,15 @@ def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
         if not photoshop_path:
             try:
                 result = subprocess.run(
-                    ["mdfind", "kMDItemKind == 'Application' && "
-                     "(kMDItemFSName == 'Adobe Photoshop*.app' || "
-                     "kMDItemFSName == 'Photoshop*.app')"],
-                    capture_output=True, text=True, check=True
+                    [
+                        "mdfind",
+                        "kMDItemKind == 'Application' && "
+                        "(kMDItemFSName == 'Adobe Photoshop*.app' || "
+                        "kMDItemFSName == 'Photoshop*.app')",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
                 )
                 if result.stdout.strip():
                     photoshop_path = result.stdout.strip().split("\n")[0]
@@ -3325,17 +3979,23 @@ def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
 
         if not photoshop_path:
             search_dirs = [
-                Path("/Applications"), Path("~/Applications").expanduser(),
-                Path("/Applications/Adobe"), Path("~/Applications/Adobe").expanduser(),
+                Path("/Applications"),
+                Path("~/Applications").expanduser(),
+                Path("/Applications/Adobe"),
+                Path("~/Applications/Adobe").expanduser(),
             ]
             for d in search_dirs:
                 if not d.exists():
                     continue
-                apps = (list(d.glob("Adobe*Photoshop*.app")) +
-                        list(d.glob("Photoshop*.app")) +
-                        list(d.glob("*/Adobe*Photoshop*.app")))
+                apps = (
+                    list(d.glob("Adobe*Photoshop*.app"))
+                    + list(d.glob("Photoshop*.app"))
+                    + list(d.glob("*/Adobe*Photoshop*.app"))
+                )
                 if apps:
-                    photoshop_path = str(sorted(apps, key=lambda x: x.name, reverse=True)[0])
+                    photoshop_path = str(
+                        sorted(apps, key=lambda x: x.name, reverse=True)[0]
+                    )
                     break
 
         if not photoshop_path:
@@ -3359,7 +4019,7 @@ def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
                 app_name = Path(photoshop_path).stem
                 subprocess.run(
                     ["osascript", "-e", f'tell application "{app_name}" to activate'],
-                    capture_output=True
+                    capture_output=True,
                 )
                 _log(f"[Photoshop] Opened {Path(file_path).name} via open -a")
                 return True
@@ -3381,8 +4041,11 @@ def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
         ]:
             if not base_dir.exists():
                 continue
-            exes = sorted(base_dir.glob("Adobe Photoshop */Photoshop.exe"),
-                          key=lambda x: x.parent.name, reverse=True)
+            exes = sorted(
+                base_dir.glob("Adobe Photoshop */Photoshop.exe"),
+                key=lambda x: x.parent.name,
+                reverse=True,
+            )
             if exes:
                 photoshop_path = str(exes[0])
                 break
@@ -3404,6 +4067,7 @@ def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
 
     else:
         raise ValueError(f"Unsupported platform: {system}")
+
 
 def check_nas_write_permission(sftp, nas_path):
     """
@@ -3441,7 +4105,7 @@ def check_nas_write_permission(sftp, nas_path):
 
         # --- Confirm write access with a temp file ---
         temp_file = f"{nas_parent}/.test_write_{int(time.time())}.tmp"
-        sftp.open(temp_file, 'w').close()
+        sftp.open(temp_file, "w").close()
         sftp.remove(temp_file)
 
         # --- Handle existing destination file ---
@@ -3460,9 +4124,7 @@ def check_nas_write_permission(sftp, nas_path):
                 )
             except Exception:
                 sftp.remove(nas_path)
-                logger.info(
-                    f"Removed existing file {nas_path} due to permission issue"
-                )
+                logger.info(f"Removed existing file {nas_path} due to permission issue")
                 app_signals.append_log.emit(
                     f"[Transfer] Removed existing file {nas_path} due to permission issue"
                 )
@@ -3485,54 +4147,60 @@ def check_nas_write_permission(sftp, nas_path):
 
 
 def process_image_in_memory(image_data, ext, full_file_path):
-   
+
     stream = io.BytesIO(image_data)
     pil_image = None
     ext = ext.lower()
     logger.info(f"Starting processing of {full_file_path} with extension {ext}")
 
-    if ext in ['jpg', 'jpeg', 'png']:
+    if ext in ["jpg", "jpeg", "png"]:
         pil_image = Image.open(stream)
         logger.info(f"Opened {ext} file, mode: {pil_image.mode}")
-    elif ext == 'gif':
+    elif ext == "gif":
         pil_image = Image.open(stream)
         pil_image = next(ImageSequence.Iterator(pil_image))
         logger.info("Processed GIF first frame, mode: {pil_image.mode}")
-    elif ext in ['tif', 'tiff']:
+    elif ext in ["tif", "tiff"]:
         with tifffile.TiffFile(stream) as tif:
             page = tif.pages[0]
             arr = page.asarray()
-            photometric = getattr(page.photometric, 'name', 'unknown').lower()
-            if photometric in ['rgb', 'ycbcr']:
+            photometric = getattr(page.photometric, "name", "unknown").lower()
+            if photometric in ["rgb", "ycbcr"]:
                 arr = arr[:, :, :3] if arr.ndim == 3 and arr.shape[2] >= 3 else arr
-                pil_image = Image.fromarray(arr.astype(np.uint8), mode='RGB')
-            elif photometric == 'cmyk':
-                pil_image = Image.fromarray(arr.astype(np.uint8), mode='CMYK').convert("RGB")
-            elif photometric == 'minisblack' or arr.ndim == 2:
+                pil_image = Image.fromarray(arr.astype(np.uint8), mode="RGB")
+            elif photometric == "cmyk":
+                pil_image = Image.fromarray(arr.astype(np.uint8), mode="CMYK").convert(
+                    "RGB"
+                )
+            elif photometric == "minisblack" or arr.ndim == 2:
                 arr = np.stack((arr,) * 3, axis=-1)
-                pil_image = Image.fromarray(arr.astype(np.uint8), mode='RGB')
+                pil_image = Image.fromarray(arr.astype(np.uint8), mode="RGB")
             else:
                 logger.warning(f"Unsupported TIFF photometric: {photometric}")
                 return None
-            logger.info(f"Processed TIFF, mode: {pil_image.mode}, photometric: {photometric}")
-    elif ext in ['psd', 'psb']:
-            psd = PSDImage.open(stream)
-            if psd is None or not psd.has_preview():
-                logger.error(f"PSD preview not available for {full_file_path}")
-                return None
+            logger.info(
+                f"Processed TIFF, mode: {pil_image.mode}, photometric: {photometric}"
+            )
+    elif ext in ["psd", "psb"]:
+        psd = PSDImage.open(stream)
+        if psd is None or not psd.has_preview():
+            logger.error(f"PSD preview not available for {full_file_path}")
+            return None
 
-            pil_image = psd.composite()
-            logger.info(f"PSD composite result, mode: {pil_image.mode}, size: {pil_image.size}")
+        pil_image = psd.composite()
+        logger.info(
+            f"PSD composite result, mode: {pil_image.mode}, size: {pil_image.size}"
+        )
 
-            # Apply ICC profile if available
-            try:
-                icc = psd.image_resources.get("icc_profile")
-                if icc:
-                    pil_image.info["icc_profile"] = icc.data
-                    logger.info(f"Applied ICC profile to PSD: {full_file_path}")
-            except Exception as e:
-                logger.warning(f"Error extracting ICC profile: {e}")
-    elif ext in ['cr2', 'nef', 'arw', 'dng', 'raf', 'pef', 'srw']:
+        # Apply ICC profile if available
+        try:
+            icc = psd.image_resources.get("icc_profile")
+            if icc:
+                pil_image.info["icc_profile"] = icc.data
+                logger.info(f"Applied ICC profile to PSD: {full_file_path}")
+        except Exception as e:
+            logger.warning(f"Error extracting ICC profile: {e}")
+    elif ext in ["cr2", "nef", "arw", "dng", "raf", "pef", "srw"]:
         with rawpy.imread(stream) as raw:
             rgb = raw.postprocess()
             pil_image = Image.fromarray(rgb)
@@ -3550,8 +4218,15 @@ def process_image_in_memory(image_data, ext, full_file_path):
         logger.info("Final conversion to RGB, size: {pil_image.size}")
 
     jpeg_buffer = io.BytesIO()
-    logger.info(f"Attempting to save JPEG to buffer, initial position: {jpeg_buffer.tell()}")
-    pil_image.save(jpeg_buffer, format="JPEG", quality=80, icc_profile=pil_image.info.get('icc_profile'))
+    logger.info(
+        f"Attempting to save JPEG to buffer, initial position: {jpeg_buffer.tell()}"
+    )
+    pil_image.save(
+        jpeg_buffer,
+        format="JPEG",
+        quality=80,
+        icc_profile=pil_image.info.get("icc_profile"),
+    )
     logger.info(f"JPEG save completed, buffer position: {jpeg_buffer.tell()}")
     jpeg_buffer.seek(0)
     buffer_size = jpeg_buffer.getbuffer().nbytes
@@ -3561,11 +4236,6 @@ def process_image_in_memory(image_data, ext, full_file_path):
         return None
     jpeg_buffer.seek(0)
     return jpeg_buffer
- 
-
-
-
-
 
 
 def process_single_file(full_file_path):
@@ -3637,7 +4307,6 @@ def process_single_file(full_file_path):
 # ===================== image covertion logic =====================
 
 
-
 class FileConversionWorker(QObject):
     finished = Signal(str, str, str)
     error = Signal(str, str)
@@ -3650,7 +4319,10 @@ class FileConversionWorker(QObject):
 
     def run(self):
         if not PIL_AVAILABLE:
-            self.error.emit("Pillow not installed, image conversion disabled", Path(self.src_path).name)
+            self.error.emit(
+                "Pillow not installed, image conversion disabled",
+                Path(self.src_path).name,
+            )
             return
         try:
             img = Image.open(self.src_path)
@@ -3658,26 +4330,30 @@ class FileConversionWorker(QObject):
             jpg_path = str(Path(self.dest_dir) / f"{filename}.jpg")
             psd_path = str(Path(self.dest_dir) / f"{filename}.psd")
 
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            img.save(jpg_path, 'JPEG', quality=95)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(jpg_path, "JPEG", quality=95)
             self.progress.emit(jpg_path, 50)
-            img.save(psd_path, 'PSD')
+            img.save(psd_path, "PSD")
             self.progress.emit(psd_path, 75)
 
             cache = load_cache()
-            with open(jpg_path, 'rb') as f:
+            with open(jpg_path, "rb") as f:
                 resp = HTTP_SESSION.post(
                     f"{BASE_DOMAIN}/api/ir_production/upload/jpg",
-                    files={'file': f},
+                    files={"file": f},
                     headers={"Authorization": f"Bearer {cache.get('token', '')}"},
                     verify=False,
-                    timeout=30
+                    timeout=30,
                 )
                 app_signals.api_call_status.emit(
                     f"{BASE_DOMAIN}/api/ir_production/upload/jpg",
-                    "Success" if resp.status_code == 200 else f"Failed: {resp.status_code}",
-                    resp.status_code
+                    (
+                        "Success"
+                        if resp.status_code == 200
+                        else f"Failed: {resp.status_code}"
+                    ),
+                    resp.status_code,
                 )
                 resp.raise_for_status()
 
@@ -3698,16 +4374,19 @@ class FileWatcherWorker(QObject):
     cleanup_signal = Signal()
     user_in_other_system = Signal(str)
     alert_notification = Signal(str, str)
-  
+
     download_progress = Signal(str, str, str, int)
     # (spec_id, file_path, filename, percent)
 
     download_status_detail = Signal(str, str, str, int, bool)
     # (file_path, status_text, action_type, percent, is_nas_src)
 
-    upload_progress = Signal(str, str, str, int)          # spec_id, file_path, filename, percent
-    upload_status_detail = Signal(str, str, str, int, bool)  # file_path, text, action_type="upload", percent, is_nas_src
-
+    upload_progress = Signal(
+        str, str, str, int
+    )  # spec_id, file_path, filename, percent
+    upload_status_detail = Signal(
+        str, str, str, int, bool
+    )  # file_path, text, action_type="upload", percent, is_nas_src
 
     _instance = None
     _instance_thread = None
@@ -3718,20 +4397,34 @@ class FileWatcherWorker(QObject):
     def get_instance(cls, parent=None):
         """Return the singleton instance of FileWatcherWorker."""
         if cls._instance is None:
-            logger.debug(f"Creating new FileWatcherWorker instance with parent={parent}")
+            logger.debug(
+                f"Creating new FileWatcherWorker instance with parent={parent}"
+            )
             cls._instance = cls(parent=parent)
             cls._instance_thread = QThread.currentThread()
-            logger.info(f"FileWatcherWorker instance created in thread {cls._instance_thread}")
+            logger.info(
+                f"FileWatcherWorker instance created in thread {cls._instance_thread}"
+            )
         elif parent is not None and cls._instance.parent() != parent:
-            logger.warning(f"Existing instance has different parent; ignoring new parent={parent}")
-            cls._instance.log_update.emit(f"[FileWatcher] Warning: Existing instance has different parent; ignoring new parent={parent}")
+            logger.warning(
+                f"Existing instance has different parent; ignoring new parent={parent}"
+            )
+            cls._instance.log_update.emit(
+                f"[FileWatcher] Warning: Existing instance has different parent; ignoring new parent={parent}"
+            )
         return cls._instance
 
     def __init__(self, parent=None):
         if self._instance is not None and self._instance is not self:
-            logger.warning(f"FileWatcherWorker already initialized in thread {self._instance_thread}, use get_instance()")
-            self.log_update.emit(f"[FileWatcher] Warning: Already initialized in thread {self._instance_thread}, use get_instance()")
-            raise RuntimeError("FileWatcherWorker is a singleton; use FileWatcherWorker.get_instance()")
+            logger.warning(
+                f"FileWatcherWorker already initialized in thread {self._instance_thread}, use get_instance()"
+            )
+            self.log_update.emit(
+                f"[FileWatcher] Warning: Already initialized in thread {self._instance_thread}, use get_instance()"
+            )
+            raise RuntimeError(
+                "FileWatcherWorker is a singleton; use FileWatcherWorker.get_instance()"
+            )
         super().__init__(parent)
         FileWatcherWorker._instance = self
         FileWatcherWorker._instance_thread = QThread.currentThread()
@@ -3747,13 +4440,30 @@ class FileWatcherWorker(QObject):
             "max_processed_tasks": 1000,
             "task_retention_hours": 24,
             "supported_image_extensions": (
-                ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".tif", ".bmp", ".webp",
-                ".psd", ".psb", ".cr2", ".nef", ".arw", ".dng", ".raf", ".pef", ".srw"
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".gif",
+                ".tiff",
+                ".tif",
+                ".bmp",
+                ".webp",
+                ".psd",
+                ".psb",
+                ".cr2",
+                ".nef",
+                ".arw",
+                ".dng",
+                ".raf",
+                ".pef",
+                ".srw",
             ),
         }
         logger.info("FileWatcherWorker initialized")
         self.log_update.emit("[FileWatcher] Initialized")
-        self.log_update.emit(f"[FileWatcher] Application started at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        self.log_update.emit(
+            f"[FileWatcher] Application started at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')}"
+        )
         # self.timer = QTimer(self)
         # self.timer.setSingleShot(True)  # Single-shot to prevent overlapping ticks
         # self.timer.timeout.connect(self.run)
@@ -3766,7 +4476,6 @@ class FileWatcherWorker(QObject):
         #     logger.debug("FileWatcherWorker timer already active")
         #     self.log_update.emit("[FileWatcher] Timer already active")
 
-
     def _prepare_download_path(self, item):
         """Prepare the local destination path for download using file_path."""
         file_path = item.get("file_path", "")
@@ -3778,35 +4487,40 @@ class FileWatcherWorker(QObject):
             self.alert_notification.emit("ERROR (MD2)", "File does not exist on NAS")
             self.alert_notification.emit(
                 "Download Error",
-                "The file path is missing or empty.\n\nThis file does not exist on the NAS server. Please contact your administrator."
+                "The file path is missing or empty.\n\nThis file does not exist on the NAS server. Please contact your administrator.",
             )
             raise ValueError("Empty file_path in item")
             # show_alert_notification("ERROR (MD2)", "Please check Nas Connection.")
             # # QMessageBox.warning(None, "ERROR (MD2)", "Please check Nas Connection.")
             # raise ValueError("Empty file_path in item")
         dest_path = BASE_TARGET_DIR / file_path
-        logger.debug(f"Preparing download path: file_path={file_path}, dest_path={dest_path}")
+        logger.debug(
+            f"Preparing download path: file_path={file_path}, dest_path={dest_path}"
+        )
         try:
             dest_path.parent.mkdir(parents=True, exist_ok=True, mode=0o777)
             os.chmod(dest_path.parent, 0o777)
             logger.debug(f"Created directory {dest_path.parent} with permissions 777")
-            self.log_update.emit(f"[Transfer] Created directory {dest_path.parent} with permissions 777")
+            self.log_update.emit(
+                f"[Transfer] Created directory {dest_path.parent} with permissions 777"
+            )
         except Exception as e:
             logger.error(f"Failed to create directory {dest_path.parent}: {str(e)}")
-            self.log_update.emit(f"[Transfer] Failed to create directory {dest_path.parent}: {str(e)}")
+            self.log_update.emit(
+                f"[Transfer] Failed to create directory {dest_path.parent}: {str(e)}"
+            )
             # show_alert_notification("ERROR (MD2)", "Please check Nas Connection.")
             # # QMessageBox.warning(None, "ERROR (MD2)", "Please check Nas Connection.")
             # raise
-            self.alert_notification.emit("ERROR (MD2)", f"[Transfer] Failed to create directory {dest_path.parent}: {str(e)}")
+            self.alert_notification.emit(
+                "ERROR (MD2)",
+                f"[Transfer] Failed to create directory {dest_path.parent}: {str(e)}",
+            )
             raise
         resolved_dest_path = str(dest_path.resolve())
         logger.debug(f"Prepared local path: {resolved_dest_path}")
         self.log_update.emit(f"[Transfer] Prepared local path: {resolved_dest_path}")
         return resolved_dest_path
-
-
-
-
 
     def _download_from_nas(self, src_path, dest_path, item):
         task_id = item.get("id", "")
@@ -3826,7 +4540,9 @@ class FileWatcherWorker(QObject):
             transport.packetizer.REKEY_BYTES = 2**40
             transport.packetizer.REKEY_PACKETS = 2**40
             transport.get_security_options().ciphers = (
-                "aes128-ctr", "aes192-ctr", "aes256-ctr"
+                "aes128-ctr",
+                "aes192-ctr",
+                "aes256-ctr",
             )
             transport.connect(username=NAS_USERNAME, password=NAS_PASSWORD)
 
@@ -3838,7 +4554,13 @@ class FileWatcherWorker(QObject):
             sftp.close()
             total_size_mb = total_size / 1024 / 1024
 
-            report_transfer_event("Started", "download", filename, file_size_mb=total_size_mb, eta_text="Calculating...")
+            report_transfer_event(
+                "Started",
+                "download",
+                filename,
+                file_size_mb=total_size_mb,
+                eta_text="Calculating...",
+            )
 
             start_time = time.time()
             last_emit = 0.0
@@ -3880,8 +4602,11 @@ class FileWatcherWorker(QObject):
                     )
                     logger.warning(f"[Transfer] {stall_msg}: {filename}")
                     file_watcher.download_status_detail.emit(
-                        dest_path, f"⚠ {stall_msg}", "download",
-                        int((sent / total_size) * 100) if total_size else 0, True
+                        dest_path,
+                        f"⚠ {stall_msg}",
+                        "download",
+                        int((sent / total_size) * 100) if total_size else 0,
+                        True,
                     )
                     raise RuntimeError(stall_msg)
 
@@ -3897,19 +4622,23 @@ class FileWatcherWorker(QObject):
 
                 # ---- ETA ----
                 remaining = total_size - sent
-                eta = (remaining / 1024 / 1024) / speed_mbps if speed_mbps > 0 else float("inf")
+                eta = (
+                    (remaining / 1024 / 1024) / speed_mbps
+                    if speed_mbps > 0
+                    else float("inf")
+                )
 
                 # ---- Progress bar (numeric only) ----
                 file_watcher.download_progress.emit(
-                    spec_id,
-                    dest_path,
-                    filename,
-                    percent
+                    spec_id, dest_path, filename, percent
                 )
 
                 # ---- Feed the Google Chat transfer reporter (latency/speed/size/ETA) ----
                 _update_transfer_stats(
-                    "download", filename, speed_mbps, percent,
+                    "download",
+                    filename,
+                    speed_mbps,
+                    percent,
                     file_size_mb=total_size / 1024 / 1024,
                     elapsed_sec=elapsed,
                     eta_text=format_time(eta),
@@ -3923,75 +4652,71 @@ class FileWatcherWorker(QObject):
                 )
 
                 file_watcher.download_status_detail.emit(
-                    dest_path,
-                    status_text,
-                    "download",
-                    percent,
-                    True
+                    dest_path, status_text, "download", percent, True
                 )
 
             with SCPClient(
                 transport,
                 socket_timeout=30,
                 buff_size=8 * 1024 * 1024,
-                progress=scp_progress
+                progress=scp_progress,
             ) as scp:
                 scp.get(nas_path, local_path=dest_path)
 
             # ---- Final completion ----
-            self.download_progress.emit(
-                spec_id,
-                dest_path,
-                filename,
-                100
-            )
+            self.download_progress.emit(spec_id, dest_path, filename, 100)
             self.download_status_detail.emit(
-                dest_path,
-                "Download Completed",
-                "download",
-                100,
-                True
+                dest_path, "Download Completed", "download", 100, True
             )
 
-            duration_seconds = time.time() - transfer_start_time   # ← ADD THIS
-            
+            duration_seconds = time.time() - transfer_start_time  # ← ADD THIS
+
             # Save duration to cache
             cache = load_cache()
             meta = cache.get("downloaded_files_with_metadata", {}).get(spec_id)
             if meta:
                 meta["api_response"]["transfer_duration"] = round(duration_seconds, 1)
-                save_cache(cache, significant_change=False)           # ← ADD THIS
+                save_cache(cache, significant_change=False)  # ← ADD THIS
 
             self.download_progress.emit(spec_id, dest_path, filename, 100)
-            self.download_status_detail.emit(dest_path, "Download Completed", "download", 100, True)
+            self.download_status_detail.emit(
+                dest_path, "Download Completed", "download", 100, True
+            )
             _clear_transfer_stats()
 
-            _avg_speed_mbps = (total_size / 1024 / 1024) / duration_seconds if duration_seconds > 0 else 0.0
+            _avg_speed_mbps = (
+                (total_size / 1024 / 1024) / duration_seconds
+                if duration_seconds > 0
+                else 0.0
+            )
             report_transfer_event(
-                "Completed", "download", filename, percent=100, speed_mbps=_avg_speed_mbps,
-                file_size_mb=total_size / 1024 / 1024, elapsed_sec=duration_seconds, eta_text="Done",
+                "Completed",
+                "download",
+                filename,
+                percent=100,
+                speed_mbps=_avg_speed_mbps,
+                file_size_mb=total_size / 1024 / 1024,
+                elapsed_sec=duration_seconds,
+                eta_text="Done",
             )
 
         except Exception:
-            self.download_progress.emit(
-                spec_id,
-                dest_path,
-                filename,
-                0
-            )
+            self.download_progress.emit(spec_id, dest_path, filename, 0)
             self.download_status_detail.emit(
-                dest_path,
-                "Download Failed",
-                "download",
-                0,
-                True
+                dest_path, "Download Failed", "download", 0, True
             )
             _clear_transfer_stats()
             _elapsed_at_failure = time.time() - transfer_start_time
-            _size_mb_at_failure = (total_size / 1024 / 1024) if 'total_size' in locals() else 0.0
+            _size_mb_at_failure = (
+                (total_size / 1024 / 1024) if "total_size" in locals() else 0.0
+            )
             report_transfer_event(
-                "Failed", "download", filename,
-                file_size_mb=_size_mb_at_failure, elapsed_sec=_elapsed_at_failure, eta_text="-",
+                "Failed",
+                "download",
+                filename,
+                file_size_mb=_size_mb_at_failure,
+                elapsed_sec=_elapsed_at_failure,
+                eta_text="-",
             )
             raise
 
@@ -4002,8 +4727,6 @@ class FileWatcherWorker(QObject):
                         transport.close()
                 except Exception as t_err:
                     logger.warning(f"Could not close download transport: {t_err}")
-
-
 
     def _upload_to_nas(self, src_path, dest_path, item):
         task_id = item.get("id", "")
@@ -4022,7 +4745,7 @@ class FileWatcherWorker(QObject):
         # matched_file = None
         # matched_ext = None
         # first_prior = False
-        
+
         # #for ext in allowed_types:
         # for ind, ext in enumerate(allowed_types):
         #     alt_path = src_path.with_suffix(f".{ext}")
@@ -4038,24 +4761,25 @@ class FileWatcherWorker(QObject):
         # print(first_prior)
         # print("=============matched_file======================")
 
-
         # if matched_file:
         #     print("========INTO Matched File=====matched_file======================")
         #     src_path = matched_file
         #     filename = src_path.name
         #     if not first_prior:
         #         #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
-        #         self.alert_notification.emit("File Format Alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}")            
+        #         self.alert_notification.emit("File Format Alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}")
         # else:
-        if not src_path.exists(): 
+        if not src_path.exists():
             print("========INTO File Not Found=====matched_file======================")
-            cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
+            cache[metadata_key][spec_id]["api_response"][
+                "request_status"
+            ] = "Upload Failed"
             save_cache(cache, significant_change=True)
             update_download_upload_metadata(task_id, "failed")
             self.alert_notification.emit("Error (U1)", "Upload failed try again.")
             self.alert_notification.emit(
                 "Upload Error",
-                f"File not found on disk:\n{src_path}\n\nPlease ensure the file exists before uploading."
+                f"File not found on disk:\n{src_path}\n\nPlease ensure the file exists before uploading.",
             )
             file_watcher.upload_progress.emit(spec_id, dest_path, filename, 0)
             file_watcher.upload_status_detail.emit(
@@ -4063,12 +4787,12 @@ class FileWatcherWorker(QObject):
             )
             report_transfer_event("Failed", "upload", filename)
             raise FileNotFoundError(f"Source file does not exist: {src_path}")
-        
+
         print("========Continue upload=====matched_file======================")
         # dest_path = item.get("file_path", dest_path)
         # if matched_ext:
         #     dest_path = str(Path(dest_path).with_suffix(f".{matched_ext}"))
-        #dest_dir = os.path.dirname(dest_path)
+        # dest_dir = os.path.dirname(dest_path)
         dest_path = dest_path.replace("\\", "/")
         dest_dir = os.path.dirname(dest_path).replace("\\", "/")
         print("=============dest_dir======================")
@@ -4079,7 +4803,7 @@ class FileWatcherWorker(QObject):
         sock = None
         session = None
         sftp = None
-        remote_file = None      # FIX: track remote file handle explicitly
+        remote_file = None  # FIX: track remote file handle explicitly
 
         try:
             # ---------- CONNECTION ----------
@@ -4166,7 +4890,13 @@ class FileWatcherWorker(QObject):
             print(f"Destination (final): {dest_path}")
             print(f"Destination (temp, in-progress): {temp_dest_path}")
 
-            report_transfer_event("Started", "upload", filename, file_size_mb=total_mb, eta_text="Calculating...")
+            report_transfer_event(
+                "Started",
+                "upload",
+                filename,
+                file_size_mb=total_mb,
+                eta_text="Calculating...",
+            )
 
             # FIX: open both file handles explicitly so both are closed in finally
             local_file = open(src_path, "rb")
@@ -4195,25 +4925,31 @@ class FileWatcherWorker(QObject):
                         now = time.time()
                         if now - last_emit >= 0.5 or transferred == file_size:
                             elapsed_total = now - upload_start
-                            percent = int((transferred / file_size) * 100) if file_size else 100
+                            percent = (
+                                int((transferred / file_size) * 100)
+                                if file_size
+                                else 100
+                            )
 
                             speed_mbps = (
                                 (transferred / 1024 / 1024) / elapsed_total
-                                if elapsed_total > 0 else 0.0
+                                if elapsed_total > 0
+                                else 0.0
                             )
 
                             remaining = file_size - transferred
                             eta = (
                                 (remaining / 1024 / 1024) / speed_mbps
-                                if speed_mbps > 0 else float("inf")
+                                if speed_mbps > 0
+                                else float("inf")
                             )
 
                             status_text = (
                                 f"Uploading {percent}% • "
                                 f"{speed_mbps:.1f} MB/s • "
                                 f"ETA {int(eta)}s"
-                                if eta != float("inf") else
-                                f"Uploading {percent}% • {speed_mbps:.1f} MB/s • ETA —"
+                                if eta != float("inf")
+                                else f"Uploading {percent}% • {speed_mbps:.1f} MB/s • ETA —"
                             )
 
                             file_watcher.upload_progress.emit(
@@ -4223,11 +4959,12 @@ class FileWatcherWorker(QObject):
                                 dest_path, status_text, "upload", percent, True
                             )
                             # ---- Feed the Google Chat transfer reporter (latency/speed/size/ETA) ----
-                            _eta_text = (
-                                f"{int(eta)}s" if eta != float("inf") else "—"
-                            )
+                            _eta_text = f"{int(eta)}s" if eta != float("inf") else "—"
                             _update_transfer_stats(
-                                "upload", filename, speed_mbps, percent,
+                                "upload",
+                                filename,
+                                speed_mbps,
+                                percent,
                                 file_size_mb=total_mb,
                                 elapsed_sec=elapsed_total,
                                 eta_text=_eta_text,
@@ -4269,6 +5006,7 @@ class FileWatcherWorker(QObject):
                             LIBSSH2_SFTP_RENAME_ATOMIC,
                             LIBSSH2_SFTP_RENAME_NATIVE,
                         )
+
                         rename_flags = (
                             LIBSSH2_SFTP_RENAME_OVERWRITE
                             | LIBSSH2_SFTP_RENAME_ATOMIC
@@ -4296,7 +5034,9 @@ class FileWatcherWorker(QObject):
                         pass  # dest_path may not exist yet (first-time upload)
                     sftp.rename(temp_dest_path, dest_path)
 
-                logger.info(f"[Transfer] Upload verified, swapped into place: {dest_path}")
+                logger.info(
+                    f"[Transfer] Upload verified, swapped into place: {dest_path}"
+                )
                 app_signals.append_log.emit(
                     f"[Transfer] Upload verified and swapped into place: {dest_path}"
                 )
@@ -4310,10 +5050,12 @@ class FileWatcherWorker(QObject):
                 meta = cache.get("uploaded_files_with_metadata", {}).get(spec_id)
                 if meta:
                     meta["api_response"]["transfer_duration"] = round(duration, 1)
-                    save_cache(cache, significant_change=False)           # ← ADD THIS
+                    save_cache(cache, significant_change=False)  # ← ADD THIS
 
                 file_watcher.upload_progress.emit(spec_id, dest_path, filename, 100)
-                file_watcher.upload_status_detail.emit(dest_path, "Upload Completed", "upload", 100, True)
+                file_watcher.upload_status_detail.emit(
+                    dest_path, "Upload Completed", "upload", 100, True
+                )
             finally:
                 # FIX: always close local file handle
                 try:
@@ -4345,8 +5087,14 @@ class FileWatcherWorker(QObject):
 
             _clear_transfer_stats()
             report_transfer_event(
-                "Completed", "upload", filename, percent=100, speed_mbps=final_speed,
-                file_size_mb=total_mb, elapsed_sec=duration, eta_text="Done",
+                "Completed",
+                "upload",
+                filename,
+                percent=100,
+                speed_mbps=final_speed,
+                file_size_mb=total_mb,
+                elapsed_sec=duration,
+                eta_text="Done",
             )
 
         except Exception as e:
@@ -4378,9 +5126,11 @@ class FileWatcherWorker(QObject):
             # the NAS is still intact and safe. Just remove the partial
             # temp file so it doesn't linger.
             try:
-                if sftp is not None and 'temp_dest_path' in locals():
+                if sftp is not None and "temp_dest_path" in locals():
                     sftp.unlink(temp_dest_path)
-                    logger.debug(f"[Transfer] Cleaned up incomplete temp file: {temp_dest_path}")
+                    logger.debug(
+                        f"[Transfer] Cleaned up incomplete temp file: {temp_dest_path}"
+                    )
                     app_signals.append_log.emit(
                         f"[Transfer] Cleaned up incomplete temp upload; "
                         f"existing file at {dest_path} was not modified"
@@ -4389,7 +5139,9 @@ class FileWatcherWorker(QObject):
                 pass  # temp file may not exist if failure occurred before sftp.open
 
             try:
-                cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
+                cache[metadata_key][spec_id]["api_response"][
+                    "request_status"
+                ] = "Upload Failed"
                 save_cache(cache, significant_change=True)
             except Exception:
                 pass
@@ -4402,13 +5154,19 @@ class FileWatcherWorker(QObject):
             self.alert_notification.emit(
                 "Error (U3)",
                 "Upload failed — the existing file on the NAS was NOT modified. "
-                "Please retry the upload."
+                "Please retry the upload.",
             )
-            _elapsed_at_failure = (time.time() - upload_start) if 'upload_start' in locals() else 0.0
-            _size_mb_at_failure = total_mb if 'total_mb' in locals() else 0.0
+            _elapsed_at_failure = (
+                (time.time() - upload_start) if "upload_start" in locals() else 0.0
+            )
+            _size_mb_at_failure = total_mb if "total_mb" in locals() else 0.0
             report_transfer_event(
-                "Failed", "upload", filename,
-                file_size_mb=_size_mb_at_failure, elapsed_sec=_elapsed_at_failure, eta_text="-",
+                "Failed",
+                "upload",
+                filename,
+                file_size_mb=_size_mb_at_failure,
+                elapsed_sec=_elapsed_at_failure,
+                eta_text="-",
             )
             raise
 
@@ -4418,7 +5176,7 @@ class FileWatcherWorker(QObject):
 
             if sftp is not None:
                 try:
-                    sftp.close()        # FIX: was never closed before
+                    sftp.close()  # FIX: was never closed before
                 except Exception as sftp_err:
                     logger.warning(f"Could not close SFTP handle: {sftp_err}")
 
@@ -4430,11 +5188,10 @@ class FileWatcherWorker(QObject):
 
             if sock is not None:
                 try:
-                    sock.close()        # FIX: now always reached even if session.disconnect() throws
+                    sock.close()  # FIX: now always reached even if session.disconnect() throws
                 except Exception as sock_err:
                     logger.warning(f"Could not close socket: {sock_err}")
 
-        
     def _validate_and_confirm_psd_upload(self, file_path):
         """
         For .psd/.psb uploads only: runs the production-readiness checklist
@@ -4451,8 +5208,12 @@ class FileWatcherWorker(QObject):
 
             status_word = "PASS" if result.overall_pass else "FAIL"
             logger.info(f"[PSD Validation] {file_path}: {status_word}")
-            self.log_update.emit(f"[PSD Validation] {Path(file_path).name}: {status_word}")
-            app_signals.append_log.emit(f"[PSD Validation] {Path(file_path).name}: {status_word}")
+            self.log_update.emit(
+                f"[PSD Validation] {Path(file_path).name}: {status_word}"
+            )
+            app_signals.append_log.emit(
+                f"[PSD Validation] {Path(file_path).name}: {status_word}"
+            )
 
             proceed = request_psd_upload_confirmation(file_path, result)
             self.log_update.emit(
@@ -4462,14 +5223,27 @@ class FileWatcherWorker(QObject):
             return proceed
         except Exception as e:
             logger.error(f"[PSD Validation] Error validating {file_path}: {e}")
-            self.log_update.emit(f"[PSD Validation] Error validating {Path(file_path).name}: {str(e)}")
+            self.log_update.emit(
+                f"[PSD Validation] Error validating {Path(file_path).name}: {str(e)}"
+            )
             # Validation itself crashed — still let the user decide, with a
             # synthetic result explaining that validation could not complete.
             fallback_result = PSDValidationResult()
-            fallback_result.add("Validation Execution", False, f"Validation could not be completed: {e}")
+            fallback_result.add(
+                "Validation Execution", False, f"Validation could not be completed: {e}"
+            )
             return request_psd_upload_confirmation(file_path, fallback_result)
 
-    def _update_cache_and_signals(self, action_type, src_path, dest_path, item, task_id, is_nas, file_type="original"):
+    def _update_cache_and_signals(
+        self,
+        action_type,
+        src_path,
+        dest_path,
+        item,
+        task_id,
+        is_nas,
+        file_type="original",
+    ):
         cache = load_cache()
         cache.setdefault("downloaded_files", {})
         cache.setdefault("downloaded_files_with_metadata", {})
@@ -4480,30 +5254,62 @@ class FileWatcherWorker(QObject):
         try:
             if action_type.lower() == "download":
                 cache["downloaded_files"][task_id] = local_path
-                cache["downloaded_files_with_metadata"][task_id] = {"local_path": local_path, "api_response": item}
+                cache["downloaded_files_with_metadata"][task_id] = {
+                    "local_path": local_path,
+                    "api_response": item,
+                }
                 # timer_response = start_timer_api(src_path, cache.get('token', ''))
                 # if timer_response:
                 #     cache["timer_responses"][local_path] = timer_response
-                app_signals.update_file_list.emit(local_path, f"{action_type} Completed", action_type.lower(), 100, is_nas)
-                logger.debug(f"Emitted update_file_list signal: dest_path={local_path}, status={action_type} Completed, is_nas={is_nas}")
-                self.log_update.emit(f"[Signal] Emitted update_file_list: dest_path={local_path}, status={action_type} Completed, is_nas={is_nas}")
+                app_signals.update_file_list.emit(
+                    local_path,
+                    f"{action_type} Completed",
+                    action_type.lower(),
+                    100,
+                    is_nas,
+                )
+                logger.debug(
+                    f"Emitted update_file_list signal: dest_path={local_path}, status={action_type} Completed, is_nas={is_nas}"
+                )
+                self.log_update.emit(
+                    f"[Signal] Emitted update_file_list: dest_path={local_path}, status={action_type} Completed, is_nas={is_nas}"
+                )
             elif action_type.lower() in ("upload", "replace"):
                 cache["uploaded_files"].append(dest_path)
-                cache["uploaded_files_with_metadata"][task_id] = {"local_path": local_path, "api_response": item}
+                cache["uploaded_files_with_metadata"][task_id] = {
+                    "local_path": local_path,
+                    "api_response": item,
+                }
                 # timer_response = cache.get("timer_responses", {}).get(local_path)
                 # if timer_response:
                 #     end_timer_api(src_path, timer_response, cache.get('token', ''))
                 # app_signals.update_file_list.emit(local_path, f"{action_type} Completed ({file_type.capitalize()})", action_type.lower(), 100, is_nas)
-                app_signals.update_file_list.emit(local_path, f"{action_type} Completed", action_type.lower(), 100, is_nas)
-                logger.debug(f"Emitted update_file_list signal: dest_path={local_path}, status={action_type} Completed, is_nas={is_nas}")
-                self.log_update.emit(f"[Signal] Emitted update_file_list: dest_path={local_path}, status={action_type} Completed, is_nas={is_nas}")
+                app_signals.update_file_list.emit(
+                    local_path,
+                    f"{action_type} Completed",
+                    action_type.lower(),
+                    100,
+                    is_nas,
+                )
+                logger.debug(
+                    f"Emitted update_file_list signal: dest_path={local_path}, status={action_type} Completed, is_nas={is_nas}"
+                )
+                self.log_update.emit(
+                    f"[Signal] Emitted update_file_list: dest_path={local_path}, status={action_type} Completed, is_nas={is_nas}"
+                )
             save_cache(cache)
-            app_signals.append_log.emit(f"[Transfer] {action_type} completed: {src_path} to {dest_path}")
+            app_signals.append_log.emit(
+                f"[Transfer] {action_type} completed: {src_path} to {dest_path}"
+            )
         except Exception as e:
-            logger.error(f"Failed to update cache and signals for {action_type} ({file_type}, Task {task_id}): {str(e)}")
-            self.log_update.emit(f"[Transfer] Failed to update cache and signals for {action_type} ({file_type}, Task {task_id}): {str(e)}")
+            logger.error(
+                f"Failed to update cache and signals for {action_type} ({file_type}, Task {task_id}): {str(e)}"
+            )
+            self.log_update.emit(
+                f"[Transfer] Failed to update cache and signals for {action_type} ({file_type}, Task {task_id}): {str(e)}"
+            )
             raise
-    
+
     def open_with_photoshop(self, file_path, key_val):
         """Open file in Photoshop — delegates to module-level helper."""
         try:
@@ -4516,19 +5322,28 @@ class FileWatcherWorker(QObject):
             return True
 
         try:
-            return open_file_with_photoshop(file_path, log_callback=self.log_update.emit)
+            return open_file_with_photoshop(
+                file_path, log_callback=self.log_update.emit
+            )
         except Exception as e:
             error_msg = f"Failed to open {Path(file_path).name} in Photoshop: {e}"
             logger.error(error_msg)
             self.log_update.emit(f"[Photoshop] {error_msg}")
             raise
-    
-    
-    
+
     @Slot(str, str, str, str, bool, bool)
     # def perform_file_transfer(self,src_path: str,dest_path: str,action_type: str,item,is_nas_src: bool,is_nas_dest: bool):
-    def perform_file_transfer(self, src_path: str, dest_path: str, action_type: str, item, is_nas_src: bool, is_nas_dest: bool, is_final_attempt: bool = True):
-    # def perform_file_transfer(self, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
+    def perform_file_transfer(
+        self,
+        src_path: str,
+        dest_path: str,
+        action_type: str,
+        item,
+        is_nas_src: bool,
+        is_nas_dest: bool,
+        is_final_attempt: bool = True,
+    ):
+        # def perform_file_transfer(self, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
 
         # ============================================================
         # 🔑 FIX: Normalize `item` for retry calls (CRITICAL)
@@ -4561,25 +5376,30 @@ class FileWatcherWorker(QObject):
         # 🔑 END FIX
         # ============================================================
 
-
         """Perform file transfer (download/upload/replace) and update cache metadata reliably."""
-        task_id = str(item.get('id'))
+        task_id = str(item.get("id"))
         spec_id = str(item.get("spec_id"))
         print("===================================")
         print(item.get("file_path"))
         print("===================================")
-        
+
         if not task_id:
             raise ValueError("Task ID is missing or invalid in item dictionary")
-        
+
         global IS_APP_ACTIVE_UPLOAD_DOWNLOAD
         IS_APP_ACTIVE_UPLOAD_DOWNLOAD = True
 
         status_prefix = "Download" if action_type.lower() == "download" else "Upload"
-        metadata_key = "downloaded_files_with_metadata" if action_type.lower() == "download" else "uploaded_files_with_metadata"
+        metadata_key = (
+            "downloaded_files_with_metadata"
+            if action_type.lower() == "download"
+            else "uploaded_files_with_metadata"
+        )
 
         try:
-            logger.debug(f"Starting file transfer for task {task_id}, action_type: {action_type}")
+            logger.debug(
+                f"Starting file transfer for task {task_id}, action_type: {action_type}"
+            )
 
             # Load cache once
             cache = load_cache()
@@ -4588,7 +5408,9 @@ class FileWatcherWorker(QObject):
             # Initialize task entry if missing
             if task_id not in cache[metadata_key]:
                 cache[metadata_key][spec_id] = {
-                    "local_path": dest_path if action_type.lower() == "download" else src_path,
+                    "local_path": (
+                        dest_path if action_type.lower() == "download" else src_path
+                    ),
                     "api_response": {
                         "id": task_id,
                         "file_path": item.get("file_path"),
@@ -4608,40 +5430,131 @@ class FileWatcherWorker(QObject):
                         "thumbnail": item.get("thumbnail"),
                         "created_on": item.get("created_on"),
                         "updated_date": item.get("updated_date"),
-                        "request_status": f"{status_prefix} Started"
+                        "request_status": f"{status_prefix} Started",
+                        "is_nas_src": item.get("is_nas_src"),
+                        "is_nas_dest": item.get("is_nas_dest"),
+                        "storage_type": item.get("storage_type"),
+                        "storage_backend": item.get("storage_backend"),
                     },
-                    
                 }
 
             # Save initial "In Progress" state
             save_cache(cache, significant_change=True)
             update_download_upload_metadata(task_id, "In Progress")
             logger.info(f"[{status_prefix} In Progress] Task {task_id}")
-            self.progress_update.emit(f"{action_type} (Task {task_id}): {Path(src_path).name}", dest_path, 10)
-            self.download_status_detail.emit(dest_path, f"{action_type} (Task {task_id}): {Path(src_path).name}", action_type, 10, True)
+            self.progress_update.emit(
+                f"{action_type} (Task {task_id}): {Path(src_path).name}", dest_path, 10
+            )
+            self.download_status_detail.emit(
+                dest_path,
+                f"{action_type} (Task {task_id}): {Path(src_path).name}",
+                action_type,
+                10,
+                True,
+            )
             # ------------------------------
             # Handle Download
             # ------------------------------
             if action_type.lower() == "download":
-               
-                dest_path = self._prepare_download_path(item)
+                if is_nas_src == False:
+                    # SFTP/NAS path
+                    dest_path = self._prepare_download_path(item)
 
-                if is_nas_src:
+                    transfer_mode = "SFTP"
+                    print("\n" + "=" * 90, flush=True)
+                    print("[DOWNLOAD ROUTE]", flush=True)
+                    print(f"Mode        : {transfer_mode}", flush=True)
+                    print(f"Task ID     : {task_id}", flush=True)
+                    print(f"Spec ID     : {spec_id}", flush=True)
+                    print(f"Source Path : {src_path}", flush=True)
+                    print(f"Dest Path   : {dest_path}", flush=True)
+                    print(f"SFTP Server : {NAS_IP}:{NAS_PORT}", flush=True)
+                    print("=" * 90, flush=True)
+
+                    logger.info(
+                        f"[DOWNLOAD][{transfer_mode}] "
+                        f"Task={task_id} | Spec={spec_id} | "
+                        f"Source={src_path} | Destination={dest_path} | "
+                        f"Server={NAS_IP}:{NAS_PORT}"
+                    )
+
                     self._download_from_nas(src_path, dest_path, item)
+
                 else:
-                    self._download_from_http(src_path, dest_path)
+                    # Rclone S3 path. Keep the local destination calculated by
+                    # the task router; do not treat the S3 URL/key as a local path.
+                    Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+
+                    transfer_mode = "S3"
+                    s3_endpoint = globals().get("S3_ENDPOINT", "-")
+                    s3_bucket = globals().get("S3_BUCKET", "-")
+
+                    print("\n" + "=" * 90, flush=True)
+                    print("[DOWNLOAD ROUTE]", flush=True)
+                    print(f"Mode        : {transfer_mode}", flush=True)
+                    print(f"Task ID     : {task_id}", flush=True)
+                    print(f"Spec ID     : {spec_id}", flush=True)
+                    print(f"Source Path : {src_path}", flush=True)
+                    print(f"Dest Path   : {dest_path}", flush=True)
+                    print(f"S3 Endpoint : {s3_endpoint}", flush=True)
+                    print(f"S3 Bucket   : {s3_bucket}", flush=True)
+                    print("=" * 90, flush=True)
+
+                    logger.info(
+                        f"[DOWNLOAD][{transfer_mode}] "
+                        f"Task={task_id} | Spec={spec_id} | "
+                        f"Source={src_path} | Destination={dest_path} | "
+                        f"Endpoint={s3_endpoint} | Bucket={s3_bucket}"
+                    )
+
+                    self._download_from_http(src_path, dest_path, item)
 
                 if not os.path.exists(dest_path):
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Failed"
+                    transfer_mode = "SFTP" if is_nas_src else "S3"
+                    print(
+                        f"[DOWNLOAD FAILED] "
+                        f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                        f"Source={src_path} | Destination={dest_path} | "
+                        f"Reason=Downloaded file not found",
+                        flush=True,
+                    )
+
+                    logger.error(
+                        f"[DOWNLOAD FAILED] "
+                        f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                        f"Source={src_path} | Destination={dest_path}"
+                    )
+
+                    cache[metadata_key][spec_id]["api_response"][
+                        "request_status"
+                    ] = f"{status_prefix} Failed"
                     save_cache(cache, significant_change=True)
                     if is_final_attempt:
                         self.alert_notification.emit(
                             "Download Error",
-                            f"Downloaded file was not found on disk:\n{dest_path}\n\nThe transfer may have been incomplete."
+                            f"Downloaded file was not found on disk:\n{dest_path}\n\nThe transfer may have been incomplete.",
                         )
-                    raise FileNotFoundError(f"{status_prefix} file not found: {dest_path}")
+                    raise FileNotFoundError(
+                        f"{status_prefix} file not found: {dest_path}"
+                    )
 
-                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
+                transfer_mode = "SFTP" if is_nas_src else "S3"
+                print(
+                    f"[DOWNLOAD COMPLETED] "
+                    f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                    f"Source={src_path} | Local Path={dest_path}",
+                    flush=True,
+                )
+
+                logger.info(
+                    f"[DOWNLOAD COMPLETED] "
+                    f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                    f"Source={src_path} | Local Path={dest_path}"
+                )
+
+                cache[metadata_key][spec_id]["api_response"][
+                    "request_status"
+                ] = f"{status_prefix} Completed"
                 cache[metadata_key][spec_id]["local_path"] = dest_path
                 save_cache(cache, significant_change=True)
                 update_download_upload_metadata(task_id, "completed")
@@ -4651,181 +5564,273 @@ class FileWatcherWorker(QObject):
                     key_val = item.get("key_val")
                     self.open_with_photoshop(dest_path, key_val)
                 except Exception as e:
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Failed Photoshop"
+                    cache[metadata_key][spec_id]["api_response"][
+                        "request_status"
+                    ] = f"{status_prefix} Failed Photoshop"
                     save_cache(cache, significant_change=True)
-                    logger.warning(f"Failed to open {dest_path} with Photoshop: {str(e)}")
-                    self.log_update.emit(f"[Transfer] Warning: Failed to open {dest_path} with Photoshop: {str(e)}")
-
-                # Optional: Conversion to JPG
-                # cache[metadata_key][task_id]["api_response"]["request_status"] = f"{status_prefix} Conversion Started"
-                # save_cache(cache, significant_change=True)
-                # local_jpg, _ = process_single_file(dest_path)
-                # if local_jpg:
-                #     cache[metadata_key][task_id]["api_response"]["request_status"] = f"{status_prefix} Conversion Completed"
-                #     save_cache(cache, significant_change=True)
-                #     app_signals.update_file_list.emit(local_jpg, "Conversion Completed", "download", 100, False)
-                # else:
-                #     cache[metadata_key][task_id]["api_response"]["request_status"] = f"{status_prefix} Conversion Failed"
-                #     save_cache(cache, significant_change=True)
-                #     self.log_update.emit(f"[Transfer] Failed: JPG conversion failed for {dest_path}")
-
-                # self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {Path(src_path).name}", dest_path, 100)
-                # app_signals.update_file_list.emit(dest_path, f"{action_type} Completed", "download", 100, is_nas_src)
+                    logger.warning(
+                        f"Failed to open {dest_path} with Photoshop: {str(e)}"
+                    )
+                    self.log_update.emit(
+                        f"[Transfer] Warning: Failed to open {dest_path} with Photoshop: {str(e)}"
+                    )
 
             # ------------------------------
             # Handle Upload / Replace
             # ------------------------------
             elif action_type.lower() in ("upload", "replace"):
-                # Upload to NAS or HTTP
-                # print(f"======into Upload-replace==========={src_path}====")
-                if is_nas_dest:
-                    job_id = str(item.get("job_id"))
-                    allowed_types = get_file_types_from_api(job_id)
-                    matched_file = None
-                    matched_ext = None
-                    first_prior = False
-                    try:
-                        #for ext in allowed_types:
-                        for ind, ext in enumerate(allowed_types):
-                            # alt_path = src_path.with_suffix(f".{ext}")
-                            alt_path = Path(src_path).with_suffix(f".{ext}")
+                # ----------------------------------------------------------
+                # Common upload preparation. File selection / size limit /
+                # PSD validation are transport-independent and must run for
+                # BOTH SFTP and rclone S3.
+                # ----------------------------------------------------------
+                job_id = str(item.get("job_id"))
+                allowed_types = get_file_types_from_api(job_id)
+                if not isinstance(allowed_types, (list, tuple)) or not allowed_types:
+                    raise RuntimeError(
+                        f"No allowed upload formats returned for job_id={job_id}"
+                    )
 
-                            if alt_path.exists():
-                                first_prior = ind == 0
-                                matched_file = alt_path
-                                matched_ext = ext
-                                break
-                        # print(f"=====matched_file================{matched_file}======")
-                        if matched_file:
-                            src_path = matched_file
-                            # filename = src_path.name
-                            if not first_prior:
-                                #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
-                                self.alert_notification.emit("File Format Alert", f"Prefered format: {allowed_types[0].upper()}, Currently uploading {matched_ext.upper()} file.")            
-                        else:
-                            if is_final_attempt:
-                                self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
-                            cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
-                            save_cache(cache, significant_change=True)
-                            raise NotImplementedError("HTTP upload not implemented")
+                matched_file = None
+                matched_ext = None
+                first_prior = False
 
-                        dest_path = item.get("file_path", dest_path)
-                        if matched_ext:
-                            dest_path = str(Path(dest_path).with_suffix(f".{matched_ext}"))
-                        #dest_dir = os.path.dirname(dest_path)
-                        dest_path = dest_path.replace("\\", "/")
+                for ind, ext in enumerate(allowed_types):
+                    ext = str(ext).lstrip(".")
+                    alt_path = Path(src_path).with_suffix(f".{ext}")
+                    if alt_path.exists():
+                        first_prior = ind == 0
+                        matched_file = alt_path
+                        matched_ext = ext
+                        break
 
-                        # ── TEMPORARY: max upload file size limit ──────────
-                        # Applies to every upload/replace, any file type.
-                        # To disable: set ENABLE_MAX_UPLOAD_SIZE_LIMIT = False
-                        # near the top of this file — no other changes needed.
-                        too_big, size_mb = exceeds_max_upload_size(src_path)
-                        if too_big:
-                            cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Blocked (Too Large)"
-                            save_cache(cache, significant_change=True)
-                            self.alert_notification.emit(
-                                "Upload Blocked — File Too Large",
-                                f"'{Path(src_path).name}' is {size_mb:.1f} MB, which exceeds the "
-                                f"current {MAX_UPLOAD_SIZE_MB} MB upload limit.\n\n"
-                                "Please contact your administrator if this file needs to be uploaded."
-                            )
-                            raise UploadSizeLimitExceeded(
-                                f"{Path(src_path).name} ({size_mb:.1f} MB) exceeds the {MAX_UPLOAD_SIZE_MB} MB upload limit"
-                            )
+                if not matched_file:
+                    if is_final_attempt:
+                        self.alert_notification.emit(
+                            "ERROR",
+                            "No completed file found in target folder. Upload the file manually.",
+                        )
+                    cache[metadata_key][spec_id]["api_response"][
+                        "request_status"
+                    ] = f"{status_prefix} Failed - Source Missing"
+                    save_cache(cache, significant_change=True)
+                    raise FileNotFoundError("No completed file found in target folder")
 
-                        # ── PSD/PSB pre-upload production-readiness validation ──
-                        # For .psd/.psb files only: run the checklist and show
-                        # the report + Upload/Cancel confirmation dialog to the
-                        # user BEFORE the file is sent to the NAS — regardless
-                        # of whether validation passed or failed.
-                        src_ext = Path(src_path).suffix.lower().lstrip(".")
-                        if src_ext in ("psd", "psb"):
-                            proceed_with_upload = self._validate_and_confirm_psd_upload(str(src_path))
-                            if not proceed_with_upload:
-                                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Cancelled"
-                                save_cache(cache, significant_change=True)
-                                self.alert_notification.emit(
-                                    "Upload Cancelled",
-                                    f"Upload of '{Path(src_path).name}' was cancelled after PSD validation review."
-                                )
-                                raise PSDUploadCancelled(
-                                    f"Upload cancelled by user after PSD validation for {Path(src_path).name}"
-                                )
+                src_path = matched_file
+                if not first_prior:
+                    self.alert_notification.emit(
+                        "File Format Alert",
+                        f"Preferred format: {str(allowed_types[0]).upper()}, "
+                        f"currently uploading {matched_ext.upper()} file.",
+                    )
+
+                # The API's file_path remains the remote object/path.
+                dest_path = str(item.get("file_path", dest_path)).replace("\\", "/")
+                if matched_ext:
+                    dest_path = _replace_remote_suffix(dest_path, matched_ext)
+
+                too_big, size_mb = exceeds_max_upload_size(src_path)
+                if too_big:
+                    cache[metadata_key][spec_id]["api_response"][
+                        "request_status"
+                    ] = f"{status_prefix} Blocked (Too Large)"
+                    save_cache(cache, significant_change=True)
+                    self.alert_notification.emit(
+                        "Upload Blocked — File Too Large",
+                        f"'{Path(src_path).name}' is {size_mb:.1f} MB, which exceeds the "
+                        f"current {MAX_UPLOAD_SIZE_MB} MB upload limit.\n\n"
+                        "Please contact your administrator if this file needs to be uploaded.",
+                    )
+                    raise UploadSizeLimitExceeded(
+                        f"{Path(src_path).name} ({size_mb:.1f} MB) exceeds the {MAX_UPLOAD_SIZE_MB} MB upload limit"
+                    )
+
+                src_ext = Path(src_path).suffix.lower().lstrip(".")
+                if src_ext in ("psd", "psb"):
+                    proceed_with_upload = self._validate_and_confirm_psd_upload(
+                        str(src_path)
+                    )
+                    if not proceed_with_upload:
+                        cache[metadata_key][spec_id]["api_response"][
+                            "request_status"
+                        ] = f"{status_prefix} Cancelled"
+                        save_cache(cache, significant_change=True)
+                        self.alert_notification.emit(
+                            "Upload Cancelled",
+                            f"Upload of '{Path(src_path).name}' was cancelled after PSD validation review.",
+                        )
+                        raise PSDUploadCancelled(
+                            f"Upload cancelled by user after PSD validation for {Path(src_path).name}"
+                        )
+
+                # ----------------------------------------------------------
+                # Transport selection:
+                #   is_nas_dest=True  -> existing SFTP upload
+                #   is_nas_dest=False -> rclone S3-compatible upload
+                # ----------------------------------------------------------
+                print("[is_nas_dest]", is_nas_dest)
+                try:
+                    if is_nas_dest == False:
+                        transfer_mode = "SFTP"
+
+                        print("\n" + "=" * 90, flush=True)
+                        print("[UPLOAD ROUTE]", flush=True)
+                        print(f"Mode        : {transfer_mode}", flush=True)
+                        print(f"Action      : {action_type.upper()}", flush=True)
+                        print(f"Task ID     : {task_id}", flush=True)
+                        print(f"Spec ID     : {spec_id}", flush=True)
+                        print(f"Source Path : {src_path}", flush=True)
+                        print(f"Dest Path   : {dest_path}", flush=True)
+                        print(f"SFTP Server : {NAS_IP}:{NAS_PORT}", flush=True)
+                        print("=" * 90, flush=True)
+
+                        logger.info(
+                            f"[{action_type.upper()}][{transfer_mode}] "
+                            f"Task={task_id} | Spec={spec_id} | "
+                            f"Source={src_path} | Destination={dest_path} | "
+                            f"Server={NAS_IP}:{NAS_PORT}"
+                        )
 
                         self._upload_to_nas(src_path, dest_path, item)
-                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
-                    except (PSDUploadCancelled, UploadSizeLimitExceeded):
-                        # Do NOT mask these as "HTTP Not Implemented" — re-raise
-                        # as-is so the outer handler reports them accurately.
-                        raise
-                    except Exception as e:
-                        # self.alert_notification.emit("ERROR", f"2No completed file found in target folder. upload the file manually.")            
-                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
-                        save_cache(cache, significant_change=True)
-                        raise NotImplementedError("HTTP upload not implemented")
 
-                else:
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
+                    else:
+                        transfer_mode = "S3"
+                        s3_endpoint = globals().get("S3_ENDPOINT", "-")
+                        s3_bucket = globals().get("S3_BUCKET", "-")
+
+                        print("\n" + "=" * 90, flush=True)
+                        print("[UPLOAD ROUTE]", flush=True)
+                        print(f"Mode        : {transfer_mode}", flush=True)
+                        print(f"Action      : {action_type.upper()}", flush=True)
+                        print(f"Task ID     : {task_id}", flush=True)
+                        print(f"Spec ID     : {spec_id}", flush=True)
+                        print(f"Source Path : {src_path}", flush=True)
+                        print(f"Dest Path   : {dest_path}", flush=True)
+                        print(f"S3 Endpoint : {s3_endpoint}", flush=True)
+                        print(f"S3 Bucket   : {s3_bucket}", flush=True)
+                        print("=" * 90, flush=True)
+
+                        logger.info(
+                            f"[{action_type.upper()}][{transfer_mode}] "
+                            f"Task={task_id} | Spec={spec_id} | "
+                            f"Source={src_path} | Destination={dest_path} | "
+                            f"Endpoint={s3_endpoint} | Bucket={s3_bucket}"
+                        )
+
+                        self._upload_to_http(src_path, dest_path, item)
+
+                except (PSDUploadCancelled, UploadSizeLimitExceeded):
+                    raise
+                except Exception as transport_error:
+                    transfer_mode = "SFTP" if is_nas_dest else "S3"
+
+                    print(
+                        f"[{action_type.upper()} FAILED] "
+                        f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                        f"Source={src_path} | Destination={dest_path} | "
+                        f"Error={transport_error}",
+                        flush=True,
+                    )
+
+                    cache[metadata_key][spec_id]["api_response"][
+                        "request_status"
+                    ] = f"{status_prefix} Failed"
                     save_cache(cache, significant_change=True)
-                    raise NotImplementedError("HTTP upload not implemented")
-                
+                    logger.exception(
+                        f"{status_prefix} transport failed "
+                        f"(Mode={transfer_mode}) for {Path(src_path).name}"
+                    )
+                    raise
+
+                transfer_mode = "SFTP" if is_nas_dest else "S3"
+                print(
+                    f"[{action_type.upper()} COMPLETED] "
+                    f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                    f"Source={src_path} | Destination={dest_path}",
+                    flush=True,
+                )
+
+                logger.info(
+                    f"[{action_type.upper()} COMPLETED] "
+                    f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                    f"Source={src_path} | Destination={dest_path}"
+                )
+
+                cache[metadata_key][spec_id]["api_response"][
+                    "request_status"
+                ] = f"{status_prefix} Completed"
+
                 if not os.path.exists(src_path):
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Source Missing"
+                    cache[metadata_key][spec_id]["api_response"][
+                        "request_status"
+                    ] = f"{status_prefix} Source Missing"
                     save_cache(cache, significant_change=True)
                     if is_final_attempt:
                         self.alert_notification.emit(
                             "Upload Error",
-                            "Completed files are not available. Please upload them manually."
+                            "Completed files are not available. Please upload them manually.",
                         )
                     raise FileNotFoundError(f"Source file does not exist: {src_path}")
 
                 # Check if file is accessible
                 try:
-                    with open(src_path, 'rb') as f:
+                    with open(src_path, "rb") as f:
                         f.read(1)
                 except (PermissionError, IOError):
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} File In Use"
+                    cache[metadata_key][spec_id]["api_response"][
+                        "request_status"
+                    ] = f"{status_prefix} File In Use"
                     save_cache(cache, significant_change=True)
-                    raise RuntimeError(f"File {src_path} is currently in use by another application.")
-
-                
+                    raise RuntimeError(
+                        f"File {src_path} is currently in use by another application."
+                    )
 
                 save_cache(cache, significant_change=True)
                 update_download_upload_metadata(task_id, "completed")
-                self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {Path(src_path).name}", dest_path, 100)
-                self.download_status_detail.emit(dest_path, f"{action_type} (Task {task_id}): {Path(src_path).name}", action_type, 10, True)
-
+                self.progress_update.emit(
+                    f"{action_type} Completed (Task {task_id}): {Path(src_path).name}",
+                    dest_path,
+                    100,
+                )
+                self.download_status_detail.emit(
+                    dest_path,
+                    f"{action_type} (Task {task_id}): {Path(src_path).name}",
+                    action_type,
+                    10,
+                    True,
+                )
 
                 try:
                     request_data = {
-                        'job_id': item.get('job_id'),
-                        'project_id': item.get("project_id"),
-                        'file_name': item.get("user_id"),
-                        'user_id': item.get("user_id"),
-                        'user_type': item.get("user_type"),
-                        'spec_id': item.get("spec_id"),
-                        'creative_id': item.get("creative_id"),
-                        'inventory_id': item.get("inventory_id"),
-                        'nas_path': NAS_PATH + dest_path,
+                        "job_id": item.get("job_id"),
+                        "project_id": item.get("project_id"),
+                        "file_name": item.get("user_id"),
+                        "user_id": item.get("user_id"),
+                        "user_type": item.get("user_type"),
+                        "spec_id": item.get("spec_id"),
+                        "creative_id": item.get("creative_id"),
+                        "inventory_id": item.get("inventory_id"),
+                        "nas_path": NAS_PATH + dest_path,
                     }
 
                     response = requests.post(
-                        DRUPAL_DB_ENTRY_API,
-                        data=request_data,
-                        headers={},
-                        verify=False
+                        DRUPAL_DB_ENTRY_API, data=request_data, headers={}, verify=False
                     )
 
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} completed"
+                    cache[metadata_key][spec_id]["api_response"][
+                        "request_status"
+                    ] = f"{status_prefix} completed"
                     save_cache(cache, significant_change=True)
                     update_download_upload_metadata(task_id, "Conversion Started")
                     logging.info(f"DRUPAL_DB_ENTRY_API data success: {response.text}")
 
                 except Exception as e:
-                    cache[metadata_key][spec_id]["status"] = f"{status_prefix} API Call Failed"
+                    cache[metadata_key][spec_id][
+                        "status"
+                    ] = f"{status_prefix} API Call Failed"
                     save_cache(cache, significant_change=True)
                     logging.error(f"DRUPAL_DB_ENTRY_API call error: {str(e)}")
-                
+
             else:
                 raise ValueError(f"Invalid action_type: {action_type}")
             IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
@@ -4836,17 +5841,36 @@ class FileWatcherWorker(QObject):
             # and logging distinct from a genuine "Failed" transfer.
             cache.setdefault(metadata_key, {})
             if spec_id not in cache[metadata_key]:
-                cache[metadata_key][spec_id] = {"local_path": dest_path, "status": f"{status_prefix} Cancelled"}
+                cache[metadata_key][spec_id] = {
+                    "local_path": dest_path,
+                    "status": f"{status_prefix} Cancelled",
+                }
             else:
-                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Cancelled"
+                cache[metadata_key][spec_id]["api_response"][
+                    "request_status"
+                ] = f"{status_prefix} Cancelled"
 
             save_cache(cache, significant_change=True)
             update_download_upload_metadata(task_id, "cancelled")
             IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
-            logger.info(f"{status_prefix} cancelled by user after PSD validation (Task {task_id}): {str(e)}")
-            self.log_update.emit(f"[Transfer] Cancelled by user (Task {task_id}): {str(e)}")
-            self.progress_update.emit(f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}", dest_path, 0)
-            self.download_status_detail.emit(dest_path, f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}", action_type, 0, True)
+            logger.info(
+                f"{status_prefix} cancelled by user after PSD validation (Task {task_id}): {str(e)}"
+            )
+            self.log_update.emit(
+                f"[Transfer] Cancelled by user (Task {task_id}): {str(e)}"
+            )
+            self.progress_update.emit(
+                f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}",
+                dest_path,
+                0,
+            )
+            self.download_status_detail.emit(
+                dest_path,
+                f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}",
+                action_type,
+                0,
+                True,
+            )
 
             raise
 
@@ -4856,17 +5880,36 @@ class FileWatcherWorker(QObject):
             # and logging distinct from a genuine "Failed" transfer.
             cache.setdefault(metadata_key, {})
             if spec_id not in cache[metadata_key]:
-                cache[metadata_key][spec_id] = {"local_path": dest_path, "status": f"{status_prefix} Blocked (Too Large)"}
+                cache[metadata_key][spec_id] = {
+                    "local_path": dest_path,
+                    "status": f"{status_prefix} Blocked (Too Large)",
+                }
             else:
-                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Blocked (Too Large)"
+                cache[metadata_key][spec_id]["api_response"][
+                    "request_status"
+                ] = f"{status_prefix} Blocked (Too Large)"
 
             save_cache(cache, significant_change=True)
             update_download_upload_metadata(task_id, "blocked")
             IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
-            logger.info(f"{status_prefix} blocked by size limit (Task {task_id}): {str(e)}")
-            self.log_update.emit(f"[Transfer] Blocked — exceeds size limit (Task {task_id}): {str(e)}")
-            self.progress_update.emit(f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}", dest_path, 0)
-            self.download_status_detail.emit(dest_path, f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}", action_type, 0, True)
+            logger.info(
+                f"{status_prefix} blocked by size limit (Task {task_id}): {str(e)}"
+            )
+            self.log_update.emit(
+                f"[Transfer] Blocked — exceeds size limit (Task {task_id}): {str(e)}"
+            )
+            self.progress_update.emit(
+                f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}",
+                dest_path,
+                0,
+            )
+            self.download_status_detail.emit(
+                dest_path,
+                f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}",
+                action_type,
+                0,
+                True,
+            )
 
             raise
 
@@ -4874,17 +5917,32 @@ class FileWatcherWorker(QObject):
             # Update cache with failure
             cache.setdefault(metadata_key, {})
             if spec_id not in cache[metadata_key]:
-                cache[metadata_key][spec_id] = {"local_path": dest_path, "status": f"{status_prefix} Failed"}
+                cache[metadata_key][spec_id] = {
+                    "local_path": dest_path,
+                    "status": f"{status_prefix} Failed",
+                }
             else:
-                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Failed"
+                cache[metadata_key][spec_id]["api_response"][
+                    "request_status"
+                ] = f"{status_prefix} Failed"
 
             save_cache(cache, significant_change=True)
             update_download_upload_metadata(task_id, "failed")
             IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
             logger.error(f"{status_prefix} error (Task {task_id}): {str(e)}")
             self.log_update.emit(f"[Transfer] Failed (Task {task_id}): {str(e)}")
-            self.progress_update.emit(f"{action_type} Failed (Task {task_id}): {Path(src_path).name}", dest_path, 0)
-            self.download_status_detail.emit(dest_path, f"{action_type} Failed (Task {task_id}): {Path(src_path).name}", action_type, 10, True)
+            self.progress_update.emit(
+                f"{action_type} Failed (Task {task_id}): {Path(src_path).name}",
+                dest_path,
+                0,
+            )
+            self.download_status_detail.emit(
+                dest_path,
+                f"{action_type} Failed (Task {task_id}): {Path(src_path).name}",
+                action_type,
+                10,
+                True,
+            )
 
             raise
 
@@ -4892,25 +5950,39 @@ class FileWatcherWorker(QObject):
     def run(self):
         with self._lock:
             if self._busy:
-                logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] File watcher already running, skipping")
+                logger.debug(
+                    f"[{datetime.now(timezone.utc).isoformat()}] File watcher already running, skipping"
+                )
                 self.log_update.emit("[FileWatcher] Skipped: Already running")
                 return
             current_time = datetime.now(timezone.utc)
-            if hasattr(self, 'next_api_hit_time') and self.next_api_hit_time and current_time < self.next_api_hit_time:
-                logger.debug(f"[{current_time.isoformat()}] API call skipped: Too soon since last call")
-                self.log_update.emit("[FileWatcher] Skipped: Too soon since last API call")
+            if (
+                hasattr(self, "next_api_hit_time")
+                and self.next_api_hit_time
+                and current_time < self.next_api_hit_time
+            ):
+                logger.debug(
+                    f"[{current_time.isoformat()}] API call skipped: Too soon since last call"
+                )
+                self.log_update.emit(
+                    "[FileWatcher] Skipped: Too soon since last API call"
+                )
                 return
             self._busy = True
             self._is_running = True
 
         try:
             # Initialize executor and semaphore if not already set
-            if not hasattr(self, 'executor'):
+            if not hasattr(self, "executor"):
                 self.executor = ThreadPoolExecutor(max_workers=2)
-                self.log_update.emit("[FileWatcher] Initialized ThreadPoolExecutor with max_workers=2")
-            if not hasattr(self, 'sftp_semaphore'):
+                self.log_update.emit(
+                    "[FileWatcher] Initialized ThreadPoolExecutor with max_workers=2"
+                )
+            if not hasattr(self, "sftp_semaphore"):
                 self.sftp_semaphore = Semaphore(2)
-                self.log_update.emit("[FileWatcher] Initialized SFTP semaphore with limit=2")
+                self.log_update.emit(
+                    "[FileWatcher] Initialized SFTP semaphore with limit=2"
+                )
 
             if not self.running:
                 self.log_update.emit("[FileWatcher] Stopped: Worker is not running")
@@ -4928,15 +6000,17 @@ class FileWatcherWorker(QObject):
                 return
 
             cache = load_cache()
-            user_id = cache.get('user_id', '')
-            token = cache.get('token', '')
-            cache.setdefault('user_type', 'operator')
+            user_id = cache.get("user_id", "")
+            token = cache.get("token", "")
+            cache.setdefault("user_type", "operator")
             save_cache(cache, significant_change=False)
 
             if not user_id or not token:
                 logger.error("No user_id or token found in cache")
                 self.status_update.emit("No user_id or token found in cache")
-                self.log_update.emit("[API Scan] Failed: No user_id or token found in cache")
+                self.log_update.emit(
+                    "[API Scan] Failed: No user_id or token found in cache"
+                )
                 self.request_reauth.emit()
                 return
 
@@ -4945,7 +6019,9 @@ class FileWatcherWorker(QObject):
             app_signals.append_log.emit("[API Scan] Initiating file task check")
 
             self.last_api_hit_time = current_time
-            self.next_api_hit_time = self.last_api_hit_time + timedelta(milliseconds=self.api_poll_interval)
+            self.next_api_hit_time = self.last_api_hit_time + timedelta(
+                milliseconds=self.api_poll_interval
+            )
             app_signals.update_timer_status.emit(
                 f"Last API hit: {self.last_api_hit_time.strftime('%Y-%m-%d %H:%M:%S %Z')} | "
                 f"Next API hit: {self.next_api_hit_time.strftime('%Y-%m-%d %H:%M:%S %Z')} | "
@@ -4960,7 +6036,11 @@ class FileWatcherWorker(QObject):
                 machine_id = USER_SYSTEM_INFO.get("encoded_mac", "")
             elif isinstance(USER_SYSTEM_INFO, list) and USER_SYSTEM_INFO:
                 first_entry = USER_SYSTEM_INFO[0]
-                machine_id = first_entry.get("encoded_mac", "") if isinstance(first_entry, dict) else ""
+                machine_id = (
+                    first_entry.get("encoded_mac", "")
+                    if isinstance(first_entry, dict)
+                    else ""
+                )
             else:
                 machine_id = ""
 
@@ -4971,7 +6051,9 @@ class FileWatcherWorker(QObject):
                 try:
                     logger.debug(f"Hitting API: {api_url}")
                     app_signals.append_log.emit(f"[API Scan] Hitting API: {api_url}")
-                    response = HTTP_SESSION.get(api_url, headers=headers, verify=False, timeout=60)
+                    response = HTTP_SESSION.get(
+                        api_url, headers=headers, verify=False, timeout=60
+                    )
 
                     # ✅ FIX Bug 1: Call .json() ONCE and store it.
                     # Previously response.json() was called twice — the second call
@@ -4980,19 +6062,29 @@ class FileWatcherWorker(QObject):
                     try:
                         response_data = response.json()
                     except ValueError as json_err:
-                        logger.error(f"Failed to parse API response as JSON: {json_err}")
-                        self.log_update.emit(f"[API Scan] Failed: Invalid JSON response - {str(json_err)}")
+                        logger.error(
+                            f"Failed to parse API response as JSON: {json_err}"
+                        )
+                        self.log_update.emit(
+                            f"[API Scan] Failed: Invalid JSON response - {str(json_err)}"
+                        )
                         return
 
-                    logger.debug(f"API response: Status={response.status_code}, Content={str(response_data)[:500]}")
+                    logger.debug(
+                        f"API response: Status={response.status_code}, Content={str(response_data)[:500]}"
+                    )
                     app_signals.append_log.emit(
                         f"[API Scan] API response: Status={response.status_code}, "
                         f"Content={str(response_data)[:500]}"
                     )
                     app_signals.api_call_status.emit(
                         api_url,
-                        "Success" if response.status_code == 200 else f"Failed: {response.status_code}",
-                        response.status_code
+                        (
+                            "Success"
+                            if response.status_code == 200
+                            else f"Failed: {response.status_code}"
+                        ),
+                        response.status_code,
                     )
 
                     if response.status_code == 401:
@@ -5011,7 +6103,9 @@ class FileWatcherWorker(QObject):
                     if isinstance(response_data, dict):
                         if response_data.get("status") == 403:
                             logger.warning("403 received — user logged in elsewhere")
-                            self.log_update.emit("[API Scan] 403: User logged in on another machine")
+                            self.log_update.emit(
+                                "[API Scan] 403: User logged in on another machine"
+                            )
                             # ✅ FIX Bug 6: ONLY emit the signal here.
                             # Previously premedia.show_login_page() was called directly
                             # from the worker thread — unsafe UI call across threads.
@@ -5022,32 +6116,48 @@ class FileWatcherWorker(QObject):
                     elif isinstance(response_data, list):
                         tasks = response_data
                     else:
-                        logger.error(f"Unexpected API response type: {type(response_data)}")
-                        self.log_update.emit(f"[API Scan] Unexpected response type: {type(response_data)}")
+                        logger.error(
+                            f"Unexpected API response type: {type(response_data)}"
+                        )
+                        self.log_update.emit(
+                            f"[API Scan] Unexpected response type: {type(response_data)}"
+                        )
                         tasks = []
 
                     if not isinstance(tasks, list):
-                        logger.error(f"API returned non-list tasks: {type(tasks)}, data: {tasks}")
-                        self.log_update.emit(f"[API Scan] Failed: Non-list tasks: {type(tasks)}")
+                        logger.error(
+                            f"API returned non-list tasks: {type(tasks)}, data: {tasks}"
+                        )
+                        self.log_update.emit(
+                            f"[API Scan] Failed: Non-list tasks: {type(tasks)}"
+                        )
                         return
 
                     logger.debug(f"Retrieved {len(tasks)} tasks")
-                    app_signals.append_log.emit(f"[API Scan] Retrieved {len(tasks)} tasks from API")
+                    app_signals.append_log.emit(
+                        f"[API Scan] Retrieved {len(tasks)} tasks from API"
+                    )
                     break
 
                 except RequestException as e:
                     logger.error(f"Attempt {attempt + 1} failed fetching tasks: {e}")
-                    self.log_update.emit(f"[API Scan] Failed to fetch tasks (attempt {attempt + 1}): {str(e)}")
+                    self.log_update.emit(
+                        f"[API Scan] Failed to fetch tasks (attempt {attempt + 1}): {str(e)}"
+                    )
                     if attempt < max_retries - 1:
-                        time.sleep(2 ** attempt)
+                        time.sleep(2**attempt)
                         continue
-                    self.status_update.emit(f"Error fetching tasks after retries: {str(e)}")
+                    self.status_update.emit(
+                        f"Error fetching tasks after retries: {str(e)}"
+                    )
                     self.log_update.emit(f"[API Scan] Failed after retries: {str(e)}")
                     return
 
             unprocessed_tasks = [
-                task for task in tasks
-                if f"{task.get('id', '')}:{task.get('request_type', '').lower()}" not in self.processed_tasks
+                task
+                for task in tasks
+                if f"{task.get('id', '')}:{task.get('request_type', '').lower()}"
+                not in self.processed_tasks
             ]
 
             # Build task lists for GUI
@@ -5056,19 +6166,26 @@ class FileWatcherWorker(QObject):
             for item in unprocessed_tasks:
                 if not isinstance(item, dict):
                     continue
-                req_type = item.get('request_type', '').lower()
+                req_type = item.get("request_type", "").lower()
                 task_data = {
-                    "task_id": str(item.get('id', '')),
+                    "task_id": str(item.get("id", "")),
                     "action_type": req_type,
-                    "file_name": item.get('file_name', Path(item.get('file_path') or '').name if item.get('file_path') else 'unknown_file'),
-                    "file_path": item.get('file_path', ''),
+                    "file_name": item.get(
+                        "file_name",
+                        (
+                            Path(item.get("file_path") or "").name
+                            if item.get("file_path")
+                            else "unknown_file"
+                        ),
+                    ),
+                    "file_path": item.get("file_path", ""),
                     "status": "Queued",
-                    "thumbnail": item.get('thumbnail', ''),
-                    "job_id": item.get('job_id', ''),
-                    "job_name": item.get('job_name', ''),
-                    "project_id": item.get('project_id', ''),
-                    "project_name": item.get('project_name', ''),
-                    "created_at": datetime.now().strftime("%d-%b-%Y %I:%M %p")
+                    "thumbnail": item.get("thumbnail", ""),
+                    "job_id": item.get("job_id", ""),
+                    "job_name": item.get("job_name", ""),
+                    "project_id": item.get("project_id", ""),
+                    "project_name": item.get("project_name", ""),
+                    "created_at": datetime.now().strftime("%d-%b-%Y %I:%M %p"),
                 }
                 if req_type == "download":
                     task_data["task_type"] = "download"
@@ -5088,39 +6205,59 @@ class FileWatcherWorker(QObject):
             for item in unprocessed_tasks:
                 if not isinstance(item, dict):
                     logger.error(f"Invalid task item type: {type(item)}")
-                    self.log_update.emit(f"[API Scan] Failed: Invalid task type: {type(item)}")
+                    self.log_update.emit(
+                        f"[API Scan] Failed: Invalid task type: {type(item)}"
+                    )
                     continue
 
-                task_id = str(item.get('id', ''))
-                file_path = item.get('file_path', '')
+                task_id = str(item.get("id", ""))
+                file_path = item.get("file_path", "")
                 if not file_path:
                     logger.error(f"Invalid task {task_id}: Missing file_path")
-                    self.log_update.emit(f"[API Scan] Failed: Task {task_id} missing file_path")
+                    self.log_update.emit(
+                        f"[API Scan] Failed: Task {task_id} missing file_path"
+                    )
                     continue
 
-                file_name = item.get('file_name', Path(file_path).name)
-                action_type = item.get('request_type', '').lower()
+                file_name = item.get("file_name", Path(file_path).name)
+                action_type = item.get("request_type", "").lower()
                 task_key = f"{task_id}:{action_type}"
-                is_online = 'http' in file_path.lower()
-                local_path = str(BASE_TARGET_DIR / file_path.lstrip("/"))
+                # S3 is opt-in through is_nas_src/is_nas_dest or storage backend.
+                # Existing NAS/SFTP tasks continue through the old path.
+                is_online = _task_uses_s3(item, file_path)
+                if is_online:
+                    _, s3_key = _resolve_s3_location(file_path)
+                    local_path = str(BASE_TARGET_DIR / Path(s3_key))
+                else:
+                    local_path = str(BASE_TARGET_DIR / file_path.lstrip("/"))
 
                 with self._lock:
                     if task_key in self.processed_tasks:
                         logger.debug(f"Skipping duplicate task: {task_key}")
-                        self.log_update.emit(f"[API Scan] Skipped duplicate: {task_key}")
+                        self.log_update.emit(
+                            f"[API Scan] Skipped duplicate: {task_key}"
+                        )
                         continue
                     # self.processed_tasks.add(task_key)
                     self.processed_tasks[task_key] = time.time()
-                    
 
                 logger.debug(f"Submitting task: {task_key}, file_path={file_path}")
-                self.log_update.emit(f"[API Scan] Submitting: {task_key}, action={action_type}")
+                self.log_update.emit(
+                    f"[API Scan] Submitting: {task_key}, action={action_type}"
+                )
 
                 futures.append(
                     self.executor.submit(
                         self._process_task,
-                        task_id, file_name, file_path, action_type,
-                        local_path, is_online, item, 3, self.sftp_semaphore
+                        task_id,
+                        file_name,
+                        file_path,
+                        action_type,
+                        local_path,
+                        is_online,
+                        item,
+                        3,
+                        self.sftp_semaphore,
                     )
                 )
 
@@ -5131,14 +6268,14 @@ class FileWatcherWorker(QObject):
                 for future in futures:
                     try:
                         result = future.result()
-                        updates.append(result['update'])
+                        updates.append(result["update"])
                         # ── Mark as processed regardless of success/failure ──
                         # Without this, failed tasks are never added to processed_tasks
                         # and the poll loop keeps re-picking them up every 3 seconds,
                         # causing infinite retry loops and repeated popups.
                         with self._lock:
-                            self.processed_tasks[result['task_key']] = time.time()
-                        if result['success']:
+                            self.processed_tasks[result["task_key"]] = time.time()
+                        if result["success"]:
                             completed_tasks += 1
                         else:
                             failed_tasks += 1
@@ -5148,15 +6285,21 @@ class FileWatcherWorker(QObject):
                         failed_tasks += 1
                 for update in updates:
                     app_signals.update_file_list.emit(*update)
-                logger.info(f"Background task summary: {completed_tasks} completed, {failed_tasks} failed")
+                logger.info(
+                    f"Background task summary: {completed_tasks} completed, {failed_tasks} failed"
+                )
                 self.log_update.emit(
                     f"[FileWatcher] Background task summary: {completed_tasks} completed, {failed_tasks} failed"
                 )
 
             Thread(target=handle_task_results, args=(futures,), daemon=True).start()
             self.status_update.emit("File tasks check completed")
-            self.log_update.emit(f"[API Scan] Completed: Submitted {len(futures)} tasks")
-            app_signals.append_log.emit(f"[API Scan] Completed: {len(futures)} tasks submitted")
+            self.log_update.emit(
+                f"[API Scan] Completed: Submitted {len(futures)} tasks"
+            )
+            app_signals.append_log.emit(
+                f"[API Scan] Completed: {len(futures)} tasks submitted"
+            )
 
         except Exception as e:
             logger.error(f"Error in file watcher run: {e}")
@@ -5166,10 +6309,22 @@ class FileWatcherWorker(QObject):
         finally:
             self._busy = False
             self._is_running = False
-            self.log_update.emit("[FileWatcher] Cycle completed, awaiting next timer tick")
+            self.log_update.emit(
+                "[FileWatcher] Cycle completed, awaiting next timer tick"
+            )
 
-
-    def _process_task(self, task_id, file_name, file_path, action_type, local_path, is_online, item, max_download_retries, sftp_semaphore):
+    def _process_task(
+        self,
+        task_id,
+        file_name,
+        file_path,
+        action_type,
+        local_path,
+        is_online,
+        item,
+        max_download_retries,
+        sftp_semaphore,
+    ):
         """Process a single task (download/upload) with retry logic and SFTP semaphore."""
         # update_download_upload_metadata(task_id, "in progress")
         task_key = f"{task_id}:{action_type}"
@@ -5177,38 +6332,94 @@ class FileWatcherWorker(QObject):
         try:
             if action_type == "download":
                 self.status_update.emit(f"Downloading {file_name}")
-                self.log_update.emit(f"[API Scan] Starting download: {file_path} to {local_path}, task_id: {task_id}")
-                app_signals.append_log.emit(f"[API Scan] Initiating download: {file_name}")
-                app_signals.update_file_list.emit(local_path, f"{action_type} Queued", action_type, 0, not is_online)
+                self.log_update.emit(
+                    f"[API Scan] Starting download: {file_path} to {local_path}, task_id: {task_id}"
+                )
+                app_signals.append_log.emit(
+                    f"[API Scan] Initiating download: {file_name}"
+                )
+                app_signals.update_file_list.emit(
+                    local_path, f"{action_type} Queued", action_type, 0, not is_online
+                )
                 for attempt in range(max_download_retries):
-                    is_final_attempt = (attempt == max_download_retries - 1)
+                    is_final_attempt = attempt == max_download_retries - 1
                     try:
                         if not is_online:
                             with sftp_semaphore:  # Limit concurrent SFTP connections
-                                self.show_progress(f"Downloading {file_name}", file_path, local_path, action_type, item, not is_online, False)
+                                self.show_progress(
+                                    f"Downloading {file_name}",
+                                    file_path,
+                                    local_path,
+                                    action_type,
+                                    item,
+                                    not is_online,
+                                    False,
+                                )
                         else:
-                            self.show_progress(f"Downloading {file_name}", file_path, local_path, action_type, item, not is_online, False)
+                            self.show_progress(
+                                f"Downloading {file_name}",
+                                file_path,
+                                local_path,
+                                action_type,
+                                item,
+                                not is_online,
+                                False,
+                            )
                         if os.path.exists(local_path):
-                            self.log_update.emit(f"[API Scan] Download successful: {local_path}, task_id: {task_id}")
+                            self.log_update.emit(
+                                f"[API Scan] Download successful: {local_path}, task_id: {task_id}"
+                            )
                             return {
-                                'update': (local_path, f"Download Completed", action_type, 100, not is_online),
-                                'task_key': task_key,
-                                'success': True
+                                "update": (
+                                    local_path,
+                                    f"Download Completed",
+                                    action_type,
+                                    100,
+                                    not is_online,
+                                ),
+                                "task_key": task_key,
+                                "success": True,
                             }
                         else:
-                            logger.warning(f"[{datetime.now(timezone.utc).isoformat()}] Download failed for {local_path}; attempt {attempt + 1} of {max_download_retries}, instance: {id(self)}")
-                            self.log_update.emit(f"[API Scan] Download failed for {local_path}; attempt {attempt + 1} of {max_download_retries}")
-                            update = (local_path, f"Download Failed: File not found", action_type, 0, not is_online)
+                            logger.warning(
+                                f"[{datetime.now(timezone.utc).isoformat()}] Download failed for {local_path}; attempt {attempt + 1} of {max_download_retries}, instance: {id(self)}"
+                            )
+                            self.log_update.emit(
+                                f"[API Scan] Download failed for {local_path}; attempt {attempt + 1} of {max_download_retries}"
+                            )
+                            update = (
+                                local_path,
+                                f"Download Failed: File not found",
+                                action_type,
+                                0,
+                                not is_online,
+                            )
                             if attempt == max_download_retries - 1:
-                                raise FileNotFoundError(f"Downloaded file not found: {local_path}")
+                                raise FileNotFoundError(
+                                    f"Downloaded file not found: {local_path}"
+                                )
                     except Exception as e:
-                        logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Download failed for {local_path} (Task {task_id}): {str(e)}, attempt {attempt + 1}, instance: {id(self)}")
-                        self.log_update.emit(f"[API Scan] Download failed for {local_path} (Task {task_id}): {str(e)}")
-                        update = (local_path, f"Download Failed: {str(e)}", action_type, 0, not is_online)
+                        logger.error(
+                            f"[{datetime.now(timezone.utc).isoformat()}] Download failed for {local_path} (Task {task_id}): {str(e)}, attempt {attempt + 1}, instance: {id(self)}"
+                        )
+                        self.log_update.emit(
+                            f"[API Scan] Download failed for {local_path} (Task {task_id}): {str(e)}"
+                        )
+                        update = (
+                            local_path,
+                            f"Download Failed: {str(e)}",
+                            action_type,
+                            0,
+                            not is_online,
+                        )
                         if attempt < max_download_retries - 1:
-                            delay = 2 ** attempt
-                            logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Retrying download after {delay}s, instance: {id(self)}")
-                            self.log_update.emit(f"[API Scan] Retrying download after {delay}s")
+                            delay = 2**attempt
+                            logger.debug(
+                                f"[{datetime.now(timezone.utc).isoformat()}] Retrying download after {delay}s, instance: {id(self)}"
+                            )
+                            self.log_update.emit(
+                                f"[API Scan] Retrying download after {delay}s"
+                            )
                             # ── NEW: tell the UI a retry is happening ──
                             # Without this the card/window keeps showing the last
                             # progress % it received before the drop, which looks
@@ -5226,16 +6437,32 @@ class FileWatcherWorker(QObject):
                             raise
             elif action_type.lower() in ("upload", "replace"):
                 self.status_update.emit(f"Uploading {file_name}")
-                self.log_update.emit(f"[API Scan] Starting upload: {local_path} to {file_path}, task_id: {task_id}")
-                app_signals.append_log.emit(f"[API Scan] Initiating upload: {file_name}")
-                app_signals.update_file_list.emit(local_path, f"{action_type} Queued", action_type, 0, not is_online)
+                self.log_update.emit(
+                    f"[API Scan] Starting upload: {local_path} to {file_path}, task_id: {task_id}"
+                )
+                app_signals.append_log.emit(
+                    f"[API Scan] Initiating upload: {file_name}"
+                )
+                app_signals.update_file_list.emit(
+                    local_path, f"{action_type} Queued", action_type, 0, not is_online
+                )
                 for attempt in range(max_download_retries):
-                    is_final_attempt = (attempt == max_download_retries - 1)
+                    is_final_attempt = attempt == max_download_retries - 1
                     try:
                         if not is_online:
                             with sftp_semaphore:
-                                client_name = item.get("client_name", "").strip().replace(" ", "_") or None
-                                project_name = item.get("project_name", item.get("name", "")).strip().replace(" ", "_") or None
+                                client_name = (
+                                    item.get("client_name", "")
+                                    .strip()
+                                    .replace(" ", "_")
+                                    or None
+                                )
+                                project_name = (
+                                    item.get("project_name", item.get("name", ""))
+                                    .strip()
+                                    .replace(" ", "_")
+                                    or None
+                                )
                                 if not client_name or not project_name:
                                     try:
                                         parts = Path(file_path).parts
@@ -5243,60 +6470,134 @@ class FileWatcherWorker(QObject):
                                             client_name = client_name or parts[1]
                                             project_name = project_name or parts[2]
                                         else:
-                                            client_name = client_name or "default_client"
-                                            project_name = project_name or "default_project"
+                                            client_name = (
+                                                client_name or "default_client"
+                                            )
+                                            project_name = (
+                                                project_name or "default_project"
+                                            )
                                     except Exception as e:
-                                        self.log_update.emit(f"[Upload] Fallback parsing failed: {e}")
+                                        self.log_update.emit(
+                                            f"[Upload] Fallback parsing failed: {e}"
+                                        )
                                         client_name = client_name or "default_client"
                                         project_name = project_name or "default_project"
-                                original_nas_path = item.get('file_path', file_path)
+                                original_nas_path = item.get("file_path", file_path)
                                 # self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online)
-                                self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online, is_final_attempt)
-                                self.log_update.emit(f"[API Scan] Upload successful: {local_path} to {original_nas_path}, task_id: {task_id}")
+                                self.show_progress(
+                                    f"Uploading {file_name}",
+                                    local_path,
+                                    original_nas_path,
+                                    action_type,
+                                    item,
+                                    False,
+                                    not is_online,
+                                    is_final_attempt,
+                                )
+                                self.log_update.emit(
+                                    f"[API Scan] Upload successful: {local_path} to {original_nas_path}, task_id: {task_id}"
+                                )
                                 return {
-                                    'update': (local_path, "Upload Completed (Original)", action_type, 100, not is_online),
-                                    'task_key': task_key,
-                                    'success': True
+                                    "update": (
+                                        local_path,
+                                        "Upload Completed (Original)",
+                                        action_type,
+                                        100,
+                                        not is_online,
+                                    ),
+                                    "task_key": task_key,
+                                    "success": True,
                                 }
                         else:
                             # self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online)
-                            self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online, is_final_attempt)
-                            self.log_update.emit(f"[API Scan] Upload successful: {local_path} to {file_path}, task_id: {task_id}")
+                            self.show_progress(
+                                f"Uploading {file_name}",
+                                local_path,
+                                file_path,
+                                action_type,
+                                item,
+                                False,
+                                not is_online,
+                                is_final_attempt,
+                            )
+                            self.log_update.emit(
+                                f"[API Scan] Upload successful: {local_path} to {file_path}, task_id: {task_id}"
+                            )
                             return {
-                                'update': (local_path, "Upload Completed (Original)", action_type, 100, not is_online),
-                                'task_key': task_key,
-                                'success': True
+                                "update": (
+                                    local_path,
+                                    "Upload Completed (Original)",
+                                    action_type,
+                                    100,
+                                    not is_online,
+                                ),
+                                "task_key": task_key,
+                                "success": True,
                             }
                     except PSDUploadCancelled as e:
                         # User explicitly declined the upload from the PSD
                         # validation dialog — stop immediately instead of
                         # re-prompting them again on every retry attempt.
-                        logger.info(f"Upload cancelled by user for {local_path} (Task {task_id}): {str(e)}")
-                        self.log_update.emit(f"[API Scan] Upload cancelled by user (Task {task_id}): {str(e)}")
+                        logger.info(
+                            f"Upload cancelled by user for {local_path} (Task {task_id}): {str(e)}"
+                        )
+                        self.log_update.emit(
+                            f"[API Scan] Upload cancelled by user (Task {task_id}): {str(e)}"
+                        )
                         return {
-                            'update': (local_path, "Upload Cancelled", action_type, 0, not is_online),
-                            'task_key': task_key,
-                            'success': False
+                            "update": (
+                                local_path,
+                                "Upload Cancelled",
+                                action_type,
+                                0,
+                                not is_online,
+                            ),
+                            "task_key": task_key,
+                            "success": False,
                         }
                     except UploadSizeLimitExceeded as e:
                         # File exceeds the configured size limit — retrying
                         # won't change the file size, so stop immediately
                         # instead of burning 3 retry attempts and re-alerting.
-                        logger.info(f"Upload blocked by size limit for {local_path} (Task {task_id}): {str(e)}")
-                        self.log_update.emit(f"[API Scan] Upload blocked — exceeds size limit (Task {task_id}): {str(e)}")
+                        logger.info(
+                            f"Upload blocked by size limit for {local_path} (Task {task_id}): {str(e)}"
+                        )
+                        self.log_update.emit(
+                            f"[API Scan] Upload blocked — exceeds size limit (Task {task_id}): {str(e)}"
+                        )
                         return {
-                            'update': (local_path, "Upload Blocked (Too Large)", action_type, 0, not is_online),
-                            'task_key': task_key,
-                            'success': False
+                            "update": (
+                                local_path,
+                                "Upload Blocked (Too Large)",
+                                action_type,
+                                0,
+                                not is_online,
+                            ),
+                            "task_key": task_key,
+                            "success": False,
                         }
                     except Exception as e:
-                        logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Upload failed for {local_path} (Task {task_id}): {str(e)}, attempt {attempt + 1}, instance: {id(self)}")
-                        self.log_update.emit(f"[API Scan] Upload failed for {local_path} (Task {task_id}): {str(e)}")
-                        update = (local_path, f"Upload Failed: {str(e)}", action_type, 0, not is_online)
+                        logger.error(
+                            f"[{datetime.now(timezone.utc).isoformat()}] Upload failed for {local_path} (Task {task_id}): {str(e)}, attempt {attempt + 1}, instance: {id(self)}"
+                        )
+                        self.log_update.emit(
+                            f"[API Scan] Upload failed for {local_path} (Task {task_id}): {str(e)}"
+                        )
+                        update = (
+                            local_path,
+                            f"Upload Failed: {str(e)}",
+                            action_type,
+                            0,
+                            not is_online,
+                        )
                         if attempt < max_download_retries - 1:
-                            delay = 2 ** attempt
-                            logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Retrying upload after {delay}s, instance: {id(self)}")
-                            self.log_update.emit(f"[API Scan] Retrying upload after {delay}s")
+                            delay = 2**attempt
+                            logger.debug(
+                                f"[{datetime.now(timezone.utc).isoformat()}] Retrying upload after {delay}s, instance: {id(self)}"
+                            )
+                            self.log_update.emit(
+                                f"[API Scan] Retrying upload after {delay}s"
+                            )
                             # ── NEW: tell the UI a retry is happening ──
                             retry_msg = (
                                 f"⚠ Network lost — retrying upload "
@@ -5309,21 +6610,34 @@ class FileWatcherWorker(QObject):
                         else:
                             raise
         except Exception as e:
-            logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Error processing task {task_id}: {str(e)}, instance: {id(self)}")
-            self.log_update.emit(f"[API Scan] Error processing task {task_id}: {str(e)}")
+            logger.error(
+                f"[{datetime.now(timezone.utc).isoformat()}] Error processing task {task_id}: {str(e)}, instance: {id(self)}"
+            )
+            self.log_update.emit(
+                f"[API Scan] Error processing task {task_id}: {str(e)}"
+            )
             return {
-                'update': (local_path, f"{action_type} Failed: {str(e)}", action_type, 0, not is_online),
-                'task_key': task_key,
-                'success': False
+                "update": (
+                    local_path,
+                    f"{action_type} Failed: {str(e)}",
+                    action_type,
+                    0,
+                    not is_online,
+                ),
+                "task_key": task_key,
+                "success": False,
             }
 
     def check_connectivity(self):
         try:
             import socket
+
             # ✅ Simple TCP socket check — just tests if the host is reachable
             # on port 443. No HTTP request, no API hit, no fake user_id.
             # Guaranteed to be fast and never hit your task API endpoint.
-            host = BASE_DOMAIN.replace("https://", "").replace("http://", "").split("/")[0]
+            host = (
+                BASE_DOMAIN.replace("https://", "").replace("http://", "").split("/")[0]
+            )
             socket.setdefaulttimeout(5)
             socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, 443))
             self.log_update.emit("[API Scan] Connectivity OK")
@@ -5347,28 +6661,347 @@ class FileWatcherWorker(QObject):
     #         self.log_update.emit(f"[App] Progress update: {action_type} Failed (Task {task_id}): {original_filename}")
     #         raise
 
-    def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=True):
+    def show_progress(
+        self,
+        message,
+        src_path,
+        dest_path,
+        action_type,
+        item,
+        is_nas_src,
+        is_nas_dest,
+        is_final_attempt=True,
+    ):
         print("================item===================================")
         print(item)
         print("=================item=========================================")
 
-        task_id = str(item.get('id', ''))
+        task_id = str(item.get("id", ""))
         original_filename = Path(src_path).name
         update_download_upload_metadata(task_id, "in progress")
         try:
-            self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=is_final_attempt)
-            self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {original_filename}", dest_path, 100)
-            self.download_status_detail.emit(dest_path, f"{action_type} Completed (Task {task_id}): {original_filename}", action_type, 10, True)
+            self.perform_file_transfer(
+                src_path,
+                dest_path,
+                action_type,
+                item,
+                is_nas_src,
+                is_nas_dest,
+                is_final_attempt=is_final_attempt,
+            )
+            self.progress_update.emit(
+                f"{action_type} Completed (Task {task_id}): {original_filename}",
+                dest_path,
+                100,
+            )
+            self.download_status_detail.emit(
+                dest_path,
+                f"{action_type} Completed (Task {task_id}): {original_filename}",
+                action_type,
+                10,
+                True,
+            )
         except Exception as e:
             logger.error(f"Progress error for {action_type} (Task {task_id}): {str(e)}")
-            self.log_update.emit(f"[App] Progress update: {action_type} Failed (Task {task_id}): {original_filename}")
+            self.log_update.emit(
+                f"[App] Progress update: {action_type} Failed (Task {task_id}): {original_filename}"
+            )
             raise
 
-    def _download_from_http(self, src_path, dest_path):
-        raise NotImplementedError("HTTP download not implemented")
+    def _download_from_http(self, src_path, dest_path, item=None):
+        """
+        Download from the rclone S3-compatible endpoint.
 
-    def _upload_to_http(self, src_path):
-        raise NotImplementedError("HTTP upload not implemented")
+        The historical method name is kept so existing callers do not need a
+        broad rename. This is NOT a plain unauthenticated HTTP GET: boto3 signs
+        the request using S3 Signature V4 and talks to `rclone serve s3`.
+        """
+        bucket, object_key = _resolve_s3_location(src_path)
+        client = _create_s3_client()
+        transfer_config = _s3_transfer_config()
+
+        dest_path = str(Path(dest_path).resolve())
+        Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+        filename = Path(dest_path).name
+        spec_id = str(item.get("spec_id", "")) if isinstance(item, dict) else ""
+
+        temp_path = dest_path + ".s3part"
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+
+        transfer_start = time.time()
+        transferred = 0
+        last_emit = 0.0
+        progress_lock = threading.Lock()
+
+        try:
+            head = client.head_object(Bucket=bucket, Key=object_key)
+            total_size = int(head.get("ContentLength", 0) or 0)
+            total_mb = total_size / 1024 / 1024
+
+            report_transfer_event(
+                "Started",
+                "download",
+                filename,
+                file_size_mb=total_mb,
+                eta_text="Calculating...",
+                backend="s3",
+            )
+
+            def callback(bytes_amount):
+                nonlocal transferred, last_emit
+                with progress_lock:
+                    transferred += int(bytes_amount or 0)
+                    now = time.time()
+                    if now - last_emit < 0.5 and transferred < total_size:
+                        return
+                    last_emit = now
+
+                    elapsed = max(now - transfer_start, 0.000001)
+                    percent = int((transferred / total_size) * 100) if total_size else 0
+                    percent = min(percent, 100)
+                    speed_mbps = (transferred / 1024 / 1024) / elapsed
+                    remaining_mb = max(total_size - transferred, 0) / 1024 / 1024
+                    eta_sec = (
+                        remaining_mb / speed_mbps if speed_mbps > 0 else float("inf")
+                    )
+                    eta_text = (
+                        _format_elapsed(eta_sec) if eta_sec != float("inf") else "—"
+                    )
+
+                    if spec_id:
+                        self.download_progress.emit(
+                            spec_id, dest_path, filename, percent
+                        )
+                    self.download_status_detail.emit(
+                        dest_path,
+                        f"Downloading {percent}% • {speed_mbps:.1f} MB/s • ETA {eta_text}",
+                        "download",
+                        percent,
+                        False,  # not SFTP/NAS; source is S3
+                    )
+                    _update_transfer_stats(
+                        "download",
+                        filename,
+                        speed_mbps,
+                        percent,
+                        file_size_mb=total_mb,
+                        elapsed_sec=elapsed,
+                        eta_text=eta_text,
+                        backend="s3",
+                    )
+
+            client.download_file(
+                bucket,
+                object_key,
+                temp_path,
+                Callback=callback,
+                Config=transfer_config,
+            )
+
+            actual_size = os.path.getsize(temp_path)
+            if total_size and actual_size != total_size:
+                raise IOError(
+                    f"S3 download size mismatch for {object_key}: "
+                    f"expected {total_size}, received {actual_size} bytes"
+                )
+
+            # Only expose the final local file after a successful download.
+            os.replace(temp_path, dest_path)
+
+            duration = time.time() - transfer_start
+            final_speed = total_mb / duration if duration > 0 else 0.0
+            if spec_id:
+                self.download_progress.emit(spec_id, dest_path, filename, 100)
+            self.download_status_detail.emit(
+                dest_path, "Download Completed", "download", 100, False
+            )
+            _clear_transfer_stats()
+            report_transfer_event(
+                "Completed",
+                "download",
+                filename,
+                percent=100,
+                speed_mbps=final_speed,
+                file_size_mb=total_mb,
+                elapsed_sec=duration,
+                eta_text="Done",
+                backend="s3",
+            )
+            logger.info(
+                f"[S3] Download completed: s3://{bucket}/{object_key} -> {dest_path}"
+            )
+
+        except Exception:
+            _clear_transfer_stats()
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
+
+            elapsed = time.time() - transfer_start
+            report_transfer_event(
+                "Failed",
+                "download",
+                filename,
+                file_size_mb=(
+                    (total_size / 1024 / 1024) if "total_size" in locals() else 0.0
+                ),
+                elapsed_sec=elapsed,
+                eta_text="-",
+                backend="s3",
+            )
+            logger.exception(f"[S3] Download failed: s3://{bucket}/{object_key}")
+            raise
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    def _upload_to_http(self, src_path, dest_path, item=None):
+        """
+        Upload a local file to the rclone S3-compatible endpoint.
+
+        dest_path may be a plain object key, s3:// URL, legacy NAS path, or
+        endpoint URL. `_resolve_s3_location` maps all of those to bucket/key.
+        """
+        src_path = Path(src_path)
+        if not src_path.is_file():
+            raise FileNotFoundError(f"Source file does not exist: {src_path}")
+
+        bucket, object_key = _resolve_s3_location(dest_path)
+        client = _create_s3_client()
+        transfer_config = _s3_transfer_config()
+
+        filename = src_path.name
+        spec_id = str(item.get("spec_id", "")) if isinstance(item, dict) else ""
+        file_size = src_path.stat().st_size
+        total_mb = file_size / 1024 / 1024
+        transfer_start = time.time()
+        transferred = 0
+        last_emit = 0.0
+        progress_lock = threading.Lock()
+
+        report_transfer_event(
+            "Started",
+            "upload",
+            filename,
+            file_size_mb=total_mb,
+            eta_text="Calculating...",
+            backend="s3",
+        )
+
+        try:
+
+            def callback(bytes_amount):
+                nonlocal transferred, last_emit
+                with progress_lock:
+                    transferred += int(bytes_amount or 0)
+                    now = time.time()
+                    if now - last_emit < 0.5 and transferred < file_size:
+                        return
+                    last_emit = now
+
+                    elapsed = max(now - transfer_start, 0.000001)
+                    percent = int((transferred / file_size) * 100) if file_size else 100
+                    percent = min(percent, 100)
+                    speed_mbps = (transferred / 1024 / 1024) / elapsed
+                    remaining_mb = max(file_size - transferred, 0) / 1024 / 1024
+                    eta_sec = (
+                        remaining_mb / speed_mbps if speed_mbps > 0 else float("inf")
+                    )
+                    eta_text = (
+                        _format_elapsed(eta_sec) if eta_sec != float("inf") else "—"
+                    )
+
+                    if spec_id:
+                        self.upload_progress.emit(
+                            spec_id, str(dest_path), filename, percent
+                        )
+                    self.upload_status_detail.emit(
+                        str(dest_path),
+                        f"Uploading {percent}% • {speed_mbps:.1f} MB/s • ETA {eta_text}",
+                        "upload",
+                        percent,
+                        False,  # destination is S3, not SFTP/NAS
+                    )
+                    _update_transfer_stats(
+                        "upload",
+                        filename,
+                        speed_mbps,
+                        percent,
+                        file_size_mb=total_mb,
+                        elapsed_sec=elapsed,
+                        eta_text=eta_text,
+                        backend="s3",
+                    )
+
+            client.upload_file(
+                str(src_path),
+                bucket,
+                object_key,
+                Callback=callback,
+                Config=transfer_config,
+            )
+
+            # Verify that rclone exposes the completed object at the expected size.
+            head = client.head_object(Bucket=bucket, Key=object_key)
+            remote_size = int(head.get("ContentLength", -1))
+            if remote_size != file_size:
+                raise IOError(
+                    f"S3 upload size mismatch for {object_key}: "
+                    f"local {file_size}, remote {remote_size} bytes"
+                )
+
+            duration = time.time() - transfer_start
+            final_speed = total_mb / duration if duration > 0 else 0.0
+            if spec_id:
+                self.upload_progress.emit(spec_id, str(dest_path), filename, 100)
+            self.upload_status_detail.emit(
+                str(dest_path), "Upload Completed", "upload", 100, False
+            )
+            _clear_transfer_stats()
+            report_transfer_event(
+                "Completed",
+                "upload",
+                filename,
+                percent=100,
+                speed_mbps=final_speed,
+                file_size_mb=total_mb,
+                elapsed_sec=duration,
+                eta_text="Done",
+                backend="s3",
+            )
+            logger.info(
+                f"[S3] Upload completed: {src_path} -> s3://{bucket}/{object_key}"
+            )
+
+        except Exception:
+            _clear_transfer_stats()
+            elapsed = time.time() - transfer_start
+            report_transfer_event(
+                "Failed",
+                "upload",
+                filename,
+                file_size_mb=total_mb,
+                elapsed_sec=elapsed,
+                eta_text="-",
+                backend="s3",
+            )
+            logger.exception(
+                f"[S3] Upload failed: {src_path} -> s3://{bucket}/{object_key}"
+            )
+            raise
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     def _clean_processed_tasks(self):
         """
@@ -5380,19 +7013,21 @@ class FileWatcherWorker(QObject):
 
         # Remove expired tasks based on actual insertion time
         self.processed_tasks = {
-            key: ts for key, ts in self.processed_tasks.items()
+            key: ts
+            for key, ts in self.processed_tasks.items()
             if (current_time - ts) < retention_seconds
         }
 
         # Enforce max size — keep most recently added tasks
         if len(self.processed_tasks) > self.config["max_processed_tasks"]:
-            sorted_keys = sorted(self.processed_tasks, key=lambda k: self.processed_tasks[k])
+            sorted_keys = sorted(
+                self.processed_tasks, key=lambda k: self.processed_tasks[k]
+            )
             excess = len(self.processed_tasks) - self.config["max_processed_tasks"]
             for key in sorted_keys[:excess]:
                 del self.processed_tasks[key]
 
         logger.debug(f"[Cleanup] processed_tasks size: {len(self.processed_tasks)}")
-
 
     def cleanup(self):
         self.running = False
@@ -5404,11 +7039,9 @@ class FileWatcherWorker(QObject):
         self.running = False
         if self.timer.isActive():
             self.timer.stop()
-        logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] FileWatcherWorker stopped")
-
-
-
-
+        logger.debug(
+            f"[{datetime.now(timezone.utc).isoformat()}] FileWatcherWorker stopped"
+        )
 
 
 class LogWindow(QDialog):
@@ -5449,9 +7082,24 @@ class LogWindow(QDialog):
         # Define signal-slot pairs with expected signatures
         signal_pairs = [
             (app_signals.append_log, self.append_log, "append_log", str),
-            (app_signals.api_call_status, self.append_api_status, "api_call_status", (str, str, int)),
-            (app_signals.update_status, self.handle_update_status, "update_status", str),
-            (app_signals.update_timer_status, self.update_timer_status, "update_timer_status", str),
+            (
+                app_signals.api_call_status,
+                self.append_api_status,
+                "api_call_status",
+                (str, str, int),
+            ),
+            (
+                app_signals.update_status,
+                self.handle_update_status,
+                "update_status",
+                str,
+            ),
+            (
+                app_signals.update_timer_status,
+                self.update_timer_status,
+                "update_timer_status",
+                str,
+            ),
         ]
 
         for signal, slot, name, expected_signature in signal_pairs:
@@ -5470,11 +7118,14 @@ class LogWindow(QDialog):
             # Basic signature check (PyQt doesn't expose signature directly, so we rely on expected)
             signal.connect(slot)
             self._connected_signals[name] = (signal, slot, expected_signature)
-            logger.debug(f"✅ Connected '{name}' to '{slot.__name__}' with expected signature {expected_signature}")
+            logger.debug(
+                f"✅ Connected '{name}' to '{slot.__name__}' with expected signature {expected_signature}"
+            )
         except Exception as e:
             logger.error(f"❌ Failed to connect '{name}' to '{slot.__name__}': {e}")
-            app_signals.append_log.emit(f"[Log] Failed to connect signal '{name}': {str(e)}")
-
+            app_signals.append_log.emit(
+                f"[Log] Failed to connect signal '{name}': {str(e)}"
+            )
 
     def safe_disconnect(self, name):
         """Disconnect a signal safely with detailed logging."""
@@ -5489,13 +7140,19 @@ class LogWindow(QDialog):
 
                         if caught_warnings:
                             for w in caught_warnings:
-                                logger.warning(f"⚠️ Disconnect warning for '{name}': {w.message}")
+                                logger.warning(
+                                    f"⚠️ Disconnect warning for '{name}': {w.message}"
+                                )
                         else:
-                            logger.debug(f"✅ Disconnected '{name}' from '{slot.__name__}' (signature: {signature})")
+                            logger.debug(
+                                f"✅ Disconnected '{name}' from '{slot.__name__}' (signature: {signature})"
+                            )
                 else:
                     logger.warning(f"⚠️ '{name}' has invalid signal or slot object.")
             except Exception as e:
-                logger.warning(f"⚠️ Could not disconnect '{name}' from '{getattr(slot, '__name__', repr(slot))}': {e}")
+                logger.warning(
+                    f"⚠️ Could not disconnect '{name}' from '{getattr(slot, '__name__', repr(slot))}': {e}"
+                )
         else:
             logger.debug(f"⚠️ '{name}' was never connected or already disconnected.")
 
@@ -5522,14 +7179,16 @@ class LogWindow(QDialog):
             logger.debug(f"Timer status updated: {message}")
         except Exception as e:
             logger.error(f"Failed to update timer status: {e}")
-            app_signals.append_log.emit(f"[Timer] Failed to update timer status: {str(e)}")
+            app_signals.append_log.emit(
+                f"[Timer] Failed to update timer status: {str(e)}"
+            )
 
     def load_logs(self):
         """Load recent logs from file."""
         try:
             log_file = log_dir / "app.log"
             if log_file.exists():
-                with log_file.open("r", encoding='utf-8') as f:
+                with log_file.open("r", encoding="utf-8") as f:
                     lines = f.readlines()[-200:]
                 self.text_edit.setPlainText("".join(lines))
                 self.text_edit.moveCursor(QTextCursor.End)
@@ -5574,7 +7233,7 @@ class LogWindow(QDialog):
         except Exception as e:
             logger.error(f"Failed to append log: {e}")
             # NOTE: Do NOT emit append_log here — would cause infinite recursion
-            
+
     def append_api_status(self, endpoint, status, status_code):
         """
         Append API call status to the log.
@@ -5603,15 +7262,16 @@ class LogWindow(QDialog):
         except Exception as e:
             logger.error(f"Failed to append API status: {e}")
             # NOTE: Do NOT emit append_log here — would cause recursive append_api_status
-            
-            
+
     def closeEvent(self, event):
         logger.debug("LogWindow is closing. Disconnecting signals.")
         self.disconnect_signals()
         self._connected_signals.clear()  # Allow reconnection
         super().closeEvent(event)
 
+
 # ---------------------- NEW: Async Thumbnail Loader ----------------------
+
 
 class ThumbnailWorker(QRunnable):
     def __init__(self, url, target_label):
@@ -5623,7 +7283,9 @@ class ThumbnailWorker(QRunnable):
         if not self.url:
             return
         try:
-            r = requests.get(self.url, timeout=5)  # reduced from 10s — thumbnails should be fast
+            r = requests.get(
+                self.url, timeout=5
+            )  # reduced from 10s — thumbnails should be fast
             if r.status_code != 200:
                 return
             pix = QPixmap()
@@ -5641,9 +7303,6 @@ class ThumbnailWorker(QRunnable):
             logger.debug(f"[Thumbnail] Request failed: {e}")
         except Exception as e:
             logger.debug(f"[Thumbnail] Unexpected error: {e}")
-
-
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5667,7 +7326,7 @@ class TransferNotificationPopup(QFrame):
 
         is_upload = action == "upload"
         accent = "#3b82f6" if is_upload else "#2ecc71"
-        icon  = "⬆️" if is_upload else "⬇️"
+        icon = "⬆️" if is_upload else "⬇️"
         label = "Upload" if is_upload else "Download"
 
         self.setStyleSheet(f"""
@@ -5811,14 +7470,14 @@ class TransferNotificationManager(QWidget):
         # ── CRITICAL: pass None so this becomes a real top-level window ───────
         super().__init__(None)
 
-        self._popups: dict = {}   # spec_id → TransferNotificationPopup
+        self._popups: dict = {}  # spec_id → TransferNotificationPopup
 
         # ── Window flags: frameless, always-on-top tool window ────────────────
         self.setWindowFlags(
             Qt.Tool
             | Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
-            | Qt.X11BypassWindowManagerHint   # needed on some Linux WMs
+            | Qt.X11BypassWindowManagerHint  # needed on some Linux WMs
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)  # never steal focus
@@ -5840,14 +7499,14 @@ class TransferNotificationManager(QWidget):
         screen = QApplication.primaryScreen()
         if screen is None:
             return
-        available = screen.availableGeometry()   # excludes taskbar
+        available = screen.availableGeometry()  # excludes taskbar
 
-        popup_w   = 340
-        margin    = 16
-        max_h     = min(600, available.height() - margin * 2)
+        popup_w = 340
+        margin = 16
+        max_h = min(600, available.height() - margin * 2)
 
-        x = available.right()  - popup_w - margin
-        y = available.bottom() - max_h   - margin
+        x = available.right() - popup_w - margin
+        y = available.bottom() - max_h - margin
 
         self.setGeometry(x, y, popup_w, max_h)
 
@@ -5859,7 +7518,7 @@ class TransferNotificationManager(QWidget):
             self._popups[spec_id] = popup
             self._layout.addWidget(popup)
             popup.show()
-            self.raise_()           # keep overlay on top whenever a new card arrives
+            self.raise_()  # keep overlay on top whenever a new card arrives
         return self._popups[spec_id]
 
     def _remove_popup(self, popup: TransferNotificationPopup):
@@ -5871,7 +7530,9 @@ class TransferNotificationManager(QWidget):
     # ── Slots ─────────────────────────────────────────────────────────────────
 
     @Slot(str, str, str, int)
-    def on_download_progress(self, spec_id: str, file_path: str, filename: str, percent: int):
+    def on_download_progress(
+        self, spec_id: str, file_path: str, filename: str, percent: int
+    ):
         popup = self._get_or_create(spec_id, filename, "download")
         popup.update_progress(percent)
         if percent >= 100:
@@ -5896,7 +7557,9 @@ class TransferNotificationManager(QWidget):
                 break
 
     @Slot(str, str, str, int)
-    def on_upload_progress(self, spec_id: str, file_path: str, filename: str, percent: int):
+    def on_upload_progress(
+        self, spec_id: str, file_path: str, filename: str, percent: int
+    ):
         popup = self._get_or_create(spec_id, filename, "upload")
         popup.update_progress(percent)
         if percent >= 100:
@@ -5921,11 +7584,10 @@ class TransferNotificationManager(QWidget):
                 break
 
 
-
-
 class CardWidget(QFrame):
     copyRequested = Signal(str)
     retryRequested = Signal(dict)
+
     def __init__(self, row_data, parent=None):
         super().__init__(parent)
         self.row_data = row_data
@@ -5951,7 +7613,9 @@ class CardWidget(QFrame):
         self.thumb = QLabel()
         self.thumb.setFixedSize(64, 64)
         self.thumb.setAlignment(Qt.AlignCenter)
-        self.thumb.setStyleSheet("border:1px solid #ccc; border-radius:6px; background:#f0f0f0;")
+        self.thumb.setStyleSheet(
+            "border:1px solid #ccc; border-radius:6px; background:#f0f0f0;"
+        )
         placeholder = QPixmap(64, 64)
         placeholder.fill(Qt.lightGray)
         self.thumb.setPixmap(placeholder)
@@ -5968,15 +7632,19 @@ class CardWidget(QFrame):
         # self.user_type_lbl = QLabel(f"<b>User Type:</b> {row_data.get('user_type', '')}")
         # self.duration_lbl = QLabel(self._format_duration(row_data.get("transfer_duration")))
         self.project_lbl = QLabel(f"🗂️  {row_data.get('project_name', 'Loading...')}")
-        self.job_lbl     = QLabel(f"💼  {row_data.get('job_name', 'Loading...')}")
-        self.file_lbl    = QLabel(f"📄  {row_data.get('file_name', 'Unknown')}")
+        self.job_lbl = QLabel(f"💼  {row_data.get('job_name', 'Loading...')}")
+        self.file_lbl = QLabel(f"📄  {row_data.get('file_name', 'Unknown')}")
         self.user_type_lbl = QLabel(f"🎭  {row_data.get('user_type', '').upper()}")
-        self.date_lbl    = QLabel(f"🕐  {self._format_date(row_data.get('created_at', ''))}")
-        self.duration_lbl  = QLabel(self._format_duration(row_data.get("transfer_duration")))
+        self.date_lbl = QLabel(
+            f"🕐  {self._format_date(row_data.get('created_at', ''))}"
+        )
+        self.duration_lbl = QLabel(
+            self._format_duration(row_data.get("transfer_duration"))
+        )
 
         self.duration_lbl.setWordWrap(True)
         self.duration_lbl.setStyleSheet("color: #444;")
-        
+
         for lbl in (self.project_lbl, self.job_lbl, self.file_lbl, self.date_lbl):
             lbl.setWordWrap(True)
             lbl.setStyleSheet("color: #444;")
@@ -5985,7 +7653,7 @@ class CardWidget(QFrame):
         info.addWidget(self.file_lbl)
         info.addWidget(self.user_type_lbl)
         info.addWidget(self.date_lbl)
-        
+
         info.addWidget(self.duration_lbl)
         main.addLayout(info, 1)
 
@@ -6018,12 +7686,16 @@ class CardWidget(QFrame):
 
         self.folder_btn = QPushButton()
         self.folder_btn.setIcon(load_icon(FOLDER_ICON_PATH, "folder"))
-        self.folder_btn.clicked.connect(lambda: parent.open_folder(row_data.get("local_path", "")))
+        self.folder_btn.clicked.connect(
+            lambda: parent.open_folder(row_data.get("local_path", ""))
+        )
         self.actions_layout.addWidget(self.folder_btn)
 
         self.ps_btn = QPushButton()
         self.ps_btn.setIcon(load_icon(PHOTOSHOP_ICON_PATH, "ps"))
-        self.ps_btn.clicked.connect(lambda: parent.open_with_photoshop(row_data.get("local_path", "")))
+        self.ps_btn.clicked.connect(
+            lambda: parent.open_with_photoshop(row_data.get("local_path", ""))
+        )
         self.actions_layout.addWidget(self.ps_btn)
 
         right.addLayout(self.actions_layout)
@@ -6068,16 +7740,19 @@ class CardWidget(QFrame):
             retry_btn = QPushButton()
             retry_btn.setIcon(load_icon(RETRY_ICON_PATH, "retry"))
             # retry_btn.clicked.connect(lambda: self.parent().retry_file_process(self.row_data))
-            retry_btn.clicked.connect(lambda: self.retryRequested.emit(self.row_data.copy()))
+            retry_btn.clicked.connect(
+                lambda: self.retryRequested.emit(self.row_data.copy())
+            )
 
             self.actions_layout.addWidget(retry_btn)
-
 
         if "Failed" in status:
             retry_btn = QPushButton()
             retry_btn.setIcon(load_icon(RETRY_ICON_PATH, "retry"))
             # retry_btn.clicked.connect(lambda: self.parent().retry_file_process(self.row_data))
-            retry_btn.clicked.connect(lambda: self.retryRequested.emit(self.row_data.copy()))
+            retry_btn.clicked.connect(
+                lambda: self.retryRequested.emit(self.row_data.copy())
+            )
             self.actions_layout.addWidget(retry_btn)
 
     def update_row(self, new_row):
@@ -6090,15 +7765,14 @@ class CardWidget(QFrame):
         # self.user_type_lbl.setText(f"ROLE: {new_row.get('user_type', '')}")
         # self.duration_lbl.setText(self._format_duration(new_row.get("transfer_duration")))
 
-
-
         self.project_lbl.setText(f"🗂️  {new_row.get('project_name', 'Unknown')}")
         self.job_lbl.setText(f"💼  {new_row.get('job_name', 'Unknown')}")
         self.file_lbl.setText(f"📄  {new_row.get('file_name', 'Unknown')}")
         self.date_lbl.setText(f"🕐  {self._format_date(new_row.get('created_at', ''))}")
         self.user_type_lbl.setText(f"🎭  {new_row.get('user_type', '').upper()}")
-        self.duration_lbl.setText(self._format_duration(new_row.get("transfer_duration")))
-
+        self.duration_lbl.setText(
+            self._format_duration(new_row.get("transfer_duration"))
+        )
 
         status = new_row.get("status", "Download Completed")
         self.status_lbl.setText(status)
@@ -6117,11 +7791,11 @@ class CardWidget(QFrame):
     def _format_date(value) -> str:
         try:
             from datetime import datetime
+
             return datetime.fromtimestamp(int(value)).strftime("%B %d %Y  %I:%M:%S %p")
         except (ValueError, TypeError, OSError):
             return str(value) if value else ""
 
-   
     @staticmethod
     def _format_duration(seconds) -> str:
         try:
@@ -6138,8 +7812,7 @@ class CardWidget(QFrame):
             return f"⏱️  {sec}s"
         except (TypeError, ValueError):
             return ""
- 
-    
+
 
 class FileDownloadListWindow(QDialog):
     def __init__(self, file_type="downloaded", parent=None):
@@ -6162,7 +7835,9 @@ class FileDownloadListWindow(QDialog):
         self.search_bar.textChanged.connect(self.filter_cards)
 
         self.search_btn = QPushButton("Search")
-        self.search_btn.clicked.connect(lambda: self.filter_cards(self.search_bar.text()))
+        self.search_btn.clicked.connect(
+            lambda: self.filter_cards(self.search_bar.text())
+        )
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self.clear_search)
 
@@ -6212,14 +7887,24 @@ class FileDownloadListWindow(QDialog):
             return
         if self._connected_watcher is not None:
             try:
-                self._connected_watcher.download_progress.disconnect(self.on_download_progress)
-                self._connected_watcher.download_status_detail.disconnect(self.on_download_status_detail)
+                self._connected_watcher.download_progress.disconnect(
+                    self.on_download_progress
+                )
+                self._connected_watcher.download_status_detail.disconnect(
+                    self.on_download_status_detail
+                )
             except Exception:
                 pass
-        watcher.download_progress.connect(self.on_download_progress, Qt.QueuedConnection)
-        watcher.download_status_detail.connect(self.on_download_status_detail, Qt.QueuedConnection)
+        watcher.download_progress.connect(
+            self.on_download_progress, Qt.QueuedConnection
+        )
+        watcher.download_status_detail.connect(
+            self.on_download_status_detail, Qt.QueuedConnection
+        )
         self._connected_watcher = watcher
-        logger.debug("[FileDownloadListWindow] (Re)connected to current FileWatcherWorker instance")
+        logger.debug(
+            "[FileDownloadListWindow] (Re)connected to current FileWatcherWorker instance"
+        )
 
     @staticmethod
     def normalize_path(path: str) -> str:
@@ -6228,7 +7913,7 @@ class FileDownloadListWindow(QDialog):
     def load_files(self):
         cache = load_cache()
         metadata = cache.get("downloaded_files_with_metadata", {})
-       
+
         rows = []
 
         for spec_id, entry in metadata.items():
@@ -6247,21 +7932,22 @@ class FileDownloadListWindow(QDialog):
             if "Downloading" in status:
                 status = "Download Completed"
 
-            rows.append({
-                "spec_id": str(spec_id),
-                "thumbnail": api.get("thumbnail"),
-                "project_name": api.get("project_name", "Unknown"),
-                "job_name": api.get("job_name", "Unknown"),
-                "file_name": Path(local_path).name,
-                "created_at": api.get("created_on", ""),
-                "local_path": local_path,
-                "user_type": api.get("user_type", ""),
-                "transfer_duration": api.get("transfer_duration"),
-                "status": status,
-            })
+            rows.append(
+                {
+                    "spec_id": str(spec_id),
+                    "thumbnail": api.get("thumbnail"),
+                    "project_name": api.get("project_name", "Unknown"),
+                    "job_name": api.get("job_name", "Unknown"),
+                    "file_name": Path(local_path).name,
+                    "created_at": api.get("created_on", ""),
+                    "local_path": local_path,
+                    "user_type": api.get("user_type", ""),
+                    "transfer_duration": api.get("transfer_duration"),
+                    "status": status,
+                }
+            )
         rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         self._sync_cards(rows)
-
 
     def _sync_cards(self, rows):
         seen_spec_ids = set()
@@ -6275,11 +7961,10 @@ class FileDownloadListWindow(QDialog):
                 self.card_index[spec_id].update_row(row)
             else:
                 card = CardWidget(row, self)
-                card.copyRequested.connect(self.copy_file_to_clipboard) 
+                card.copyRequested.connect(self.copy_file_to_clipboard)
                 card.retryRequested.connect(self.retry_file_process)
                 self.card_index[spec_id] = card
                 self.cards_layout.addWidget(card)
-
 
         # --- 🔴 FIX 2: DO NOT DELETE COMPLETED CARDS ---
         for spec_id in list(self.card_index.keys()):
@@ -6301,7 +7986,8 @@ class FileDownloadListWindow(QDialog):
                 all_cards.append(item.widget())
 
         active = [
-            c for c in all_cards
+            c
+            for c in all_cards
             if c.progress_bar.isVisible() and 0 < c.progress_bar.value() < 100
         ]
         completed = [c for c in all_cards if c not in active]
@@ -6313,8 +7999,9 @@ class FileDownloadListWindow(QDialog):
         for card in completed:
             self.cards_layout.addWidget(card)
 
-
-    def on_download_progress(self, spec_id: str, file_path: str, filename: str, percent: int):
+    def on_download_progress(
+        self, spec_id: str, file_path: str, filename: str, percent: int
+    ):
         spec_id = str(spec_id)
 
         card = self.card_index.get(spec_id)
@@ -6376,15 +8063,22 @@ class FileDownloadListWindow(QDialog):
             self.cards_layout.insertWidget(0, card)
             card._promoted = True
 
-
-
-
-    def on_download_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
+    def on_download_status_detail(
+        self,
+        file_path: str,
+        text: str,
+        action_type: str,
+        percent: int,
+        is_nas_src: bool,
+    ):
         if action_type != "download":
             return
 
         for card in self.card_index.values():
-            if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
+            if (
+                card.row_data.get("local_path") == file_path
+                or card.row_data.get("file_name") == Path(file_path).name
+            ):
                 card.update_status(text)
 
                 # ── NEW: refresh metadata from cache when transfer completes ──
@@ -6392,25 +8086,38 @@ class FileDownloadListWindow(QDialog):
                     spec_id = card.row_data.get("spec_id")
                     if spec_id:
                         cache = load_cache()
-                        meta = cache.get("downloaded_files_with_metadata", {}).get(spec_id)
+                        meta = cache.get("downloaded_files_with_metadata", {}).get(
+                            spec_id
+                        )
                         if meta:
                             api = meta.get("api_response", {})
                             fresh_row = {
                                 "spec_id": str(spec_id),
                                 "thumbnail": api.get("thumbnail"),
-                                "project_name": api.get("project_name", card.row_data.get("project_name", "Unknown")),
-                                "job_name": api.get("job_name", card.row_data.get("job_name", "Unknown")),
+                                "project_name": api.get(
+                                    "project_name",
+                                    card.row_data.get("project_name", "Unknown"),
+                                ),
+                                "job_name": api.get(
+                                    "job_name", card.row_data.get("job_name", "Unknown")
+                                ),
                                 "file_name": Path(file_path).name,
-                                "created_at": api.get("created_on", card.row_data.get("created_at", "")),
+                                "created_at": api.get(
+                                    "created_on", card.row_data.get("created_at", "")
+                                ),
                                 "local_path": file_path,
-                                "user_type": api.get("user_type", card.row_data.get("user_type", "")),
+                                "user_type": api.get(
+                                    "user_type", card.row_data.get("user_type", "")
+                                ),
                                 "transfer_duration": api.get("transfer_duration"),
-                                "status": "Download Completed" if "Completed" in text else "Download Failed",
+                                "status": (
+                                    "Download Completed"
+                                    if "Completed" in text
+                                    else "Download Failed"
+                                ),
                             }
                             card.update_row(fresh_row)
                 break
-
-
 
     # def on_download_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
     #     if action_type != "download":
@@ -6429,10 +8136,10 @@ class FileDownloadListWindow(QDialog):
         for card in self.card_index.values():
             row = card.row_data
             visible = (
-                not text or
-                text in str(row.get("project_name", "")).lower() or
-                text in str(row.get("job_name", "")).lower() or
-                text in str(row.get("file_name", "")).lower()
+                not text
+                or text in str(row.get("project_name", "")).lower()
+                or text in str(row.get("job_name", "")).lower()
+                or text in str(row.get("file_name", "")).lower()
             )
             card.setVisible(visible)
 
@@ -6445,8 +8152,6 @@ class FileDownloadListWindow(QDialog):
         self._ensure_watcher_connected()  # FIX: reconnect if worker was recreated
         self.load_files()  # Refresh when shown
 
-
-
     def open_with_photoshop(self, file_path):
         """Open file in Photoshop — delegates to module-level helper."""
         try:
@@ -6456,8 +8161,6 @@ class FileDownloadListWindow(QDialog):
             logger.error(error_msg)
             # QMessageBox.critical(self, "Photoshop Error", error_msg)
             show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
-
-
 
     def open_folder(self, file_path):
         """Open the folder containing the file."""
@@ -6473,15 +8176,23 @@ class FileDownloadListWindow(QDialog):
                 subprocess.run(["xdg-open", folder_path], check=True)
             else:
                 logger.warning(f"Unsupported platform for opening folder: {system}")
-                app_signals.append_log.emit(f"[Folder] Unsupported platform for opening folder: {system}")
-                app_signals.update_status.emit(f"Unsupported platform for opening folder: {system}")
+                app_signals.append_log.emit(
+                    f"[Folder] Unsupported platform for opening folder: {system}"
+                )
+                app_signals.update_status.emit(
+                    f"Unsupported platform for opening folder: {system}"
+                )
                 return
             app_signals.update_status.emit(f"Opened folder for {Path(file_path).name}")
-            app_signals.append_log.emit(f"[Folder] Opened folder for {Path(file_path).name}")
+            app_signals.append_log.emit(
+                f"[Folder] Opened folder for {Path(file_path).name}"
+            )
         except Exception as e:
             logger.error(f"Failed to open folder {file_path}: {e}")
             app_signals.append_log.emit(f"[Folder] Failed to open folder: {str(e)}")
-            app_signals.update_status.emit(f"Failed to open folder for {Path(file_path).name}: {str(e)}")
+            app_signals.update_status.emit(
+                f"Failed to open folder for {Path(file_path).name}: {str(e)}"
+            )
 
     def copy_file_to_clipboard(self, file_path: str):
         print("copy_file_to_clipboard CALLED")  # you will now see this
@@ -6502,10 +8213,8 @@ class FileDownloadListWindow(QDialog):
         #     f"File path copied to clipboard:\n{path}"
         # )
 
-
-
     def retry_file_process(self, row_data: dict):
-   
+
         logger.info("========== RETRY START ==========")
 
         # ------------------------------------------------------------------
@@ -6540,7 +8249,7 @@ class FileDownloadListWindow(QDialog):
         # 3. Validate API payload (STRICT)
         # ------------------------------------------------------------------
         request_type = api.get("request_type")
-        nas_file_path = api.get("file_path")   # NAS REMOTE PATH
+        nas_file_path = api.get("file_path")  # NAS REMOTE PATH
         nas_path = api.get("nas_path")
         task_id = api.get("id")
 
@@ -6560,10 +8269,10 @@ class FileDownloadListWindow(QDialog):
         # ------------------------------------------------------------------
         # 4. Resolve transfer paths (NAS → LOCAL)
         # ------------------------------------------------------------------
-        src_path = nas_file_path                    # NAS SOURCE
+        src_path = nas_file_path  # NAS SOURCE
         dest_path = os.path.join(BASE_TARGET_DIR, nas_path)
 
-        is_nas_src = True
+        is_nas_src = not _task_uses_s3(api, nas_file_path)
         is_nas_dest = False
 
         # ------------------------------------------------------------------
@@ -6586,7 +8295,7 @@ class FileDownloadListWindow(QDialog):
         retry_item = {
             "id": api["id"],
             "spec_id": api["spec_id"],
-            "file_path": api["file_path"],     # NAS PATH (MANDATORY)
+            "file_path": api["file_path"],  # NAS PATH (MANDATORY)
             "nas_path": api["nas_path"],
             "file_name": api.get("file_name"),
             "job_id": api.get("job_id"),
@@ -6602,6 +8311,10 @@ class FileDownloadListWindow(QDialog):
             "created_on": api.get("created_on"),
             "updated_date": api.get("updated_date"),
             "request_type": "download",
+            "is_nas_src": api.get("is_nas_src"),
+            "is_nas_dest": api.get("is_nas_dest"),
+            "storage_type": api.get("storage_type"),
+            "storage_backend": api.get("storage_backend"),
         }
 
         # ------------------------------------------------------------------
@@ -6614,9 +8327,9 @@ class FileDownloadListWindow(QDialog):
                 src_path,
                 dest_path,
                 "download",
-                retry_item,       # 🔑 CORRECT ITEM PAYLOAD
+                retry_item,  # 🔑 CORRECT ITEM PAYLOAD
                 is_nas_src,
-                is_nas_dest
+                is_nas_dest,
             )
 
             logger.info(
@@ -6630,10 +8343,6 @@ class FileDownloadListWindow(QDialog):
             )
 
         logger.info("========== RETRY END ==========")
-
-
-    
-    
 
 
 class FileUploadListWindow(QDialog):
@@ -6657,7 +8366,9 @@ class FileUploadListWindow(QDialog):
         self.search_bar.textChanged.connect(self.filter_cards)
 
         self.search_btn = QPushButton("Search")
-        self.search_btn.clicked.connect(lambda: self.filter_cards(self.search_bar.text()))
+        self.search_btn.clicked.connect(
+            lambda: self.filter_cards(self.search_bar.text())
+        )
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self.clear_search)
 
@@ -6699,14 +8410,22 @@ class FileUploadListWindow(QDialog):
             return
         if self._connected_watcher is not None:
             try:
-                self._connected_watcher.upload_progress.disconnect(self.on_upload_progress)
-                self._connected_watcher.upload_status_detail.disconnect(self.on_upload_status_detail)
+                self._connected_watcher.upload_progress.disconnect(
+                    self.on_upload_progress
+                )
+                self._connected_watcher.upload_status_detail.disconnect(
+                    self.on_upload_status_detail
+                )
             except Exception:
                 pass
         watcher.upload_progress.connect(self.on_upload_progress, Qt.QueuedConnection)
-        watcher.upload_status_detail.connect(self.on_upload_status_detail, Qt.QueuedConnection)
+        watcher.upload_status_detail.connect(
+            self.on_upload_status_detail, Qt.QueuedConnection
+        )
         self._connected_watcher = watcher
-        logger.debug("[FileUploadListWindow] (Re)connected to current FileWatcherWorker instance")
+        logger.debug(
+            "[FileUploadListWindow] (Re)connected to current FileWatcherWorker instance"
+        )
 
     @staticmethod
     def normalize_path(path: str) -> str:
@@ -6714,8 +8433,10 @@ class FileUploadListWindow(QDialog):
 
     def load_files(self):
         cache = load_cache()
-        metadata = cache.get("uploaded_files_with_metadata", {})  # Changed key for uploads
-       
+        metadata = cache.get(
+            "uploaded_files_with_metadata", {}
+        )  # Changed key for uploads
+
         rows = []
 
         for spec_id, entry in metadata.items():
@@ -6733,18 +8454,20 @@ class FileUploadListWindow(QDialog):
             if "Uploading" in status:
                 status = "Upload Completed"
 
-            rows.append({
-                "spec_id": str(spec_id),
-                "thumbnail": api.get("thumbnail"),
-                "project_name": api.get("project_name", "Unknown"),
-                "job_name": api.get("job_name", "Unknown"),
-                "file_name": Path(local_path).name,
-                "created_at": api.get("created_on", ""),
-                "local_path": local_path,
-                "user_type": api.get("user_type", ""),
-                "transfer_duration": api.get("transfer_duration"),
-                "status": status,
-            })
+            rows.append(
+                {
+                    "spec_id": str(spec_id),
+                    "thumbnail": api.get("thumbnail"),
+                    "project_name": api.get("project_name", "Unknown"),
+                    "job_name": api.get("job_name", "Unknown"),
+                    "file_name": Path(local_path).name,
+                    "created_at": api.get("created_on", ""),
+                    "local_path": local_path,
+                    "user_type": api.get("user_type", ""),
+                    "transfer_duration": api.get("transfer_duration"),
+                    "status": status,
+                }
+            )
         rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         self._sync_cards(rows)
 
@@ -6760,7 +8483,7 @@ class FileUploadListWindow(QDialog):
                 self.card_index[spec_id].update_row(row)
             else:
                 card = CardWidget(row, self)
-                card.copyRequested.connect(self.copy_file_to_clipboard) 
+                card.copyRequested.connect(self.copy_file_to_clipboard)
                 card.retryRequested.connect(self.retry_file_process)
                 self.card_index[spec_id] = card
                 self.cards_layout.addWidget(card)
@@ -6785,7 +8508,8 @@ class FileUploadListWindow(QDialog):
                 all_cards.append(item.widget())
 
         active = [
-            c for c in all_cards
+            c
+            for c in all_cards
             if c.progress_bar.isVisible() and 0 < c.progress_bar.value() < 100
         ]
         completed = [c for c in all_cards if c not in active]
@@ -6795,7 +8519,9 @@ class FileUploadListWindow(QDialog):
         for card in completed:
             self.cards_layout.addWidget(card)
 
-    def on_upload_progress(self, spec_id: str, file_path: str, filename: str, percent: int):
+    def on_upload_progress(
+        self, spec_id: str, file_path: str, filename: str, percent: int
+    ):
         spec_id = str(spec_id)
 
         card = self.card_index.get(spec_id)
@@ -6845,7 +8571,7 @@ class FileUploadListWindow(QDialog):
                     card.job_lbl.setText(f"<b>Job:</b> {api['job_name']}")
                 if api.get("thumbnail"):
                     card._load_thumbnail(api["thumbnail"])
-                if api.get("user_type"):                                        
+                if api.get("user_type"):
                     card.user_type_lbl.setText(f"🎭 {api['user_type']}")
                 card.row_data["user_type"] = api.get("user_type", "")
 
@@ -6857,16 +8583,22 @@ class FileUploadListWindow(QDialog):
             self.cards_layout.insertWidget(0, card)
             card._promoted = True
 
-
-
-
-
-    def on_upload_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
+    def on_upload_status_detail(
+        self,
+        file_path: str,
+        text: str,
+        action_type: str,
+        percent: int,
+        is_nas_src: bool,
+    ):
         if action_type != "upload":
             return
 
         for card in self.card_index.values():
-            if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
+            if (
+                card.row_data.get("local_path") == file_path
+                or card.row_data.get("file_name") == Path(file_path).name
+            ):
                 card.update_status(text)
 
                 # ── NEW: refresh metadata from cache when transfer completes ──
@@ -6874,25 +8606,38 @@ class FileUploadListWindow(QDialog):
                     spec_id = card.row_data.get("spec_id")
                     if spec_id:
                         cache = load_cache()
-                        meta = cache.get("uploaded_files_with_metadata", {}).get(spec_id)
+                        meta = cache.get("uploaded_files_with_metadata", {}).get(
+                            spec_id
+                        )
                         if meta:
                             api = meta.get("api_response", {})
                             fresh_row = {
                                 "spec_id": str(spec_id),
                                 "thumbnail": api.get("thumbnail"),
-                                "project_name": api.get("project_name", card.row_data.get("project_name", "Unknown")),
-                                "job_name": api.get("job_name", card.row_data.get("job_name", "Unknown")),
+                                "project_name": api.get(
+                                    "project_name",
+                                    card.row_data.get("project_name", "Unknown"),
+                                ),
+                                "job_name": api.get(
+                                    "job_name", card.row_data.get("job_name", "Unknown")
+                                ),
                                 "file_name": Path(file_path).name,
-                                "created_at": api.get("created_on", card.row_data.get("created_at", "")),
+                                "created_at": api.get(
+                                    "created_on", card.row_data.get("created_at", "")
+                                ),
                                 "local_path": file_path,
-                                "user_type": api.get("user_type", card.row_data.get("user_type", "")),
+                                "user_type": api.get(
+                                    "user_type", card.row_data.get("user_type", "")
+                                ),
                                 "transfer_duration": api.get("transfer_duration"),
-                                "status": "Upload Completed" if "Completed" in text else "Upload Failed",
+                                "status": (
+                                    "Upload Completed"
+                                    if "Completed" in text
+                                    else "Upload Failed"
+                                ),
                             }
                             card.update_row(fresh_row)
                 break
-
-
 
     # def on_upload_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
     #     if action_type != "upload":
@@ -6911,10 +8656,10 @@ class FileUploadListWindow(QDialog):
         for card in self.card_index.values():
             row = card.row_data
             visible = (
-                not text or
-                text in str(row.get("project_name", "")).lower() or
-                text in str(row.get("job_name", "")).lower() or
-                text in str(row.get("file_name", "")).lower()
+                not text
+                or text in str(row.get("project_name", "")).lower()
+                or text in str(row.get("job_name", "")).lower()
+                or text in str(row.get("file_name", "")).lower()
             )
             card.setVisible(visible)
 
@@ -6927,7 +8672,6 @@ class FileUploadListWindow(QDialog):
         self._ensure_watcher_connected()  # FIX: reconnect if worker was recreated
         self.load_files()  # Refresh when shown
 
-
     def open_with_photoshop(self, file_path):
         """Open file in Photoshop — delegates to module-level helper."""
         try:
@@ -6937,7 +8681,6 @@ class FileUploadListWindow(QDialog):
             logger.error(error_msg)
             # QMessageBox.critical(self, "Photoshop Error", error_msg)
             show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
-
 
     def open_folder(self, file_path):
         # Exact same as in FileDownloadListWindow
@@ -6953,15 +8696,23 @@ class FileUploadListWindow(QDialog):
                 subprocess.run(["xdg-open", folder_path], check=True)
             else:
                 logger.warning(f"Unsupported platform for opening folder: {system}")
-                app_signals.append_log.emit(f"[Folder] Unsupported platform for opening folder: {system}")
-                app_signals.update_status.emit(f"Unsupported platform for opening folder: {system}")
+                app_signals.append_log.emit(
+                    f"[Folder] Unsupported platform for opening folder: {system}"
+                )
+                app_signals.update_status.emit(
+                    f"Unsupported platform for opening folder: {system}"
+                )
                 return
             app_signals.update_status.emit(f"Opened folder for {Path(file_path).name}")
-            app_signals.append_log.emit(f"[Folder] Opened folder for {Path(file_path).name}")
+            app_signals.append_log.emit(
+                f"[Folder] Opened folder for {Path(file_path).name}"
+            )
         except Exception as e:
             logger.error(f"Failed to open folder {file_path}: {e}")
             app_signals.append_log.emit(f"[Folder] Failed to open folder: {str(e)}")
-            app_signals.update_status.emit(f"Failed to open folder for {Path(file_path).name}: {str(e)}")
+            app_signals.update_status.emit(
+                f"Failed to open folder for {Path(file_path).name}: {str(e)}"
+            )
 
     def copy_file_to_clipboard(self, file_path: str):
         print("copy_file_to_clipboard CALLED")
@@ -7002,12 +8753,14 @@ class FileUploadListWindow(QDialog):
         api = meta["api_response"]
 
         request_type = api.get("request_type")
-        local_file_path = api.get("file_path")     # Local source path
+        local_file_path = api.get("file_path")  # Local source path
         nas_path = api.get("nas_path")
         task_id = api.get("id")
 
         if request_type != "upload":
-            logger.error(f"[Upload Retry] Unsupported retry type={request_type} for spec_id={spec_id}")
+            logger.error(
+                f"[Upload Retry] Unsupported retry type={request_type} for spec_id={spec_id}"
+            )
             return
 
         if not local_file_path or not task_id:
@@ -7018,7 +8771,7 @@ class FileUploadListWindow(QDialog):
         dest_path = os.path.join(BASE_TARGET_DIR, nas_path)
 
         is_nas_src = False
-        is_nas_dest = True
+        is_nas_dest = not _task_uses_s3(api, api.get("file_path", ""))
 
         card = self.card_index.get(spec_id)
         if card:
@@ -7048,37 +8801,42 @@ class FileUploadListWindow(QDialog):
             "created_on": api.get("created_on"),
             "updated_date": api.get("updated_date"),
             "request_type": "upload",
+            "is_nas_src": api.get("is_nas_src"),
+            "is_nas_dest": api.get("is_nas_dest"),
+            "storage_type": api.get("storage_type"),
+            "storage_backend": api.get("storage_backend"),
         }
 
         try:
             file_worker = FileWatcherWorker.get_instance()
 
             file_worker.perform_file_transfer(
-                src_path,
-                dest_path,
-                "upload",
-                retry_item,
-                is_nas_src,
-                is_nas_dest
+                src_path, dest_path, "upload", retry_item, is_nas_src, is_nas_dest
             )
 
-            logger.info(f"[Upload Retry] Upload retry dispatched (spec_id={spec_id}, task_id={task_id})")
+            logger.info(
+                f"[Upload Retry] Upload retry dispatched (spec_id={spec_id}, task_id={task_id})"
+            )
 
         except Exception as e:
-            logger.exception(f"[Upload Retry] Failed to dispatch retry for spec_id={spec_id}: {e}")
+            logger.exception(
+                f"[Upload Retry] Failed to dispatch retry for spec_id={spec_id}: {e}"
+            )
 
         logger.info("========== UPLOAD RETRY END ==========")
-    
+
 
 # LoginWorker (provided, with fixes)
 class LoginWorker(QObject):
-    success = Signal(dict, str) 
+    success = Signal(dict, str)
     failure = Signal(str)
     user_in_use = Signal(str)
     proceed = None
     switch_login = False
 
-    def __init__(self, username, password, remember_me, tray_icon, status_bar, switch_login):
+    def __init__(
+        self, username, password, remember_me, tray_icon, status_bar, switch_login
+    ):
         super().__init__()
         self.username = username
         self.password = password
@@ -7109,7 +8867,7 @@ class LoginWorker(QObject):
 
             if self.status_bar is None:
                 logger.warning("Status bar is None, cannot update message")
-            
+
             self._set_status("Requesting access token...")
 
             session = requests.Session()
@@ -7123,7 +8881,7 @@ class LoginWorker(QObject):
                 "details": USER_SYSTEM_INFO.get("details", {}),
                 "machine_id": USER_SYSTEM_INFO.get("encoded_mac", ""),
                 "mac_address": USER_SYSTEM_INFO.get("mac_address", ""),
-                "add_mac": 1 if self.switch_login else 0
+                "add_mac": 1 if self.switch_login else 0,
             }
 
             token_resp = session.post(
@@ -7131,14 +8889,14 @@ class LoginWorker(QObject):
                 data=payload,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                 verify=False,
-                timeout=60
+                timeout=60,
             )
             self.switch_login = False
 
             app_signals.api_call_status.emit(
                 OAUTH_URL,
                 f"Status: {token_resp.status_code}, Response: {token_resp.text}",
-                token_resp.status_code
+                token_resp.status_code,
             )
             app_signals.append_log.emit(
                 f"[Login] Token API response: {token_resp.status_code}, {token_resp.text}"
@@ -7172,12 +8930,12 @@ class LoginWorker(QObject):
                 f"{BASE_DOMAIN}/api/user/getinfo?emailid={self.username}",
                 headers={"Authorization": f"Bearer {access_token}"},
                 verify=False,
-                timeout=60
+                timeout=60,
             )
             app_signals.api_call_status.emit(
                 f"{BASE_DOMAIN}/api/user/getinfo?emailid={self.username}",
                 f"Status: {info_resp.status_code}, Response: {info_resp.text}",
-                info_resp.status_code
+                info_resp.status_code,
             )
             app_signals.append_log.emit(
                 f"[Login] User info API response: {info_resp.status_code}"
@@ -7192,12 +8950,12 @@ class LoginWorker(QObject):
                 f"{BASE_DOMAIN}/jsonapi/user/user?filter[name]={self.username}",
                 headers={"Authorization": f"Bearer {access_token}"},
                 verify=False,
-                timeout=60
+                timeout=60,
             )
             app_signals.api_call_status.emit(
                 f"{BASE_DOMAIN}/jsonapi/user/user?filter[name]={self.username}",
                 f"Status: {user_resp.status_code}, Response: {user_resp.text}",
-                user_resp.status_code
+                user_resp.status_code,
             )
             app_signals.append_log.emit(
                 f"[Login] User data API response: {user_resp.status_code}"
@@ -7214,7 +8972,7 @@ class LoginWorker(QObject):
                 cache_data = {
                     "token": access_token,
                     "user": self.username,
-                    "user_id": user_info.get('uid', ''),
+                    "user_id": user_info.get("uid", ""),
                     "user_info": dict(user_info),
                     "info_resp": dict(user_info),
                     "user_data": dict(user_data),
@@ -7222,12 +8980,22 @@ class LoginWorker(QObject):
                     "downloaded_files": cache.get("downloaded_files", []),
                     "uploaded_files": cache.get("uploaded_files", []),
                     "timer_responses": cache.get("timer_responses", {}),
-                    "saved_username": self.username if self.rememberme else cache.get("saved_username", ""),
-                    "saved_password": self.password if self.rememberme else cache.get("saved_password", ""),
-                    "cached_at": datetime.now(ZoneInfo("UTC")).isoformat()
+                    "saved_username": (
+                        self.username
+                        if self.rememberme
+                        else cache.get("saved_username", "")
+                    ),
+                    "saved_password": (
+                        self.password
+                        if self.rememberme
+                        else cache.get("saved_password", "")
+                    ),
+                    "cached_at": datetime.now(ZoneInfo("UTC")).isoformat(),
                 }
                 save_cache(cache_data)
-                app_signals.append_log.emit(f"[Login] Cache saved for user: {self.username}")
+                app_signals.append_log.emit(
+                    f"[Login] Cache saved for user: {self.username}"
+                )
 
             elif self.username == cached_user and not cached_token:
                 cache["token"] = access_token
@@ -7246,13 +9014,17 @@ class LoginWorker(QObject):
                         if system == "Windows":
                             try:
                                 import win32cred as _wc
-                                _wc.CredWrite({
-                                    'Type': _wc.CRED_TYPE_GENERIC,
-                                    'TargetName': f"PremediaApp/{_username}",
-                                    'CredentialBlob': _password,
-                                    'Persist': _wc.CRED_PERSIST_LOCAL_MACHINE,
-                                    'UserName': _username,
-                                }, 0)
+
+                                _wc.CredWrite(
+                                    {
+                                        "Type": _wc.CRED_TYPE_GENERIC,
+                                        "TargetName": f"PremediaApp/{_username}",
+                                        "CredentialBlob": _password,
+                                        "Persist": _wc.CRED_PERSIST_LOCAL_MACHINE,
+                                        "UserName": _username,
+                                    },
+                                    0,
+                                )
                                 c = load_cache()
                                 c["saved_username"] = _username
                                 c["saved_password"] = _password
@@ -7263,7 +9035,9 @@ class LoginWorker(QObject):
                                 c["saved_password"] = _password
                                 save_cache(c)
                             except Exception as e:
-                                logger.warning(f"win32cred write failed ({e}), falling back to cache")
+                                logger.warning(
+                                    f"win32cred write failed ({e}), falling back to cache"
+                                )
                                 c = load_cache()
                                 c["saved_username"] = _username
                                 c["saved_password"] = _password
@@ -7281,14 +9055,19 @@ class LoginWorker(QObject):
                         if system == "Windows":
                             try:
                                 import win32cred as _wc
-                                _wc.CredDelete(f"PremediaApp/{_username}", _wc.CRED_TYPE_GENERIC)
+
+                                _wc.CredDelete(
+                                    f"PremediaApp/{_username}", _wc.CRED_TYPE_GENERIC
+                                )
                             except Exception:
                                 pass
                 except Exception as e:
                     logger.warning(f"_save_keyring failed: {e}")
 
             threading.Thread(target=_save_keyring, daemon=True).start()
-            app_signals.append_log.emit(f"[Login] Successful login for user: {self.username}")
+            app_signals.append_log.emit(
+                f"[Login] Successful login for user: {self.username}"
+            )
             self._set_status(f"Successful login for {self.username}")
 
         except requests.exceptions.SSLError as e:
@@ -7321,9 +9100,7 @@ class LoginWorker(QObject):
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
             self._set_status(error_msg)
-        
-        
-    
+
     def switch_user_here(self):
         try:
             session = requests.Session()
@@ -7342,17 +9119,21 @@ class LoginWorker(QObject):
                 },
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                 verify=False,  # Enable SSL verification
-                timeout=60
+                timeout=60,
             )
             logger.debug(f"Token response raw: {token_resp_validation.text}")
             app_signals.api_call_status.emit(
                 OAUTH_URL,
                 f"Status: {token_resp_validation.status_code}, Response: {token_resp_validation.text}",
-                token_resp_validation.status_code
+                token_resp_validation.status_code,
             )
-            app_signals.append_log.emit(f"[Login] Token API response: {token_resp_validation.status_code}, {token_resp_validation.text}")    
+            app_signals.append_log.emit(
+                f"[Login] Token API response: {token_resp_validation.status_code}, {token_resp_validation.text}"
+            )
             if self.status_bar:
-                self.status_bar.showMessage(f"Token API response: {token_resp_validation.status_code}")
+                self.status_bar.showMessage(
+                    f"Token API response: {token_resp_validation.status_code}"
+                )
             if token_resp_validation.status_code in (400, 401):
                 try:
                     error_details = token_resp_validation.json()
@@ -7365,20 +9146,27 @@ class LoginWorker(QObject):
         except:
             return False
 
+
 class LoginDialog(QDialog):
     login_success = Signal(dict, str)
     login_failure = Signal(str)
     login_clicked = Signal(str, str)
     user_in_other_system = Signal(str)
     switch_login = False
-    LoginDialog_USERNAME = ''
-    LoginDialog_PASSWORD = ''
+    LoginDialog_USERNAME = ""
+    LoginDialog_PASSWORD = ""
+
     def __init__(self, parent=None, app=None):
         try:
             from PySide6.QtWidgets import QWidget
+
             if parent is not None and not isinstance(parent, QWidget):
-                logger.warning(f"Invalid parent type {type(parent).__name__}, setting parent to None")
-                app_signals.append_log.emit(f"[Login] Warning: Invalid parent type {type(parent).__name__}, setting parent to None")
+                logger.warning(
+                    f"Invalid parent type {type(parent).__name__}, setting parent to None"
+                )
+                app_signals.append_log.emit(
+                    f"[Login] Warning: Invalid parent type {type(parent).__name__}, setting parent to None"
+                )
                 parent = None
 
             self.app = app
@@ -7390,7 +9178,9 @@ class LoginDialog(QDialog):
                 logger.debug(f"Call stack:\n{''.join(traceback.format_stack()[:-1])}")
             else:
                 logger.warning("traceback module not available, skipping stack trace")
-                app_signals.append_log.emit("[Login] Warning: traceback module not available, skipping stack trace")
+                app_signals.append_log.emit(
+                    "[Login] Warning: traceback module not available, skipping stack trace"
+                )
 
             self.setWindowIcon(load_icon(ICON_PATH, "login dialog"))
             self.setWindowTitle("PremediaApp Login")
@@ -7415,27 +9205,29 @@ class LoginDialog(QDialog):
             cache = load_cache()
             token = cache.get("token")
             user_id = cache.get("user_id")
-           
-            name = cache.get("user_data", {}).get("data", [{}])[0].get(
-                "attributes", {}
-            ).get("name", cache.get("user_info", {}).get("mail", "user"))
+
+            name = (
+                cache.get("user_data", {})
+                .get("data", [{}])[0]
+                .get("attributes", {})
+                .get("name", cache.get("user_info", {}).get("mail", "user"))
+            )
 
             # Store on instance so the background thread can emit them via invokeMethod
             self._cached_user_info = {
                 "uid": user_id,
                 "name": name,
                 "mail": cache.get("user_info", {}).get("mail", "user"),
-                "access_key": cache.get("user_info", {}).get("access_key")
+                "access_key": cache.get("user_info", {}).get("access_key"),
             }
             self._cached_token = token
-            
+
             # if token and user_id:
             #     logger.info(f"Auto-login from cache for user: {user_id}")
             #     app_signals.append_log.emit(f"[Login] Auto-login from cache for user: {user_id}")
             #     QTimer.singleShot(100, lambda: self.on_login_success(user_info, token))
             # else:
             #     app_signals.append_log.emit("[Login] No valid cache for auto-login")
-
 
             if token and user_id:
                 logger.info(f"Attempting auto-login from cache for user: {user_id}")
@@ -7446,8 +9238,7 @@ class LoginDialog(QDialog):
 
                 # Run validate_user on a background thread so __init__ never blocks
                 threading.Thread(
-                    target=self._validate_cached_login,
-                    daemon=True
+                    target=self._validate_cached_login, daemon=True
                 ).start()
             # if cache.get("saved_username") and cache.get("saved_password"):
             #     self.ui.usernametxt.setText(cache["saved_username"])
@@ -7463,19 +9254,23 @@ class LoginDialog(QDialog):
 
             saved_username = cache.get("saved_username")
             if saved_username:
+
                 def _load_keyring_credentials(uname):
                     try:
                         pwd = None
                         system = platform.system()
-                        
+
                         if system == "Windows":
                             try:
                                 import win32cred as _wc
-                                cred = _wc.CredRead(f"PremediaApp/{uname}", _wc.CRED_TYPE_GENERIC)
-                                raw = cred['CredentialBlob']
+
+                                cred = _wc.CredRead(
+                                    f"PremediaApp/{uname}", _wc.CRED_TYPE_GENERIC
+                                )
+                                raw = cred["CredentialBlob"]
                                 # win32cred returns bytes on Python 3 — decode to str
                                 if isinstance(raw, bytes):
-                                    pwd = raw.decode('utf-16-le').rstrip('\x00')
+                                    pwd = raw.decode("utf-16-le").rstrip("\x00")
                                 else:
                                     pwd = raw
                             except ImportError:
@@ -7490,34 +9285,34 @@ class LoginDialog(QDialog):
 
                         if pwd:
                             QMetaObject.invokeMethod(
-                                self, "_apply_saved_credentials",
+                                self,
+                                "_apply_saved_credentials",
                                 Qt.QueuedConnection,
                                 Q_ARG(str, uname),
-                                Q_ARG(str, pwd)
+                                Q_ARG(str, pwd),
                             )
                         else:
                             QMetaObject.invokeMethod(
-                                self, "_no_saved_credentials",
-                                Qt.QueuedConnection
+                                self, "_no_saved_credentials", Qt.QueuedConnection
                             )
                     except Exception as e:
                         logger.warning(f"_load_keyring_credentials failed: {e}")
                         QMetaObject.invokeMethod(
-                            self, "_no_saved_credentials",
-                            Qt.QueuedConnection
+                            self, "_no_saved_credentials", Qt.QueuedConnection
                         )
 
                 self.status_bar.showMessage("Loading saved credentials...")
                 threading.Thread(
                     target=_load_keyring_credentials,
                     args=(saved_username,),
-                    daemon=True
+                    daemon=True,
                 ).start()
             else:
                 self.status_bar.showMessage("No saved credentials found")
 
-
-            app_signals.update_status.connect(self.status_bar.showMessage, Qt.QueuedConnection)
+            app_signals.update_status.connect(
+                self.status_bar.showMessage, Qt.QueuedConnection
+            )
             self.ui.buttonBox.accepted.connect(self.handle_login)
             print(f"---------handle")
             self.progress = None
@@ -7536,11 +9331,16 @@ class LoginDialog(QDialog):
             )
         except Exception as e:
             logger.error(f"Failed to initialize LoginDialog: {e}")
-            app_signals.append_log.emit(f"[Login] Failed to initialize LoginDialog: {str(e)}")
+            app_signals.append_log.emit(
+                f"[Login] Failed to initialize LoginDialog: {str(e)}"
+            )
             # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
-            show_alert("Initialization Error",  f"Failed to initialize login dialog: {str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Initialization Error",
+                f"Failed to initialize login dialog: {str(e)}",
+                QMessageBox.Critical,
+            )
             raise
-
 
     @Slot(str, str)
     def _apply_saved_credentials(self, username: str, password: str):
@@ -7604,21 +9404,15 @@ class LoginDialog(QDialog):
 
             if validation_result.get("status") == 403:
                 QMetaObject.invokeMethod(
-                    self,
-                    "_on_cached_login_blocked",
-                    Qt.QueuedConnection
+                    self, "_on_cached_login_blocked", Qt.QueuedConnection
                 )
             elif validation_result.get("uuid"):
                 QMetaObject.invokeMethod(
-                    self,
-                    "_on_cached_login_valid",
-                    Qt.QueuedConnection
+                    self, "_on_cached_login_valid", Qt.QueuedConnection
                 )
             else:
                 QMetaObject.invokeMethod(
-                    self,
-                    "_on_cached_login_expired",
-                    Qt.QueuedConnection
+                    self, "_on_cached_login_expired", Qt.QueuedConnection
                 )
         except Exception as e:
             logger.error(f"Background validation error: {e}")
@@ -7626,9 +9420,7 @@ class LoginDialog(QDialog):
                 f"[Login] Background validation error: {str(e)}"
             )
             QMetaObject.invokeMethod(
-                self,
-                "_on_cached_login_expired",
-                Qt.QueuedConnection
+                self, "_on_cached_login_expired", Qt.QueuedConnection
             )
 
     @Slot()
@@ -7640,7 +9432,7 @@ class LoginDialog(QDialog):
         # Small delay so the status message is visible before the dialog closes
         QTimer.singleShot(
             200,
-            lambda: self.on_login_success(self._cached_user_info, self._cached_token)
+            lambda: self.on_login_success(self._cached_user_info, self._cached_token),
         )
 
     @Slot()
@@ -7664,7 +9456,9 @@ class LoginDialog(QDialog):
     def show_progress(self, message):
         try:
             if self.progress and self.progress.isVisible():
-                logger.debug(f"Progress dialog already visible, updating message to: {message}")
+                logger.debug(
+                    f"Progress dialog already visible, updating message to: {message}"
+                )
                 self.progress.setLabelText(message)
                 QApplication.processEvents()
                 return
@@ -7677,39 +9471,59 @@ class LoginDialog(QDialog):
             self.progress.setWindowIcon(load_icon(ICON_PATH, "progress dialog"))
             self.progress.show()
             # QApplication.processEvents()
-            logger.debug(f"Progress dialog shown: {message}, visible={self.progress.isVisible()}")
+            logger.debug(
+                f"Progress dialog shown: {message}, visible={self.progress.isVisible()}"
+            )
             app_signals.append_log.emit(f"[Login] Showing progress: {message}")
             self.status_bar.showMessage(message)
         except Exception as e:
             logger.error(f"Progress dialog error: {e}")
-            app_signals.append_log.emit(f"[Login] Failed: Progress dialog error - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Login] Failed: Progress dialog error - {str(e)}"
+            )
             self.status_bar.showMessage(f"Progress error: {str(e)}")
             # QMessageBox.critical(self, "Progress Error", f"Progress dialog error: {str(e)}")
-            show_alert("Progress Error", f"Progress dialog error: {str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Progress Error",
+                f"Progress dialog error: {str(e)}",
+                QMessageBox.Critical,
+            )
 
     def handle_login(self):
         try:
             logger.debug("handle_login called")
             username = self.ui.usernametxt.text().strip()
             password = self.ui.passwordtxt.text().strip()
-            logger.debug(f"Login attempt with username: {username}, rememberme: {self.ui.rememberme.isChecked()}")
-            app_signals.append_log.emit(f"[Login] Attempting login with username: {username}")
+            logger.debug(
+                f"Login attempt with username: {username}, rememberme: {self.ui.rememberme.isChecked()}"
+            )
+            app_signals.append_log.emit(
+                f"[Login] Attempting login with username: {username}"
+            )
             self.status_bar.showMessage(f"Attempting login for {username}")
             if not username or not password:
-                show_alert("Input Error", "Please enter both username and password.", QMessageBox.Warning)
+                show_alert(
+                    "Input Error",
+                    "Please enter both username and password.",
+                    QMessageBox.Warning,
+                )
                 # QMessageBox.warning(self, "Input Error", "Please enter both username and password.")
-                app_signals.append_log.emit("[Login] Failed: Missing username or password")
+                app_signals.append_log.emit(
+                    "[Login] Failed: Missing username or password"
+                )
                 self.status_bar.showMessage("Missing username or password")
                 return
             self.show_progress("Validating credentials...")
             self.perform_login(username, password)
         except Exception as e:
             logger.error(f"Error in handle_login: {e}")
-            app_signals.append_log.emit(f"[Login] Failed: Handle login error - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Login] Failed: Handle login error - {str(e)}"
+            )
             self.status_bar.showMessage(f"Login error: {str(e)}")
             if self.progress:
                 self.progress.close()
-            show_alert("Login Error",  f"Login error: {str(e)}", QMessageBox.Critical)
+            show_alert("Login Error", f"Login error: {str(e)}", QMessageBox.Critical)
             # QMessageBox.critical(self, "Login Error", f"Login error: {str(e)}")
 
     def perform_login(self, username, password):
@@ -7718,15 +9532,24 @@ class LoginDialog(QDialog):
             self.LoginDialog_PASSWORD = password
             logger.debug("Starting login thread")
             self.thread = QThread()
-             # Keep reference alive until thread finishes
-            if not hasattr(self, '_login_threads'):
+            # Keep reference alive until thread finishes
+            if not hasattr(self, "_login_threads"):
                 self._login_threads = []
             self._login_threads.append(self.thread)
             self.thread.finished.connect(
-                lambda t=self.thread: self._login_threads.remove(t) if t in self._login_threads else None
+                lambda t=self.thread: (
+                    self._login_threads.remove(t) if t in self._login_threads else None
+                )
             )
-            tray_icon = getattr(self.parent(), 'tray_icon', None)
-            self.worker = LoginWorker(username, password, self.ui.rememberme.isChecked(), tray_icon=tray_icon, status_bar=self.status_bar, switch_login=self.switch_login)
+            tray_icon = getattr(self.parent(), "tray_icon", None)
+            self.worker = LoginWorker(
+                username,
+                password,
+                self.ui.rememberme.isChecked(),
+                tray_icon=tray_icon,
+                status_bar=self.status_bar,
+                switch_login=self.switch_login,
+            )
             self.switch_login = False
             self.worker.moveToThread(self.thread)
             self.thread.started.connect(self.worker.run)
@@ -7739,20 +9562,28 @@ class LoginDialog(QDialog):
             self.worker.success.connect(self.worker.deleteLater)
             self.worker.failure.connect(self.worker.deleteLater)
             self.thread.finished.connect(self.thread.deleteLater)
-            self.thread.finished.connect(lambda: self.cleanup_progress())  # Clean up progress dialog
+            self.thread.finished.connect(
+                lambda: self.cleanup_progress()
+            )  # Clean up progress dialog
             self.thread.start()
             self.thread.finished.connect(lambda: None)
-            app_signals.append_log.emit(f"[Login] Starting login thread for user: {username}")
+            app_signals.append_log.emit(
+                f"[Login] Starting login thread for user: {username}"
+            )
             self.status_bar.showMessage(f"Starting login for {username}")
         except Exception as e:
             logger.error(f"Login thread error: {e}")
-            app_signals.append_log.emit(f"[Login] Failed: Login thread error - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Login] Failed: Login thread error - {str(e)}"
+            )
             self.status_bar.showMessage(f"Login thread error: {str(e)}")
             if self.progress and self.progress.isVisible():
                 self.progress.close()
                 # QApplication.processEvents()
                 logger.debug("Progress dialog closed in perform_login error handler")
-                app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
+                app_signals.append_log.emit(
+                    "[Login] Progress dialog closed in error handler"
+                )
             # QMessageBox.critical(self, "Login Error", f"Login thread error: {str(e)}")
             show_alert("Title", "message", QMessageBox.Critical)
 
@@ -7761,13 +9592,17 @@ class LoginDialog(QDialog):
             if self.progress and self.progress.isVisible():
                 self.progress.close()
                 logger.debug("Progress dialog closed in cleanup_progress")
-                app_signals.append_log.emit("[Login] Progress dialog closed in cleanup_progress")
+                app_signals.append_log.emit(
+                    "[Login] Progress dialog closed in cleanup_progress"
+                )
         except RuntimeError:
             # Qt already deleted the C++ progress dialog object — ignore safely
             self.progress = None
         except Exception as e:
             logger.error(f"Error in cleanup_progress: {str(e)}")
-            app_signals.append_log.emit(f"[Login] Failed: Error in cleanup_progress - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Login] Failed: Error in cleanup_progress - {str(e)}"
+            )
 
     # def validate_account_already_inuse(self):
     #     print("in validate_account_already_inuse")
@@ -7795,7 +9630,6 @@ class LoginDialog(QDialog):
     #         }
     #     """)
 
-
     #     # --- Block here until user clicks ---
     #     msg_box.exec()
 
@@ -7809,8 +9643,6 @@ class LoginDialog(QDialog):
     #     if self.switch_login:
     #         self.perform_login(self.LoginDialog_USERNAME, self.LoginDialog_PASSWORD)
 
-
-
     def validate_account_already_inuse(self):
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Account In Use")
@@ -7820,15 +9652,16 @@ class LoginDialog(QDialog):
         )
         msg_box.setIcon(QMessageBox.Warning)
         msg_box.setWindowFlags(
-        msg_box.windowFlags()
-            | Qt.WindowType.WindowStaysOnTopHint
+            msg_box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint
         )
         msg_box.setWindowState(Qt.WindowState.WindowActive)
         msg_box.setAttribute(Qt.WA_ShowWithoutActivating, False)
 
         switch_btn = msg_box.addButton("Switch Here", QMessageBox.AcceptRole)
         cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
-        switch_btn.setStyleSheet("QPushButton { color: white; border-radius: 4px; padding: 2px; }")
+        switch_btn.setStyleSheet(
+            "QPushButton { color: white; border-radius: 4px; padding: 2px; }"
+        )
         cancel_btn.setStyleSheet(
             "QPushButton { background-color: #d32f2f; color: white; border-radius: 4px; padding: 2px; }"
         )
@@ -7837,52 +9670,65 @@ class LoginDialog(QDialog):
         msg_box.activateWindow()
         msg_box.exec()
 
-        self.switch_login = (msg_box.clickedButton() == switch_btn)
+        self.switch_login = msg_box.clickedButton() == switch_btn
         if self.switch_login:
             self.perform_login(self.LoginDialog_USERNAME, self.LoginDialog_PASSWORD)
 
- 
     def on_login_success(self, user_info: dict, token: str):
         try:
             logger.info(f"Login successful for user_id: {user_info['uid']}")
-            app_signals.append_log.emit(f"[App] Login successful for user_id: {user_info['uid']}")
+            app_signals.append_log.emit(
+                f"[App] Login successful for user_id: {user_info['uid']}"
+            )
             self.is_logged_in = True
-            user_name = user_info.get('name', user_info.get('mail', 'user'))
+            user_name = user_info.get("name", user_info.get("mail", "user"))
             # Update parent (PremediaApp) state
-            if hasattr(self, 'app') and self.app:
+            if hasattr(self, "app") and self.app:
                 self.app.set_logged_in_state()
-                self.app.post_login_processes()   # handles start_file_watcher internally
+                self.app.post_login_processes()  # handles start_file_watcher internally
                 logger.debug("Updated PremediaApp state")
                 app_signals.append_log.emit("[Login] Updated PremediaApp state")
-            
+
             # Close progress dialog
             if self.progress and self.progress.isVisible():
                 self.progress.close()
                 logger.debug("Progress dialog closed in on_login_success")
                 app_signals.append_log.emit("[Login] Progress dialog closed")
-            
+
             # Show success message
             # QMessageBox.information(self, "Login Success", f"Successfully logged in as {user_name}")
-            show_alert("Login Success",  f"Successfully logged in as {user_name}", QMessageBox.Information)
-            
+            show_alert(
+                "Login Success",
+                f"Successfully logged in as {user_name}",
+                QMessageBox.Information,
+            )
+
             self.accept()
             app_signals.update_status.emit("Logged in successfully")
             logger.debug("on_login_success completed successfully")
-            app_signals.append_log.emit("[Login] on_login_success completed successfully")
+            app_signals.append_log.emit(
+                "[Login] on_login_success completed successfully"
+            )
         except Exception as e:
             logger.error(f"Error in on_login_success: {str(e)}")
-            app_signals.append_log.emit(f"[Login] Failed: Error in on_login_success - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Login] Failed: Error in on_login_success - {str(e)}"
+            )
             app_signals.update_status.emit(f"Login success handling error: {str(e)}")
             # Ensure progress dialog is closed on error
             if self.progress and self.progress.isVisible():
                 self.progress.close()
                 QApplication.processEvents()
                 logger.debug("Progress dialog closed in on_login_success error handler")
-                app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
+                app_signals.append_log.emit(
+                    "[Login] Progress dialog closed in error handler"
+                )
             # QMessageBox.critical(self, "Login Error", f"Error handling login success: {str(e)}")
-            show_alert("Login Error", f"Error handling login success: {str(e)}", QMessageBox.Critical)
-
-
+            show_alert(
+                "Login Error",
+                f"Error handling login success: {str(e)}",
+                QMessageBox.Critical,
+            )
 
     # def on_login_failed(self, error):
     #     try:
@@ -7921,8 +9767,6 @@ class LoginDialog(QDialog):
     #             logger.debug("Progress dialog closed in on_login_failed error handler")
     #             app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
 
-
-
     # def on_login_failed(self, error):
     #     try:
     #         logger.error(f"Login failed: {error}")
@@ -7954,7 +9798,6 @@ class LoginDialog(QDialog):
     #             logger.debug("Progress dialog closed in on_login_failed error handler")
     #             app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
 
-
     def on_login_failed(self, error):
         try:
             logger.error(f"Login failed: {error}")
@@ -7973,7 +9816,7 @@ class LoginDialog(QDialog):
             show_alert("Login Error", str(error), QMessageBox.Critical)
 
             # Set logged-out state and re-show login
-            if hasattr(self, 'app') and self.app:
+            if hasattr(self, "app") and self.app:
                 self.app.set_logged_out_state()
                 QTimer.singleShot(100, lambda: self.app.show_login())
 
@@ -7997,15 +9840,16 @@ class LoginDialog(QDialog):
                 app_signals.update_status.disconnect(self.status_bar.showMessage)
         except Exception as e:
             logger.debug(f"Failed to disconnect update_status signal: {e}")
-            app_signals.append_log.emit(f"[Login] Failed to disconnect update_status signal: {str(e)}")
+            app_signals.append_log.emit(
+                f"[Login] Failed to disconnect update_status signal: {str(e)}"
+            )
         super().closeEvent(event)
-  
-  
+
 
 def check_single_instance():
     pid_dir = tempfile.gettempdir()
     try:
-        with PidFile(piddir=pid_dir, pidname='premedia_app.pid'):
+        with PidFile(piddir=pid_dir, pidname="premedia_app.pid"):
             logger.info(f"Acquired lock for PID {os.getpid()}")
             return True
     except PidFileError:
@@ -8015,7 +9859,7 @@ def check_single_instance():
 
 
 class PremediaApp(QApplication):
-    
+
     def __init__(self, key="e0d6aa4baffc84333faa65356d78e439"):
         try:
             super().__init__(sys.argv)
@@ -8025,10 +9869,12 @@ class PremediaApp(QApplication):
             # Prevent multiple instances using a lock file
             self.lock_file = os.path.join(tempfile.gettempdir(), "premedia_app.lock")
             try:
-                self.lock_fd = open(self.lock_file, 'w')
+                self.lock_fd = open(self.lock_file, "w")
             except IOError:
                 logger.error("Another instance of PremediaApp is already running")
-                app_signals.append_log.emit("[Init] Failed: Another instance of PremediaApp is already running")
+                app_signals.append_log.emit(
+                    "[Init] Failed: Another instance of PremediaApp is already running"
+                )
                 sys.exit(1)
 
             # Initialize system tray icon
@@ -8039,8 +9885,12 @@ class PremediaApp(QApplication):
                 self.tray_icon.activated.connect(self.handle_tray_icon_activated)
                 self.tray_icon.show()
                 QApplication.processEvents()
-                logger.info(f"System tray icon initialized, visible: {self.tray_icon.isVisible()}")
-                app_signals.append_log.emit(f"[Init] System tray icon initialized, visible: {self.tray_icon.isVisible()}")
+                logger.info(
+                    f"System tray icon initialized, visible: {self.tray_icon.isVisible()}"
+                )
+                app_signals.append_log.emit(
+                    f"[Init] System tray icon initialized, visible: {self.tray_icon.isVisible()}"
+                )
             else:
                 logger.warning("System tray not available")
                 app_signals.append_log.emit("[Init] System tray not available")
@@ -8085,24 +9935,34 @@ class PremediaApp(QApplication):
             self.downloaded_files_window = None
             self.uploaded_files_window = None
             try:
-                self.login_dialog = LoginDialog(parent=None, app=self)   
+                self.login_dialog = LoginDialog(parent=None, app=self)
                 self.login_dialog.user_in_other_system.connect(self.show_login_page)
-                # self.user_in_other_system.emit("user_already_logged_in")  
+                # self.user_in_other_system.emit("user_already_logged_in")
             except Exception as e:
                 logger.error(f"Failed to initialize LoginDialog: {e}")
-                app_signals.append_log.emit(f"[Init] Failed to initialize LoginDialog: {str(e)}")
+                app_signals.append_log.emit(
+                    f"[Init] Failed to initialize LoginDialog: {str(e)}"
+                )
                 self.login_dialog = None
                 # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
-                show_alert("Initialization Error",  f"Failed to initialize login dialog: {str(e)}", QMessageBox.Critical)
+                show_alert(
+                    "Initialization Error",
+                    f"Failed to initialize login dialog: {str(e)}",
+                    QMessageBox.Critical,
+                )
                 self.cleanup_and_quit()
                 return
 
             # Connect signals to log window
             try:
-                app_signals.update_status.disconnect(self.log_window.handle_update_status)
+                app_signals.update_status.disconnect(
+                    self.log_window.handle_update_status
+                )
             except Exception:
                 logger.debug("No existing update_status connection to disconnect")
-            app_signals.update_status.connect(self.log_window.status_bar.showMessage, Qt.QueuedConnection)
+            app_signals.update_status.connect(
+                self.log_window.status_bar.showMessage, Qt.QueuedConnection
+            )
             setup_logger(self.log_window)
 
             if not log_thread.is_alive():
@@ -8112,9 +9972,11 @@ class PremediaApp(QApplication):
             app_signals.append_log.emit(f"[Init] Initializing with key: {key[:8]}...")
             cache = load_cache()
             logger.debug(f"Cache contents: {json.dumps(cache, indent=2)}")
-            app_signals.append_log.emit(f"[Init] Cache contents: {json.dumps(cache, indent=2)}")
-            #cache validation
-            
+            app_signals.append_log.emit(
+                f"[Init] Cache contents: {json.dumps(cache, indent=2)}"
+            )
+            # cache validation
+
             cache_created_ts = cache.get("created_at")  # Unix timestamp
             logger.debug(f"[TEST] Cache created_at: {cache_created_ts}")
             app_signals.append_log.emit(f"[TEST] Cache created_at: {cache_created_ts}")
@@ -8123,36 +9985,49 @@ class PremediaApp(QApplication):
 
             if cache_created_ts:
                 try:
-                    print('working fine')
-                    cache_created = datetime.fromtimestamp(cache_created_ts, tz=timezone.utc)
+                    print("working fine")
+                    cache_created = datetime.fromtimestamp(
+                        cache_created_ts, tz=timezone.utc
+                    )
                     now = datetime.now(timezone.utc)
                     age_days = (now - cache_created).days
                     logger.debug(f"[TEST] Cache created_at: {cache_created_ts}")
-                    app_signals.append_log.emit(f"[TEST] Cache created_at: {cache_created_ts}")
-                    print('now:', now)
-                    print('cache_created:', cache_created)
-                    print('timedelta(days=7):', timedelta(days=7))
+                    app_signals.append_log.emit(
+                        f"[TEST] Cache created_at: {cache_created_ts}"
+                    )
+                    print("now:", now)
+                    print("cache_created:", cache_created)
+                    print("timedelta(days=7):", timedelta(days=7))
                     if now - cache_created > timedelta(days=7):
-                    # if now - cache_created > timedelta(minutes=1):
+                        # if now - cache_created > timedelta(minutes=1):
                         logger.info("Cache is older than 7 days. Clearing cache...")
-                        app_signals.append_log.emit("[Init] Cache is older than 7 days. Clearing cache...")
+                        app_signals.append_log.emit(
+                            "[Init] Cache is older than 7 days. Clearing cache..."
+                        )
                         self.clear_cache()  # Make sure your clear_cache() resets CACHE_FILE too
                         cache = {}  # Reset cache variable
                     else:
-                        logger.debug(f"Cache is valid. Age: {(now - cache_created).days} days")
-                        print("Cache is valid. Age:", (now - cache_created).days, "days")
-                        app_signals.append_log.emit(f"[Init] Cache is valid. Age: {(now - cache_created).days} days")
+                        logger.debug(
+                            f"Cache is valid. Age: {(now - cache_created).days} days"
+                        )
+                        print(
+                            "Cache is valid. Age:", (now - cache_created).days, "days"
+                        )
+                        app_signals.append_log.emit(
+                            f"[Init] Cache is valid. Age: {(now - cache_created).days} days"
+                        )
                 except Exception as e:
                     logger.error(f"Failed to validate cache date: {e}")
-                    app_signals.append_log.emit(f"[Init] Failed to validate cache date: {str(e)}")
+                    app_signals.append_log.emit(
+                        f"[Init] Failed to validate cache date: {str(e)}"
+                    )
                     self.clear_cache()
                     cache = {}
             else:
                 logger.debug("No cache creation timestamp found, skipping validation")
-                app_signals.append_log.emit("[Init] No cache creation timestamp found, skipping validation")
-                
-
-
+                app_signals.append_log.emit(
+                    "[Init] No cache creation timestamp found, skipping validation"
+                )
 
             # Auto-login logic
             # Non-blocking startup — LoginDialog handles validation on background thread
@@ -8160,9 +10035,18 @@ class PremediaApp(QApplication):
             # thread when token + user_id are present in cache. So we just need to
             # show the login dialog and let it handle everything asynchronously.
 
-            if cache.get("token") and cache.get("user") and cache.get("user_id") and not self.logged_in:
-                logger.debug("Cached credentials found — LoginDialog will validate in background")
-                app_signals.append_log.emit("[Init] Cached credentials found — background validation starting")
+            if (
+                cache.get("token")
+                and cache.get("user")
+                and cache.get("user_id")
+                and not self.logged_in
+            ):
+                logger.debug(
+                    "Cached credentials found — LoginDialog will validate in background"
+                )
+                app_signals.append_log.emit(
+                    "[Init] Cached credentials found — background validation starting"
+                )
                 # LoginDialog.__init__ already started _validate_cached_login thread
                 # Just show the dialog — it will call on_login_success or on_login_failed
                 self.login_dialog.show()
@@ -8172,11 +10056,11 @@ class PremediaApp(QApplication):
                 saved_password = None
                 try:
                     import win32cred as _wc
+
                     cred = _wc.CredRead(
-                        f"PremediaApp/{cache['saved_username']}",
-                        _wc.CRED_TYPE_GENERIC
+                        f"PremediaApp/{cache['saved_username']}", _wc.CRED_TYPE_GENERIC
                     )
-                    saved_password = cred['CredentialBlob']
+                    saved_password = cred["CredentialBlob"]
                 except ImportError:
                     # win32cred not available in this build — use cache fallback
                     saved_password = cache.get("saved_password") or None
@@ -8185,55 +10069,77 @@ class PremediaApp(QApplication):
 
                 if saved_password:
                     logger.debug("Attempting auto-login with saved credentials")
-                    app_signals.append_log.emit("[Init] Attempting auto-login with saved credentials")
-                    self.login_dialog.perform_login(cache["saved_username"], saved_password)
+                    app_signals.append_log.emit(
+                        "[Init] Attempting auto-login with saved credentials"
+                    )
+                    self.login_dialog.perform_login(
+                        cache["saved_username"], saved_password
+                    )
                 else:
                     logger.debug("No saved password found, showing login dialog")
                     self.set_logged_out_state()
                     self.show_login()
             else:
                 logger.debug("No valid cached credentials, showing login dialog")
-                app_signals.append_log.emit("[Init] No valid cached credentials, showing login dialog")
+                app_signals.append_log.emit(
+                    "[Init] No valid cached credentials, showing login dialog"
+                )
                 self.set_logged_out_state()
                 self.show_login()
-                
+
             logger.info("PremediaApp initialized")
             app_signals.append_log.emit("[Init] PremediaApp initialized")
         except Exception as e:
             logger.error(f"Initialization error: {e}")
-            app_signals.append_log.emit(f"[Init] Failed: Initialization error - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Init] Failed: Initialization error - {str(e)}"
+            )
             if self.login_dialog:
                 app_signals.update_status.emit(f"Initialization error: {str(e)}")
                 self.show_login()
             else:
                 # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize application: {str(e)}")
-                show_alert("Initialization Error", f"Failed to initialize application: {str(e)}", QMessageBox.Critical)
+                show_alert(
+                    "Initialization Error",
+                    f"Failed to initialize application: {str(e)}",
+                    QMessageBox.Critical,
+                )
             self.cleanup_and_quit()
 
     def event(self, event):
         try:
             if event.type() == QEvent.ApplicationActivate:
                 logger.debug("Application activated via taskbar/dock")
-                app_signals.append_log.emit("[App] Application activated via taskbar/dock")
-                for window in [self.log_window, self.downloaded_files_window, self.uploaded_files_window, self.login_dialog]:
+                app_signals.append_log.emit(
+                    "[App] Application activated via taskbar/dock"
+                )
+                for window in [
+                    self.log_window,
+                    self.downloaded_files_window,
+                    self.uploaded_files_window,
+                    self.login_dialog,
+                ]:
                     if window and window.isVisible():
                         window.raise_()
                         window.activateWindow()
                         logger.debug(f"Restored window: {window.windowTitle()}")
-                        app_signals.append_log.emit(f"[App] Restored window: {window.windowTitle()}")
+                        app_signals.append_log.emit(
+                            f"[App] Restored window: {window.windowTitle()}"
+                        )
             return super().event(event)
         except Exception as e:
             logger.error(f"Error in event handler: {e}")
-            app_signals.append_log.emit(f"[App] Failed: Error in event handler - {str(e)}")
+            app_signals.append_log.emit(
+                f"[App] Failed: Error in event handler - {str(e)}"
+            )
             return super().event(event)
 
     def show_login_page(self, reason: str):
-        print("----------------------------------------------------------------------------------------------------------")
+        print(
+            "----------------------------------------------------------------------------------------------------------"
+        )
         print(f"user_in_other_system signal received: {reason}")
         self.logout()
-
-        
-
 
     def handle_tray_icon_activated(self, reason):
         try:
@@ -8245,7 +10151,9 @@ class PremediaApp(QApplication):
                     if self.tray_icon.contextMenu():
                         self.tray_icon.contextMenu().popup(QCursor.pos())
                         logger.debug("Tray icon left-click: Showing context menu")
-                        app_signals.append_log.emit("[Tray] Left-click: Showing context menu")
+                        app_signals.append_log.emit(
+                            "[Tray] Left-click: Showing context menu"
+                        )
                 else:
                     logger.debug("Tray icon clicked (macOS auto-handles menu display)")
                     app_signals.append_log.emit("[Tray] macOS: Skipped manual popup")
@@ -8261,11 +10169,18 @@ class PremediaApp(QApplication):
 
         except Exception as e:
             logger.error(f"Error in handle_tray_icon_activated: {e}")
-            app_signals.append_log.emit(f"[Tray] Failed: Error handling tray icon activation - {str(e)}")
-            app_signals.update_status.emit(f"Error handling tray icon activation: {str(e)}")
+            app_signals.append_log.emit(
+                f"[Tray] Failed: Error handling tray icon activation - {str(e)}"
+            )
+            app_signals.update_status.emit(
+                f"Error handling tray icon activation: {str(e)}"
+            )
             # QMessageBox.critical(None, "Tray Icon Error", f"Error handling tray icon activation: {str(e)}")
-            show_alert("Tray Icon Error", f"Error handling tray icon activation: {str(e)}", QMessageBox.Critical)
-
+            show_alert(
+                "Tray Icon Error",
+                f"Error handling tray icon activation: {str(e)}",
+                QMessageBox.Critical,
+            )
 
     def update_tray_menu(self):
         try:
@@ -8283,18 +10198,18 @@ class PremediaApp(QApplication):
                 try:
                     cache_file = Path(self.CACHE_FILE).resolve()
                     if cache_file.exists() and cache_file.is_file():
-                        with cache_file.open('r', encoding='utf-8') as f:
+                        with cache_file.open("r", encoding="utf-8") as f:
                             cache_data = json.load(f)
 
-                        user_data = cache_data.get('user_data', {}).get('data', [])
+                        user_data = cache_data.get("user_data", {}).get("data", [])
                         if user_data and isinstance(user_data, list):
-                            attributes = user_data[0].get('attributes', {})
+                            attributes = user_data[0].get("attributes", {})
 
                             # Fallback order: field_fullname → name → mail → "Unknown"
                             user_fullname = (
-                                attributes.get('field_fullname')
-                                or attributes.get('name')
-                                or attributes.get('mail')
+                                attributes.get("field_fullname")
+                                or attributes.get("name")
+                                or attributes.get("mail")
                                 or "Unknown"
                             )
 
@@ -8303,17 +10218,23 @@ class PremediaApp(QApplication):
                                 user_fullname = "Unknown"
 
                             logger.debug(f"Resolved tray user name: {user_fullname}")
-                            app_signals.append_log.emit(f"[Tray] User name resolved: {user_fullname}")
+                            app_signals.append_log.emit(
+                                f"[Tray] User name resolved: {user_fullname}"
+                            )
                         else:
                             logger.warning("Cache user_data missing or not a list")
                             user_fullname = "Unknown"
                     else:
                         logger.warning(f"Cache file missing or invalid: {cache_file}")
-                        app_signals.append_log.emit(f"[Tray] Cache file missing: {cache_file}")
+                        app_signals.append_log.emit(
+                            f"[Tray] Cache file missing: {cache_file}"
+                        )
                         user_fullname = "Unknown"
                 except (json.JSONDecodeError, IOError) as e:
                     logger.error(f"Failed to read fullname from cache: {e}")
-                    app_signals.append_log.emit(f"[Tray] Failed to read cache: {str(e)}")
+                    app_signals.append_log.emit(
+                        f"[Tray] Failed to read cache: {str(e)}"
+                    )
                     user_fullname = "Unknown"
 
             # Clear icon cache to ensure fresh icons are loaded
@@ -8324,7 +10245,7 @@ class PremediaApp(QApplication):
             tray_icon_name = {
                 "Windows": "login-logo.ico" if self.logged_in else "logout-logo.ico",
                 "Darwin": "login-logo.icns" if self.logged_in else "logout-logo.icns",
-                "Linux": "login-logo.png" if self.logged_in else "logout-logo.png"
+                "Linux": "login-logo.png" if self.logged_in else "logout-logo.png",
             }.get(platform.system(), "logout-logo.png")
 
             icon_path = get_icon_path(tray_icon_name)
@@ -8359,7 +10280,7 @@ class PremediaApp(QApplication):
             user_icon_name = {
                 "Windows": "user_icon.ico",
                 "Darwin": "user_icon.icns",
-                "Linux": "user_icon.png"
+                "Linux": "user_icon.png",
             }.get(platform.system(), "user_icon.png")
 
             user_action = QAction(f"{user_fullname}", self.tray_menu)
@@ -8374,41 +10295,71 @@ class PremediaApp(QApplication):
                 self.tray_menu.addSeparator()
 
             # Set up main actions with platform-specific icons
-            setup_action(self.login_action, {
-                "Windows": "login_icon.ico",
-                "Darwin": "login_icon.icns",
-                "Linux": "login_icon.png"
-            }.get(platform.system(), "login_icon.png"), visible=not self.logged_in, enabled=not self.logged_in)
+            setup_action(
+                self.login_action,
+                {
+                    "Windows": "login_icon.ico",
+                    "Darwin": "login_icon.icns",
+                    "Linux": "login_icon.png",
+                }.get(platform.system(), "login_icon.png"),
+                visible=not self.logged_in,
+                enabled=not self.logged_in,
+            )
 
-            setup_action(self.logout_action, {
-                "Windows": "logout_icon.ico",
-                "Darwin": "logout_icon.icns",
-                "Linux": "logout_icon.png"
-            }.get(platform.system(), "logout_icon.png"), visible=self.logged_in, enabled=self.logged_in)
+            setup_action(
+                self.logout_action,
+                {
+                    "Windows": "logout_icon.ico",
+                    "Darwin": "logout_icon.icns",
+                    "Linux": "logout_icon.png",
+                }.get(platform.system(), "logout_icon.png"),
+                visible=self.logged_in,
+                enabled=self.logged_in,
+            )
 
-            setup_action(self.downloaded_files_action, {
-                "Windows": "download_icon.ico",
-                "Darwin": "download_icon.icns",
-                "Linux": "download_icon.png"
-            }.get(platform.system(), "download_icon.png"), visible=True, enabled=self.logged_in)
+            setup_action(
+                self.downloaded_files_action,
+                {
+                    "Windows": "download_icon.ico",
+                    "Darwin": "download_icon.icns",
+                    "Linux": "download_icon.png",
+                }.get(platform.system(), "download_icon.png"),
+                visible=True,
+                enabled=self.logged_in,
+            )
 
-            setup_action(self.uploaded_files_action, {
-                "Windows": "upload_icon.ico",
-                "Darwin": "upload_icon.icns",
-                "Linux": "upload_icon.png"
-            }.get(platform.system(), "upload_icon.png"), visible=True, enabled=self.logged_in)
+            setup_action(
+                self.uploaded_files_action,
+                {
+                    "Windows": "upload_icon.ico",
+                    "Darwin": "upload_icon.icns",
+                    "Linux": "upload_icon.png",
+                }.get(platform.system(), "upload_icon.png"),
+                visible=True,
+                enabled=self.logged_in,
+            )
 
-            setup_action(self.clear_cache_action, {
-                "Windows": "clear_cache_icon.ico",
-                "Darwin": "clear_cache_icon.icns",
-                "Linux": "clear_cache_icon.png"
-            }.get(platform.system(), "clear_cache_icon.png"), visible=True, enabled=self.logged_in)
+            setup_action(
+                self.clear_cache_action,
+                {
+                    "Windows": "clear_cache_icon.ico",
+                    "Darwin": "clear_cache_icon.icns",
+                    "Linux": "clear_cache_icon.png",
+                }.get(platform.system(), "clear_cache_icon.png"),
+                visible=True,
+                enabled=self.logged_in,
+            )
 
-            setup_action(self.quit_action, {
-                "Windows": "quit_icon.ico",
-                "Darwin": "quit_icon.icns",
-                "Linux": "quit_icon.png"
-            }.get(platform.system(), "quit_icon.png"), visible=True, enabled=True)
+            setup_action(
+                self.quit_action,
+                {
+                    "Windows": "quit_icon.ico",
+                    "Darwin": "quit_icon.icns",
+                    "Linux": "quit_icon.png",
+                }.get(platform.system(), "quit_icon.png"),
+                visible=True,
+                enabled=True,
+            )
 
             # Add actions to tray menu in order
             self.tray_menu.addSeparator()
@@ -8428,7 +10379,9 @@ class PremediaApp(QApplication):
             except NameError:
                 version_text = "Version: Unknown"
                 logger.warning("APPVERSION global variable not defined")
-                app_signals.append_log.emit("[Tray] APPVERSION global variable not defined")
+                app_signals.append_log.emit(
+                    "[Tray] APPVERSION global variable not defined"
+                )
             version_action = QAction(version_text, self.tray_menu)
             version_action.setEnabled(False)  # Non-interactive
             font = QFont()
@@ -8438,7 +10391,7 @@ class PremediaApp(QApplication):
             version_icon_name = {
                 "Windows": "version_icon.ico",
                 "Darwin": "version_icon.icns",
-                "Linux": "version_icon.png"
+                "Linux": "version_icon.png",
             }.get(platform.system(), "version_icon.png")
             setup_action(version_action, version_icon_name)
             self.tray_menu.addSeparator()
@@ -8447,19 +10400,27 @@ class PremediaApp(QApplication):
             # Set the context menu for the tray icon
             self.tray_icon.setContextMenu(self.tray_menu)
 
-            logger.debug(f"Tray menu updated: logged_in={self.logged_in}, user={user_fullname}, version={version_text}")
-            app_signals.append_log.emit(f"[Tray] Menu updated: User={user_fullname}, Version={version_text}")
+            logger.debug(
+                f"Tray menu updated: logged_in={self.logged_in}, user={user_fullname}, version={version_text}"
+            )
+            app_signals.append_log.emit(
+                f"[Tray] Menu updated: User={user_fullname}, Version={version_text}"
+            )
 
         except Exception as e:
             logger.error(f"Error updating tray menu: {e}\n{traceback.format_exc()}")
             app_signals.append_log.emit(f"[Tray] Failed to update tray menu: {str(e)}")
             app_signals.update_status.emit(f"Failed to update tray menu: {str(e)}")
             # QMessageBox.critical(None, "Tray Menu Error", f"Failed to update tray menu: {str(e)}")
-            show_alert("Tray Menu Error", f"Failed to update tray menu: {str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Tray Menu Error",
+                f"Failed to update tray menu: {str(e)}",
+                QMessageBox.Critical,
+            )
 
     def is_file_watcher_running(self):
         """Safely check if the file watcher thread is running."""
-        thread = getattr(self, 'file_watcher_thread', None)
+        thread = getattr(self, "file_watcher_thread", None)
         if thread is None:
             return False
         try:
@@ -8469,9 +10430,6 @@ class PremediaApp(QApplication):
             self.file_watcher_thread = None
             return False
 
-
-    
-    
     def stop_file_watcher_thread(self):
         """
         Safely stop the poll timer, worker, and thread.
@@ -8479,7 +10437,7 @@ class PremediaApp(QApplication):
         Always resets all references to None so start_file_watcher gets a clean slate.
         """
         # ── 1. Stop poll timer first — prevents new invokeMethod calls ───────
-        timer = getattr(self, 'poll_timer', None)
+        timer = getattr(self, "poll_timer", None)
         if timer is not None:
             try:
                 if timer.isActive():
@@ -8490,7 +10448,7 @@ class PremediaApp(QApplication):
                 self.poll_timer = None
 
         # ── 2. Stop watchdog timer ────────────────────────────────────────────
-        watchdog = getattr(self, 'watchdog_timer', None)
+        watchdog = getattr(self, "watchdog_timer", None)
         if watchdog is not None:
             try:
                 if watchdog.isActive():
@@ -8501,7 +10459,7 @@ class PremediaApp(QApplication):
                 self.watchdog_timer = None
 
         # ── 3. Ask the thread to stop and wait up to 5 seconds ───────────────
-        thread = getattr(self, 'file_watcher_thread', None)
+        thread = getattr(self, "file_watcher_thread", None)
         if thread is not None:
             try:
                 if thread.isRunning():
@@ -8523,7 +10481,7 @@ class PremediaApp(QApplication):
         # ── 4. Release worker reference ───────────────────────────────────────
         # Do NOT call deleteLater() here — Qt owns the lifecycle once
         # moveToThread() was called. Just drop our reference.
-        worker = getattr(self, 'file_watcher', None)
+        worker = getattr(self, "file_watcher", None)
         if worker is not None:
             try:
                 worker.running = False
@@ -8534,16 +10492,14 @@ class PremediaApp(QApplication):
 
         logger.debug("stop_file_watcher_thread completed cleanly")
         app_signals.append_log.emit("[App] FileWatcher stopped cleanly")
-    
-    
 
     def start_file_watcher(self):
         global FILE_WATCHER_RUNNING
-        
+
         # ── Guard: prevent double-start if called while already running ───────
         # This can happen if post_login_processes and auto-login both
         # trigger start_file_watcher in the same cycle.
-        if getattr(self, 'file_watcher_thread', None) is not None:
+        if getattr(self, "file_watcher_thread", None) is not None:
             try:
                 if self.file_watcher_thread.isRunning():
                     logger.warning(
@@ -8556,15 +10512,16 @@ class PremediaApp(QApplication):
             except RuntimeError:
                 # Thread was deleted — safe to proceed
                 self.file_watcher_thread = None
-                
-                
+
         try:
             logger.info("Attempting to start FileWatcherWorker")
             app_signals.append_log.emit("[App] Attempting to start FileWatcherWorker")
 
             # Validate log window
             if self.log_window is None or self.log_window.status_bar is None:
-                self.handle_error("FileWatcher", "Log window or status bar not initialized")
+                self.handle_error(
+                    "FileWatcher", "Log window or status bar not initialized"
+                )
                 return
 
             # Load cache safely
@@ -8601,12 +10558,14 @@ class PremediaApp(QApplication):
             self.file_watcher.progress_update.connect(
                 self.update_progress, Qt.QueuedConnection
             )
-            
+
             self.file_watcher.alert_notification.connect(
                 self._show_worker_alert, Qt.QueuedConnection
             )
 
-            app_signals.append_log.emit("[Security] Auto-logout on session conflict enabled")
+            app_signals.append_log.emit(
+                "[Security] Auto-logout on session conflict enabled"
+            )
 
             # ✅ FIX: Start the poll timer ONLY after thread has started.
             #         Use thread.started signal to guarantee worker is live before
@@ -8647,7 +10606,9 @@ class PremediaApp(QApplication):
             # self.schedule_daily_restart(3, 0)
             def on_thread_started():
                 logger.info("FileWatcherWorker thread is live — starting poll timer")
-                app_signals.append_log.emit("[App] FileWatcherWorker thread live, poll timer starting")
+                app_signals.append_log.emit(
+                    "[App] FileWatcherWorker thread live, poll timer starting"
+                )
 
                 if getattr(self, "poll_timer", None):
                     try:
@@ -8694,7 +10655,9 @@ class PremediaApp(QApplication):
                     self.notif_manager.on_upload_status_detail, Qt.QueuedConnection
                 )
                 logger.info("[App] TransferNotificationManager connected")
-                app_signals.append_log.emit("[App] TransferNotificationManager connected")
+                app_signals.append_log.emit(
+                    "[App] TransferNotificationManager connected"
+                )
                 # ─────────────────────────────────────────────────────────────
 
             # Connect and start the thread
@@ -8702,7 +10665,9 @@ class PremediaApp(QApplication):
             self.file_watcher_thread.start()
 
             logger.info("FileWatcherWorker thread started successfully")
-            app_signals.append_log.emit("[App] FileWatcherWorker thread started successfully")
+            app_signals.append_log.emit(
+                "[App] FileWatcherWorker thread started successfully"
+            )
 
             # Watchdog timer
             if getattr(self, "watchdog_timer", None):
@@ -8717,10 +10682,10 @@ class PremediaApp(QApplication):
             self.schedule_daily_restart(3, 0)
 
         except Exception as e:
-            self.handle_error("FileWatcher", f"Failed to start FileWatcherWorker: {str(e)}")
+            self.handle_error(
+                "FileWatcher", f"Failed to start FileWatcherWorker: {str(e)}"
+            )
 
-
-            
         # ─────────────────────────────────────────────────────────────────
 
     def _safe_invoke_watcher(self):
@@ -8736,7 +10701,9 @@ class PremediaApp(QApplication):
                 QMetaObject.invokeMethod(self.file_watcher, "run", Qt.QueuedConnection)
             else:
                 logger.warning("[PollTimer] file_watcher is None, skipping invoke")
-                app_signals.append_log.emit("[App] PollTimer skipped: file_watcher not ready")
+                app_signals.append_log.emit(
+                    "[App] PollTimer skipped: file_watcher not ready"
+                )
         except RuntimeError as e:
             # Worker was deleted by Qt GC — stop the timer to prevent spam
             logger.warning(f"[PollTimer] Worker deleted, stopping poll timer: {e}")
@@ -8747,7 +10714,6 @@ class PremediaApp(QApplication):
             logger.error(f"[PollTimer] Unexpected error: {e}")
             app_signals.append_log.emit(f"[App] PollTimer error: {str(e)}")
 
-
     def restart_file_watcher(self):
         """Restart FileWatcherWorker safely, with backoff."""
         try:
@@ -8757,12 +10723,20 @@ class PremediaApp(QApplication):
 
             backoff_delay = min(self.restart_count * 30, 300)
             if self.restart_count > 10:
-                logger.error("[Watchdog] Too many restarts (>10). Stopping FileWatcherWorker permanently.")
-                app_signals.append_log.emit("[Watchdog] Too many restarts (>10). Stopping FileWatcherWorker permanently.")
+                logger.error(
+                    "[Watchdog] Too many restarts (>10). Stopping FileWatcherWorker permanently."
+                )
+                app_signals.append_log.emit(
+                    "[Watchdog] Too many restarts (>10). Stopping FileWatcherWorker permanently."
+                )
                 return
 
-            logger.info(f"[Watchdog] Restart attempt {self.restart_count}, backoff {backoff_delay}s")
-            app_signals.append_log.emit(f"[Watchdog] Restart attempt {self.restart_count}, backoff {backoff_delay}s")
+            logger.info(
+                f"[Watchdog] Restart attempt {self.restart_count}, backoff {backoff_delay}s"
+            )
+            app_signals.append_log.emit(
+                f"[Watchdog] Restart attempt {self.restart_count}, backoff {backoff_delay}s"
+            )
 
             # Stop old thread safely
             self.stop_file_watcher_thread()
@@ -8771,7 +10745,9 @@ class PremediaApp(QApplication):
             QTimer.singleShot(backoff_delay * 1000, self.start_file_watcher)
 
         except Exception as e:
-            self.handle_error("FileWatcher", f"Failed to restart FileWatcherWorker: {str(e)}")
+            self.handle_error(
+                "FileWatcher", f"Failed to restart FileWatcherWorker: {str(e)}"
+            )
 
     def check_memory_usage(self, threshold_mb: int = 500, cpu_threshold: int = 80):
         """
@@ -8780,6 +10756,7 @@ class PremediaApp(QApplication):
         """
         try:
             import psutil
+
             process = psutil.Process()
 
             mem_mb = process.memory_info().rss / 1024 / 1024
@@ -8812,15 +10789,17 @@ class PremediaApp(QApplication):
                 f"[Watchdog] Failed to check system usage: {str(e)}"
             )
 
-
     def daily_restart_file_watcher(self):
         """Restart FileWatcher once every 24h for preventive cleanup."""
-        logger.info("[DailyRestart] Performing scheduled daily restart of FileWatcherWorker...")
-        app_signals.append_log.emit("[DailyRestart] Performing scheduled daily restart of FileWatcherWorker...")
+        logger.info(
+            "[DailyRestart] Performing scheduled daily restart of FileWatcherWorker..."
+        )
+        app_signals.append_log.emit(
+            "[DailyRestart] Performing scheduled daily restart of FileWatcherWorker..."
+        )
 
         self.restart_count = 0  # reset watchdog counter
         self.restart_file_watcher()
-
 
     def schedule_daily_restart(self, hour: int = 3, minute: int = 0):
         """Schedule daily restart at fixed time (default 03:00 AM)."""
@@ -8834,10 +10813,11 @@ class PremediaApp(QApplication):
         delay_ms = int((target - now).total_seconds() * 1000)
 
         logger.info(f"[DailyRestart] Scheduled first daily restart at {target}")
-        app_signals.append_log.emit(f"[DailyRestart] Scheduled first daily restart at {target}")
+        app_signals.append_log.emit(
+            f"[DailyRestart] Scheduled first daily restart at {target}"
+        )
 
         QTimer.singleShot(delay_ms, self._start_daily_restart_cycle)
-
 
     def _start_daily_restart_cycle(self):
         """First trigger, then repeat daily."""
@@ -8846,25 +10826,30 @@ class PremediaApp(QApplication):
         self.daily_restart_timer.timeout.connect(self.daily_restart_file_watcher)
         self.daily_restart_timer.start(24 * 60 * 60 * 1000)  # 24h
 
-
-
-
     def handle_error(self, context, error, show_dialog=True):
         import traceback
+
         logger.error(f"{context}: {str(error)}\n{traceback.format_exc()}")
         app_signals.append_log.emit(f"[{context}] Failed: {str(error)}")
         app_signals.update_status.emit(f"{context} error: {str(error)}")
         if show_dialog:
             # QMessageBox.critical(None, f"{context} Error", f"{context} error: {str(error)}")
-            show_alert(f"{context} Error",  f"{context} error: {str(error)}", QMessageBox.Critical)
-
+            show_alert(
+                f"{context} Error",
+                f"{context} error: {str(error)}",
+                QMessageBox.Critical,
+            )
 
     def cleanup_and_quit(self):
         if IS_APP_ACTIVE_UPLOAD_DOWNLOAD:
             print(f"Skip log out: {IS_APP_ACTIVE_UPLOAD_DOWNLOAD}")
             # Show success message
             # QMessageBox.information(None, "Action blocked", "An upload/download is currently in progress. Try again once it is complete.")
-            show_alert("Action blocked", "An upload/download is currently in progress. Try again once it is complete.", QMessageBox.Information)
+            show_alert(
+                "Action blocked",
+                "An upload/download is currently in progress. Try again once it is complete.",
+                QMessageBox.Information,
+            )
             return
 
         try:
@@ -8876,18 +10861,25 @@ class PremediaApp(QApplication):
             FILE_WATCHER_STOP_QUEUE.put(True)
 
             # Stop poll timer if exists
-            if hasattr(self, 'poll_timer') and self.poll_timer.isActive():
+            if hasattr(self, "poll_timer") and self.poll_timer.isActive():
                 self.poll_timer.stop()
                 logger.debug("Stopped poll_timer")
                 app_signals.append_log.emit("[App] Stopped poll_timer")
 
             # Stop file watcher thread if exists
-            if hasattr(self, 'file_watcher_thread') and self.file_watcher_thread.isRunning():
+            if (
+                hasattr(self, "file_watcher_thread")
+                and self.file_watcher_thread.isRunning()
+            ):
                 self.file_watcher_thread.quit()
                 self.file_watcher_thread.wait(10000)
                 if self.file_watcher_thread.isRunning():
-                    logger.warning("File watcher thread did not stop gracefully, terminating")
-                    app_signals.append_log.emit("[App] File watcher thread did not stop gracefully, terminating")
+                    logger.warning(
+                        "File watcher thread did not stop gracefully, terminating"
+                    )
+                    app_signals.append_log.emit(
+                        "[App] File watcher thread did not stop gracefully, terminating"
+                    )
                     self.file_watcher_thread.terminate()
                     self.file_watcher_thread.wait(1000)
 
@@ -8898,7 +10890,7 @@ class PremediaApp(QApplication):
                 w.close()
 
             # Hide tray icon if exists
-            if hasattr(self, 'tray_icon') and self.tray_icon:
+            if hasattr(self, "tray_icon") and self.tray_icon:
                 self.tray_icon.hide()
                 self.tray_icon.deleteLater()
 
@@ -8927,21 +10919,22 @@ class PremediaApp(QApplication):
                 sys.exit(1)
 
     def logout_apicall(self, user_id):
-        machine_id = USER_SYSTEM_INFO.get('encoded_mac', '')
+        machine_id = USER_SYSTEM_INFO.get("encoded_mac", "")
         try:
             payload = {
-                'user_id': user_id,
-                'machine_id': machine_id,
+                "user_id": user_id,
+                "machine_id": machine_id,
             }
             response = requests.post(API_URL_LOGOUT, data=payload, verify=False)
             logger.info(response)
             if response.status_code == 200:
                 logger.info(f"Successfully posted metadata to API (Logout).")
             else:
-                logger.error(f"Failed to post metadata to API (Logout): {response.status_code} {response.text}")
+                logger.error(
+                    f"Failed to post metadata to API (Logout): {response.status_code} {response.text}"
+                )
         except Exception as e:
             logger.error(f"Error posting metadata to API (Logout): {e}")
-
 
     def logout(self):
         if IS_APP_ACTIVE_UPLOAD_DOWNLOAD:
@@ -8954,7 +10947,7 @@ class PremediaApp(QApplication):
             show_alert(
                 "Action blocked",
                 "An upload/download is currently in progress. Try again once it is complete.",
-                QMessageBox.Information
+                QMessageBox.Information,
             )
             print(f"Skip log out: {IS_APP_ACTIVE_UPLOAD_DOWNLOAD}")
             return
@@ -8982,9 +10975,11 @@ class PremediaApp(QApplication):
 
             cache["token"] = ""
             try:
-                if (self.login_dialog is not None and
-                        hasattr(self.login_dialog, 'ui') and
-                        self.login_dialog.ui is not None):
+                if (
+                    self.login_dialog is not None
+                    and hasattr(self.login_dialog, "ui")
+                    and self.login_dialog.ui is not None
+                ):
                     if not self.login_dialog.ui.rememberme.isChecked():
                         cache["saved_username"] = ""
                         cache["saved_password"] = ""
@@ -9036,30 +11031,39 @@ class PremediaApp(QApplication):
         try:
             self.logged_in = True
             logger.debug(f"Setting logged_in state to: {self.logged_in}")
-            app_signals.append_log.emit(f"[State] Setting logged_in state to: {self.logged_in}")
+            app_signals.append_log.emit(
+                f"[State] Setting logged_in state to: {self.logged_in}"
+            )
             self.update_tray_menu()
             if self.tray_icon and QSystemTrayIcon.isSystemTrayAvailable():
                 self.tray_icon.setIcon(load_icon(LOGGEDIN_ICON_PATH, "logged in"))
                 self.tray_icon.show()
-                logger.debug(f"Tray icon set to 'logged in', visible: {self.tray_icon.isVisible()}")
-                app_signals.append_log.emit(f"[Tray] Tray icon set to 'logged in', visible: {self.tray_icon.isVisible()}")
+                logger.debug(
+                    f"Tray icon set to 'logged in', visible: {self.tray_icon.isVisible()}"
+                )
+                app_signals.append_log.emit(
+                    f"[Tray] Tray icon set to 'logged in', visible: {self.tray_icon.isVisible()}"
+                )
             else:
                 logger.warning("Tray icon or system tray not available")
-                app_signals.append_log.emit("[Tray] Tray icon or system tray not available")
-            if hasattr(self, 'login_dialog'):
+                app_signals.append_log.emit(
+                    "[Tray] Tray icon or system tray not available"
+                )
+            if hasattr(self, "login_dialog"):
                 self.login_dialog.is_logged_in = True
-                logger.debug(f"LoginDialog is_logged_in set to: {self.login_dialog.is_logged_in}")
+                logger.debug(
+                    f"LoginDialog is_logged_in set to: {self.login_dialog.is_logged_in}"
+                )
             logger.info("Set logged in state")
             app_signals.append_log.emit("[State] Set to logged-in state")
             app_signals.update_status.emit("Logged in state set")
         except Exception as e:
             self.handle_error("SetLoggedIn", f"Error setting logged-in state: {str(e)}")
 
-
     def set_logged_out_state(self):
         try:
             self.logged_in = False
-            if hasattr(self, 'login_dialog'):
+            if hasattr(self, "login_dialog"):
                 self.login_dialog.is_logged_in = False
             logger.info("Set logged out state")
             app_signals.append_log.emit("[State] Set to logged-out state")
@@ -9075,9 +11079,10 @@ class PremediaApp(QApplication):
 
         except Exception as e:
             logger.error(f"Error in set_logged_out_state: {e}")
-            app_signals.append_log.emit(f"[State] Failed: Error setting logged-out state - {str(e)}")
+            app_signals.append_log.emit(
+                f"[State] Failed: Error setting logged-out state - {str(e)}"
+            )
             app_signals.update_status.emit(f"Error setting logged-out state: {str(e)}")
-
 
     def open_cache_file(self):
         try:
@@ -9088,10 +11093,16 @@ class PremediaApp(QApplication):
             # Check if file exists
             if not cache_file.exists():
                 logger.warning(f"Cache file does not exist: {cache_file}")
-                app_signals.append_log.emit(f"[Cache] Cache file does not exist: {cache_file}")
+                app_signals.append_log.emit(
+                    f"[Cache] Cache file does not exist: {cache_file}"
+                )
                 app_signals.update_status.emit("Cache file does not exist")
                 # QMessageBox.warning(None, "Cache Error", f"Cache file does not exist:\n{cache_file}")
-                show_alert("Cache Error", f"Cache file does not exist:\n{cache_file}", QMessageBox.Warning)
+                show_alert(
+                    "Cache Error",
+                    f"Cache file does not exist:\n{cache_file}",
+                    QMessageBox.Warning,
+                )
                 return
 
             # Verify file is readable
@@ -9100,31 +11111,43 @@ class PremediaApp(QApplication):
                 app_signals.append_log.emit(f"[Cache] Invalid file: {cache_file}")
                 app_signals.update_status.emit("Invalid cache file")
                 # QMessageBox.warning(None, "Cache Error", f"Invalid cache file:\n{cache_file}")
-                show_alert("Cache Error", f"Invalid cache file:\n{cache_file}", QMessageBox.Warning)
+                show_alert(
+                    "Cache Error",
+                    f"Invalid cache file:\n{cache_file}",
+                    QMessageBox.Warning,
+                )
                 return
 
             # Read and beautify file content
             try:
-                with cache_file.open('r', encoding='utf-8') as f:
+                with cache_file.open("r", encoding="utf-8") as f:
                     raw_content = f.read()
                 # Try to parse and beautify JSON
                 try:
                     json_data = json.loads(raw_content)
                     content = json.dumps(json_data, indent=4, sort_keys=True)
                     logger.debug("Successfully parsed and formatted JSON content")
-                    app_signals.append_log.emit("[Cache] Successfully formatted JSON content")
+                    app_signals.append_log.emit(
+                        "[Cache] Successfully formatted JSON content"
+                    )
                 except json.JSONDecodeError as json_err:
                     logger.warning(f"Cache file is not valid JSON: {json_err}")
-                    app_signals.append_log.emit(f"[Cache] Not valid JSON, displaying raw content: {str(json_err)}")
+                    app_signals.append_log.emit(
+                        f"[Cache] Not valid JSON, displaying raw content: {str(json_err)}"
+                    )
                     content = raw_content  # Fall back to raw content
             except UnicodeDecodeError:
                 logger.warning(f"Cache file is not UTF-8 encoded: {cache_file}")
-                app_signals.append_log.emit(f"[Cache] Non-UTF-8 file detected: {cache_file}")
-                with cache_file.open('r', encoding='latin-1') as f:
+                app_signals.append_log.emit(
+                    f"[Cache] Non-UTF-8 file detected: {cache_file}"
+                )
+                with cache_file.open("r", encoding="latin-1") as f:
                     content = f.read()  # Display raw content without JSON formatting
 
             # Create and show dialog
-            dialog = QDialog(None)  # Use None as parent since PremediaApp is not a widget
+            dialog = QDialog(
+                None
+            )  # Use None as parent since PremediaApp is not a widget
             dialog.setWindowTitle("Cache File Content")
             dialog.setMinimumSize(600, 400)
 
@@ -9149,13 +11172,23 @@ class PremediaApp(QApplication):
             app_signals.append_log.emit(f"[Cache] Failed: IO error - {str(e)}")
             app_signals.update_status.emit(f"Error opening cache file: {str(e)}")
             # QMessageBox.critical(None, "Cache Error", f"Failed to open cache file:\n{str(e)}")
-            show_alert("Cache Error",f"Failed to open cache file:\n{str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Cache Error",
+                f"Failed to open cache file:\n{str(e)}",
+                QMessageBox.Critical,
+            )
         except Exception as e:
-            logger.error(f"Unexpected error opening cache file: {e}\n{traceback.format_exc()}")
+            logger.error(
+                f"Unexpected error opening cache file: {e}\n{traceback.format_exc()}"
+            )
             app_signals.append_log.emit(f"[Cache] Failed: Unexpected error - {str(e)}")
             app_signals.update_status.emit("Unexpected error")
             # QMessageBox.critical(None, "Cache Error", f"Unexpected error opening cache file:\n{str(e)}")
-            show_alert("Cache Error",f"Unexpected error opening cache file:\n{str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Cache Error",
+                f"Unexpected error opening cache file:\n{str(e)}",
+                QMessageBox.Critical,
+            )
 
     def clear_cache(self):
         global IS_APP_ACTIVE_UPLOAD_DOWNLOAD
@@ -9168,7 +11201,9 @@ class PremediaApp(QApplication):
             "Are you sure you want to clear the cache and delete all files and folders in the premedia application directory? "
             "This action cannot be undone, and all data will be permanently deleted."
         )
-        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg_box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
         msg_box.setDefaultButton(QMessageBox.StandardButton.No)
 
         reply = msg_box.exec()
@@ -9176,7 +11211,9 @@ class PremediaApp(QApplication):
         if reply == QMessageBox.StandardButton.Yes:
             try:
                 logger.info(f"[Cache] Clearing cache from BASE_DIR: {BASE_TARGET_DIR}")
-                app_signals.append_log.emit(f"[Cache] Clearing cache from BASE_DIR: {BASE_TARGET_DIR}")
+                app_signals.append_log.emit(
+                    f"[Cache] Clearing cache from BASE_DIR: {BASE_TARGET_DIR}"
+                )
 
                 initialize_cache()
                 GLOBAL_CACHE = None
@@ -9186,17 +11223,23 @@ class PremediaApp(QApplication):
                 # Delete everything inside BASE_TARGET_DIR
                 if os.path.exists(BASE_TARGET_DIR):
                     try:
-                        shutil.rmtree(BASE_TARGET_DIR)   # remove the whole folder
+                        shutil.rmtree(BASE_TARGET_DIR)  # remove the whole folder
                         logger.info(f"Deleted BASE_TARGET_DIR: {BASE_TARGET_DIR}")
-                        app_signals.append_log.emit(f"[Cache] Deleted BASE_TARGET_DIR: {BASE_TARGET_DIR}")
+                        app_signals.append_log.emit(
+                            f"[Cache] Deleted BASE_TARGET_DIR: {BASE_TARGET_DIR}"
+                        )
                     except Exception as e:
                         logger.error(f"Failed to delete BASE_TARGET_DIR: {e}")
-                        app_signals.append_log.emit(f"[Cache] Failed to delete BASE_TARGET_DIR: {e}")
+                        app_signals.append_log.emit(
+                            f"[Cache] Failed to delete BASE_TARGET_DIR: {e}"
+                        )
 
                     # Recreate empty BASE_TARGET_DIR
                     os.makedirs(BASE_TARGET_DIR, exist_ok=True)
                     logger.info(f"Recreated empty {BASE_TARGET_DIR}")
-                    app_signals.append_log.emit(f"[Cache] Recreated empty {BASE_TARGET_DIR}")
+                    app_signals.append_log.emit(
+                        f"[Cache] Recreated empty {BASE_TARGET_DIR}"
+                    )
 
                 logger.info("Cache cleared manually")
                 app_signals.append_log.emit("[Cache] Cache cleared manually")
@@ -9204,15 +11247,23 @@ class PremediaApp(QApplication):
 
                 # ✅ Show success dialog
                 # QMessageBox.information(None, "Cache Cleared", "Cache cleared successfully!")
-                show_alert("Cache Cleared", "Cache cleared successfully!", QMessageBox.Critical)
+                show_alert(
+                    "Cache Cleared", "Cache cleared successfully!", QMessageBox.Critical
+                )
 
                 self.show_login()
             except Exception as e:
                 print(f"Error clearing cache: {e}")
-                app_signals.append_log.emit(f"[Cache] Failed: Error clearing cache - {str(e)}")
+                app_signals.append_log.emit(
+                    f"[Cache] Failed: Error clearing cache - {str(e)}"
+                )
                 app_signals.update_status.emit(f"Error clearing cache: {str(e)}")
                 # QMessageBox.critical(None, "Cache Error", f"Failed to clear cache: {str(e)}")
-                show_alert("Cache Cleared", f"Failed to clear cache: {str(e)}", QMessageBox.Critical)
+                show_alert(
+                    "Cache Cleared",
+                    f"Failed to clear cache: {str(e)}",
+                    QMessageBox.Critical,
+                )
         else:
             app_signals.append_log.emit("[Cache] Cache clear cancelled by user")
             logger.info("Cache clear cancelled by user")
@@ -9222,17 +11273,20 @@ class PremediaApp(QApplication):
         global HTTP_SESSION, FILE_WATCHER_RUNNING
         try:
             logger.debug("Quit initiated")
-            if hasattr(self, 'poll_timer') and self.poll_timer.isActive():
+            if hasattr(self, "poll_timer") and self.poll_timer.isActive():
                 logger.debug("Stopping poll_timer")
                 self.poll_timer.stop()
                 FILE_WATCHER_RUNNING = False
 
-            if hasattr(self, 'file_watcher_thread') and self.file_watcher_thread.isRunning():
+            if (
+                hasattr(self, "file_watcher_thread")
+                and self.file_watcher_thread.isRunning()
+            ):
                 logger.debug("Quitting file_watcher_thread")
                 self.file_watcher_thread.quit()
                 self.file_watcher_thread.wait(2000)
 
-            if hasattr(self, 'login_dialog') and self.login_dialog.isVisible():
+            if hasattr(self, "login_dialog") and self.login_dialog.isVisible():
                 logger.debug("Closing login_dialog")
                 self.login_dialog.close()
 
@@ -9259,24 +11313,40 @@ class PremediaApp(QApplication):
         try:
             if not self.logged_in:
                 # If the old dialog was closed or deleted, recreate it safely
-                if self.login_dialog is None or not isinstance(self.login_dialog, LoginDialog):
-                    logger.warning("Recreating login dialog (previous instance lost or invalid)")
+                if self.login_dialog is None or not isinstance(
+                    self.login_dialog, LoginDialog
+                ):
+                    logger.warning(
+                        "Recreating login dialog (previous instance lost or invalid)"
+                    )
                     self.login_dialog = LoginDialog(parent=None, app=self)
                     self.login_dialog.user_in_other_system.connect(self.show_login_page)
 
                 # If signals were lost after logout, rebind them
                 try:
-                    if hasattr(self.login_dialog.ui, "login_button") and \
-                    not self.login_dialog.ui.login_button.receivers(self.login_dialog.ui.login_button.clicked):
-                        self.login_dialog.ui.login_button.clicked.connect(self.login_dialog.handle_login)
+                    if hasattr(
+                        self.login_dialog.ui, "login_button"
+                    ) and not self.login_dialog.ui.login_button.receivers(
+                        self.login_dialog.ui.login_button.clicked
+                    ):
+                        self.login_dialog.ui.login_button.clicked.connect(
+                            self.login_dialog.handle_login
+                        )
                         logger.debug("Reconnected login button signal")
 
-                    if hasattr(self.login_dialog.ui, "cancel_button") and \
-                    not self.login_dialog.ui.cancel_button.receivers(self.login_dialog.ui.cancel_button.clicked):
-                        self.login_dialog.ui.cancel_button.clicked.connect(self.login_dialog.reject)
+                    if hasattr(
+                        self.login_dialog.ui, "cancel_button"
+                    ) and not self.login_dialog.ui.cancel_button.receivers(
+                        self.login_dialog.ui.cancel_button.clicked
+                    ):
+                        self.login_dialog.ui.cancel_button.clicked.connect(
+                            self.login_dialog.reject
+                        )
                         logger.debug("Reconnected cancel button signal")
                 except Exception as signal_error:
-                    logger.warning(f"Could not verify/reconnect signals: {signal_error}")
+                    logger.warning(
+                        f"Could not verify/reconnect signals: {signal_error}"
+                    )
 
                 # Make absolutely sure the dialog is visible and interactive
                 self.login_dialog.showNormal()
@@ -9294,11 +11364,16 @@ class PremediaApp(QApplication):
                 logger.info("User is already logged in")
         except Exception as e:
             logger.error(f"Error in show_login: {e}")
-            app_signals.append_log.emit(f"[Login] Failed: Error opening login dialog - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Login] Failed: Error opening login dialog - {str(e)}"
+            )
             app_signals.update_status.emit(f"Error opening login dialog: {str(e)}")
             # QMessageBox.critical(None, "Login Error", f"Failed to open login dialog: {str(e)}")
-            show_alert("Login Error", f"Failed to open login dialog: {str(e)}", QMessageBox.Critical)
-
+            show_alert(
+                "Login Error",
+                f"Failed to open login dialog: {str(e)}",
+                QMessageBox.Critical,
+            )
 
     def show_logs(self):
         try:
@@ -9314,14 +11389,23 @@ class PremediaApp(QApplication):
             app_signals.append_log.emit("[Log] Log window opened")
         except Exception as e:
             logger.error(f"Error in show_logs: {e}")
-            app_signals.append_log.emit(f"[Log] Failed: Error opening log window - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Log] Failed: Error opening log window - {str(e)}"
+            )
             app_signals.update_status.emit(f"Error opening log window: {str(e)}")
             # QMessageBox.critical(self, "Log Error", f"Failed to open log window: {str(e)}")
-            show_alert("Log Error", f"Failed to open log window: {str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Log Error",
+                f"Failed to open log window: {str(e)}",
+                QMessageBox.Critical,
+            )
 
     def show_downloaded_files(self):
         try:
-            if not self.downloaded_files_window or not self.downloaded_files_window.isVisible():
+            if (
+                not self.downloaded_files_window
+                or not self.downloaded_files_window.isVisible()
+            ):
                 self.downloaded_files_window = FileDownloadListWindow("downloaded")
                 self.downloaded_files_window.show()
                 self.downloaded_files_window.raise_()
@@ -9333,14 +11417,23 @@ class PremediaApp(QApplication):
                 app_signals.append_log.emit("[Files] Downloaded files window opened")
         except Exception as e:
             logger.error(f"Error in show_downloaded_files: {e}")
-            app_signals.append_log.emit(f"[Files] Failed: Error showing downloaded files - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Files] Failed: Error showing downloaded files - {str(e)}"
+            )
             app_signals.update_status.emit(f"Error showing downloaded files: {str(e)}")
             # QMessageBox.critical(self, "Files Error", f"Failed to show downloaded files: {str(e)}")
-            show_alert("Files Error", f"Failed to show downloaded files: {str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Files Error",
+                f"Failed to show downloaded files: {str(e)}",
+                QMessageBox.Critical,
+            )
 
     def show_uploaded_files(self):
         try:
-            if not self.uploaded_files_window or not self.uploaded_files_window.isVisible():
+            if (
+                not self.uploaded_files_window
+                or not self.uploaded_files_window.isVisible()
+            ):
                 self.uploaded_files_window = FileUploadListWindow("uploaded")
                 self.uploaded_files_window.show()
                 self.uploaded_files_window.raise_()
@@ -9352,10 +11445,16 @@ class PremediaApp(QApplication):
                 app_signals.append_log.emit("[Files] Uploaded files window opened")
         except Exception as e:
             logger.error(f"Error in show_uploaded_files: {e}")
-            app_signals.append_log.emit(f"[Files] Failed: Error showing uploaded files - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Files] Failed: Error showing uploaded files - {str(e)}"
+            )
             app_signals.update_status.emit(f"Error showing uploaded files: {str(e)}")
             # QMessageBox.critical(self, "Files Error", f"Failed to show uploaded files: {str(e)}")
-            show_alert("Files Error", f"Failed to show uploaded files: {str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Files Error",
+                f"Failed to show uploaded files: {str(e)}",
+                QMessageBox.Critical,
+            )
 
     def convert_to_jpg_and_psd(self, src_path, dest_dir):
         try:
@@ -9365,20 +11464,32 @@ class PremediaApp(QApplication):
             self.thread.started.connect(self.worker.run)
             self.worker.finished.connect(self.on_conversion_finished)
             self.worker.error.connect(self.on_conversion_error)
-            self.worker.progress.connect(lambda file_path, progress: app_signals.update_file_list.emit(file_path, f"Converting: {progress}%", "download", progress, False))
+            self.worker.progress.connect(
+                lambda file_path, progress: app_signals.update_file_list.emit(
+                    file_path, f"Converting: {progress}%", "download", progress, False
+                )
+            )
             self.worker.finished.connect(self.thread.quit)
             self.worker.error.connect(self.thread.quit)
             self.worker.finished.connect(self.worker.deleteLater)
             self.worker.error.connect(self.worker.deleteLater)
             self.thread.finished.connect(self.thread.deleteLater)
             self.thread.start()
-            app_signals.append_log.emit(f"[Conversion] Starting conversion for {src_path}")
+            app_signals.append_log.emit(
+                f"[Conversion] Starting conversion for {src_path}"
+            )
         except Exception as e:
             logger.error(f"File conversion thread error: {e}")
-            app_signals.append_log.emit(f"[Conversion] Failed: File conversion thread error - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Conversion] Failed: File conversion thread error - {str(e)}"
+            )
             app_signals.update_status.emit(f"File conversion thread error: {str(e)}")
             # QMessageBox.critical(self, "Conversion Error", f"File conversion thread error: {str(e)}")
-            show_alert("Conversion Error", f"File conversion thread error: {str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Conversion Error",
+                f"File conversion thread error: {str(e)}",
+                QMessageBox.Critical,
+            )
 
     def on_conversion_finished(self, jpg_path, psd_path, basename):
         try:
@@ -9387,27 +11498,47 @@ class PremediaApp(QApplication):
                 cache["downloaded_files"].extend([jpg_path, psd_path])
                 save_cache(cache)
             app_signals.update_status.emit(f"Uploaded JPG: {basename}")
-            app_signals.update_file_list.emit(jpg_path, "Conversion Completed", "download", 100, False)
-            app_signals.update_file_list.emit(psd_path, "Conversion Completed", "download", 100, False)
-            app_signals.append_log.emit(f"[Conversion] Completed conversion for {basename}")
+            app_signals.update_file_list.emit(
+                jpg_path, "Conversion Completed", "download", 100, False
+            )
+            app_signals.update_file_list.emit(
+                psd_path, "Conversion Completed", "download", 100, False
+            )
+            app_signals.append_log.emit(
+                f"[Conversion] Completed conversion for {basename}"
+            )
         except Exception as e:
             logger.error(f"Error in on_conversion_finished: {e}")
-            app_signals.append_log.emit(f"[Conversion] Failed: Conversion error - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Conversion] Failed: Conversion error - {str(e)}"
+            )
             app_signals.update_status.emit(f"Conversion error: {str(e)}")
             # QMessageBox.critical(self, "Conversion Error", f"Conversion error: {str(e)}")
-            show_alert("Conversion Error", f"Conversion error: {str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Conversion Error", f"Conversion error: {str(e)}", QMessageBox.Critical
+            )
 
     def on_conversion_error(self, error, basename):
         try:
             app_signals.update_status.emit(f"Conversion failed for {basename}: {error}")
-            app_signals.update_file_list.emit("", f"Conversion Failed: {error}", "download", 0, False)
-            app_signals.append_log.emit(f"[Conversion] Failed: Conversion error for {basename} - {error}")
+            app_signals.update_file_list.emit(
+                "", f"Conversion Failed: {error}", "download", 0, False
+            )
+            app_signals.append_log.emit(
+                f"[Conversion] Failed: Conversion error for {basename} - {error}"
+            )
         except Exception as e:
             logger.error(f"Error in on_conversion_error: {e}")
-            app_signals.append_log.emit(f"[Conversion] Failed: Error handling conversion error - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Conversion] Failed: Error handling conversion error - {str(e)}"
+            )
             app_signals.update_status.emit(f"Error handling conversion error: {str(e)}")
             # QMessageBox.critical(self, "Conversion Error", f"Error handling conversion error: {str(e)}")
-            show_alert("Conversion Error", f"Error handling conversion error: {str(e)}", QMessageBox.Critical)
+            show_alert(
+                "Conversion Error",
+                f"Error handling conversion error: {str(e)}",
+                QMessageBox.Critical,
+            )
 
     def open_with_photoshop(self, file_path):
         try:
@@ -9416,50 +11547,71 @@ class PremediaApp(QApplication):
             if system == "Windows":
                 search_dirs = [
                     Path("C:/Program Files/Adobe"),
-                    Path("C:/Program Files (x86)/Adobe")
+                    Path("C:/Program Files (x86)/Adobe"),
                 ]
                 for base_dir in search_dirs:
                     if not base_dir.exists():
                         continue
-                    photoshop_exes = list(base_dir.glob("Adobe Photoshop */Photoshop.exe"))
+                    photoshop_exes = list(
+                        base_dir.glob("Adobe Photoshop */Photoshop.exe")
+                    )
                     if photoshop_exes:
                         photoshop_exes.sort(key=lambda x: x.parent.name, reverse=True)
                         photoshop_path = str(photoshop_exes[0])
                         break
                 if not photoshop_path:
-                    raise FileNotFoundError("Adobe Photoshop executable not found in Program Files")
+                    raise FileNotFoundError(
+                        "Adobe Photoshop executable not found in Program Files"
+                    )
             elif system == "Darwin":
                 try:
                     result = subprocess.run(
-                        ["mdfind", "kMDItemKind == 'Application' && kMDItemFSName == 'Adobe Photoshop.app'"],
-                        capture_output=True, text=True, check=True
+                        [
+                            "mdfind",
+                            "kMDItemKind == 'Application' && kMDItemFSName == 'Adobe Photoshop.app'",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=True,
                     )
                     if result.stdout.strip():
                         photoshop_path = result.stdout.strip().split("\n")[0]
                 except subprocess.CalledProcessError:
-                    photoshop_apps = list(Path("/Applications").glob("Adobe Photoshop*.app"))
+                    photoshop_apps = list(
+                        Path("/Applications").glob("Adobe Photoshop*.app")
+                    )
                     if photoshop_apps:
                         photoshop_apps.sort(key=lambda x: x.name, reverse=True)
                         photoshop_path = str(photoshop_apps[0])
                 if not photoshop_path:
-                    raise FileNotFoundError("Adobe Photoshop application not found in /Applications")
+                    raise FileNotFoundError(
+                        "Adobe Photoshop application not found in /Applications"
+                    )
             elif system == "Linux":
                 try:
-                    subprocess.run(["wine", "--version"], capture_output=True, check=True)
+                    subprocess.run(
+                        ["wine", "--version"], capture_output=True, check=True
+                    )
                     wine_dirs = [
                         Path.home() / ".wine/drive_c/Program Files/Adobe",
-                        Path.home() / ".wine/drive_c/Program Files (x86)/Adobe"
+                        Path.home() / ".wine/drive_c/Program Files (x86)/Adobe",
                     ]
                     for base_dir in wine_dirs:
                         if not base_dir.exists():
                             continue
-                        photoshop_exes = list(base_dir.glob("Adobe Photoshop */Photoshop.exe"))
+                        photoshop_exes = list(
+                            base_dir.glob("Adobe Photoshop */Photoshop.exe")
+                        )
                         if photoshop_exes:
-                            photoshop_exes.sort(key=lambda x: x.parent.name, reverse=True)
+                            photoshop_exes.sort(
+                                key=lambda x: x.parent.name, reverse=True
+                            )
                             photoshop_path = str(photoshop_exes[0])
                             break
                     if not photoshop_path:
-                        raise FileNotFoundError("Photoshop.exe not found in Wine directories")
+                        raise FileNotFoundError(
+                            "Photoshop.exe not found in Wine directories"
+                        )
                 except subprocess.CalledProcessError:
                     raise FileNotFoundError("Wine is not installed or not functioning")
             else:
@@ -9482,9 +11634,15 @@ class PremediaApp(QApplication):
                 subprocess.run(["open", "-a", photoshop_path, file_path], check=True)
             else:
                 subprocess.run([photoshop_path, file_path], check=True)
-            logger.info(f"Opened {Path(file_path).name} in Photoshop at {photoshop_path}")
-            app_signals.append_log.emit(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-            app_signals.update_status.emit(f"Opened {Path(file_path).name} in Photoshop")
+            logger.info(
+                f"Opened {Path(file_path).name} in Photoshop at {photoshop_path}"
+            )
+            app_signals.append_log.emit(
+                f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}"
+            )
+            app_signals.update_status.emit(
+                f"Opened {Path(file_path).name} in Photoshop"
+            )
         except Exception as e:
             error_msg = f"Failed to open {Path(file_path).name} in Photoshop: {str(e)}"
             logger.error(error_msg)
@@ -9497,14 +11655,16 @@ class PremediaApp(QApplication):
         try:
             logger.debug(f"Progress update received: {value}%")
             app_signals.append_log.emit(f"[App] Progress update: {value}%")
-            if hasattr(self, 'log_window') and self.log_window:
-                self.log_window.status_bar.showMessage(f"File operation progress: {value}%")
+            if hasattr(self, "log_window") and self.log_window:
+                self.log_window.status_bar.showMessage(
+                    f"File operation progress: {value}%"
+                )
                 logger.debug(f"Updated LogWindow status bar with progress: {value}%")
                 app_signals.update_status.emit(f"File operation progress: {value}%")
         except Exception as e:
             logger.error(f"Error in update_progress: {e}")
             app_signals.append_log.emit(f"[App] Error in update_progress: {str(e)}")
-            
+
     # @Slot(str, str)
     # def _show_worker_alert(self, title: str, message: str):
     #     """
@@ -9519,10 +11679,7 @@ class PremediaApp(QApplication):
         msg.setWindowTitle(title)
         msg.setText(message)
         msg.setIcon(QMessageBox.Warning)
-        msg.setWindowFlags(
-            msg.windowFlags()
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
+        msg.setWindowFlags(msg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         msg.setWindowState(Qt.WindowState.WindowActive)
         msg.setAttribute(Qt.WA_ShowWithoutActivating, False)
         msg.raise_()
@@ -9540,7 +11697,9 @@ class PremediaApp(QApplication):
             token = cache.get("token", "")
             user_id = cache.get("user_id", "")
             if not token or not user_id:
-                self.handle_error("Post-Login", "No token or user_id for post-login processes")
+                self.handle_error(
+                    "Post-Login", "No token or user_id for post-login processes"
+                )
                 self.set_logged_out_state()
                 self.show_login()
                 return
@@ -9568,10 +11727,12 @@ class PremediaApp(QApplication):
 
             # Close progress dialog if still visible
             try:
-                if (hasattr(self, 'login_dialog') and
-                        self.login_dialog is not None and
-                        self.login_dialog.progress and
-                        self.login_dialog.progress.isVisible()):
+                if (
+                    hasattr(self, "login_dialog")
+                    and self.login_dialog is not None
+                    and self.login_dialog.progress
+                    and self.login_dialog.progress.isVisible()
+                ):
                     self.login_dialog.progress.close()
                     logger.debug("Progress dialog closed")
                     app_signals.append_log.emit("[Login] Progress dialog closed")
@@ -9580,7 +11741,9 @@ class PremediaApp(QApplication):
 
             # Reconnect status signal
             try:
-                app_signals.update_status.disconnect(self.log_window.status_bar.showMessage)
+                app_signals.update_status.disconnect(
+                    self.log_window.status_bar.showMessage
+                )
             except Exception:
                 pass
             app_signals.update_status.connect(
@@ -9588,23 +11751,26 @@ class PremediaApp(QApplication):
             )
 
             logger.info("Post-login processes completed successfully")
-            app_signals.append_log.emit("[Login] Post-login processes completed successfully")
+            app_signals.append_log.emit(
+                "[Login] Post-login processes completed successfully"
+            )
             app_signals.update_status.emit("File watcher started")
 
         except Exception as e:
             self.handle_error("Post-Login", f"Post-login error: {str(e)}")
             try:
-                if (hasattr(self, 'login_dialog') and
-                        self.login_dialog is not None and
-                        self.login_dialog.progress and
-                        self.login_dialog.progress.isVisible()):
+                if (
+                    hasattr(self, "login_dialog")
+                    and self.login_dialog is not None
+                    and self.login_dialog.progress
+                    and self.login_dialog.progress.isVisible()
+                ):
                     self.login_dialog.progress.close()
             except RuntimeError:
                 pass
             self.set_logged_out_state()
             self.show_login()
-            
-            
+
     def show_dialog(self, title, message, dialog_type):
         try:
             msg_box = QMessageBox(self)
@@ -9617,12 +11783,17 @@ class PremediaApp(QApplication):
             msg_box.setStandardButtons(QMessageBox.Ok)
             msg_box.exec_()
             logger.debug(f"Displayed dialog: {title} - {message} ({dialog_type})")
-            app_signals.append_log.emit(f"[Dialog] Displayed: {title} - {message} ({dialog_type})")
+            app_signals.append_log.emit(
+                f"[Dialog] Displayed: {title} - {message} ({dialog_type})"
+            )
             app_signals.update_status.emit(f"Displayed dialog: {title}")
         except Exception as e:
             logger.error(f"Error in show_dialog: {str(e)}")
-            app_signals.append_log.emit(f"[Dialog] Failed: Error displaying dialog - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Dialog] Failed: Error displaying dialog - {str(e)}"
+            )
             app_signals.update_status.emit(f"Error displaying dialog: {str(e)}")
+
 
 # get_system_info()
 threading.Thread(target=get_system_info, daemon=True).start()
@@ -9635,22 +11806,19 @@ TRANSFER_REPORTER.start()
 import ctypes
 import sys
 
+
 def run_updater(updater_path, new_exe, old_exe):
     params = f'"{new_exe}" "{old_exe}"'
 
     result = ctypes.windll.shell32.ShellExecuteW(
-        None,
-        "runas",   # 🔥 forces admin
-        updater_path,
-        params,
-        None,
-        1
+        None, "runas", updater_path, params, None, 1  # 🔥 forces admin
     )
 
     if result <= 32:
         print("Failed to elevate updater")
 
     sys.exit(0)
+
 
 api_process = None
 
@@ -9665,10 +11833,11 @@ def get_local_ip():
 
 def get_free_port():
     s = socket.socket()
-    s.bind(('', 0))
+    s.bind(("", 0))
     port = s.getsockname()[1]
     s.close()
     return port
+
 
 # def start_local_api():
 #     global api_process
@@ -9690,6 +11859,7 @@ def get_free_port():
 
 #     return api_process
 
+
 def start_local_api():
     global api_process
 
@@ -9702,9 +11872,7 @@ def start_local_api():
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     API_PATH = os.path.join(BASE_DIR, "api_runner.py")
     print(f"api path-----", API_PATH)
-    api_process = subprocess.Popen([
-        sys.executable, API_PATH, ip, str(port)
-    ])
+    api_process = subprocess.Popen([sys.executable, API_PATH, ip, str(port)])
     print(f"api_process-----{api_process}")
 
     return api_process
@@ -9723,7 +11891,6 @@ def stop_local_api():
         api_process.wait(timeout=5)
 
 
-
 if __name__ == "__main__":
     lock_handle = ensure_single_instance("PremediaApp")
     try:
@@ -9738,11 +11905,12 @@ if __name__ == "__main__":
         sys.exit(app.exec())
     except Exception as e:
         print(f"Application crashed: {e}")
-        stop_local_api()    # CLEAN SHUTDOWN
+        stop_local_api()  # CLEAN SHUTDOWN
         import traceback
+
         traceback.print_exc()
     finally:
-        stop_local_api()    # CLEAN SHUTDOWN
+        stop_local_api()  # CLEAN SHUTDOWN
 
 # if __name__ == "__main__":
 #     lock_handle = ensure_single_instance("PremediaApp")

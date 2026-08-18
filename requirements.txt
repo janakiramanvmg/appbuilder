@@ -36,3 +36,4 @@ ssh2-python==1.1.1
 keyring==25.2.1
 keyrings.alt==5.0.1
 appdirs==1.4.4
+boto3==1.43.73

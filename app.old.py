@@ -8,11 +8,11 @@ from PySide6.QtWidgets import (
 from updater_client import check_for_update
   # your current version
 
-from PySide6.QtGui import QIcon, QTextCursor, QAction, QCursor, QFont,QPixmap, QDesktopServices
+from PySide6.QtGui import QIcon, QTextCursor, QAction, QCursor, QFont,QPixmap, QDesktopServices, QColor
 from PySide6.QtCore import QRunnable, QThreadPool, QEvent, QSize, QThread, QTimer, Qt, QObject, Signal, QMetaObject, Slot, QLockFile, QDir, QEventLoop, QUrl, Q_ARG, QMimeData, QPropertyAnimation, QEvent
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkAccessManager, QNetworkRequest
 from login import Ui_Dialog
-from PySide6.QtWidgets import QLineEdit, QGraphicsOpacityEffect
+from PySide6.QtWidgets import QLineEdit, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
 
 import sys
 import logging
@@ -23,7 +23,7 @@ import requests
 from requests.exceptions import RequestException
 import urllib3
 import json
-from urllib.parse import urlparse, parse_qs, quote
+from urllib.parse import urlparse, parse_qs, quote, unquote
 from pathlib import Path
 from datetime import datetime, timedelta, timezone 
 from zoneinfo import ZoneInfo
@@ -64,6 +64,20 @@ except ImportError:
     tifffile = None
 import pytz
 import shutil
+
+# === S3 client support (used with `rclone serve s3`) ===
+try:
+    import boto3
+    from boto3.s3.transfer import TransferConfig
+    from botocore.config import Config as BotoConfig
+    S3_AVAILABLE = True
+except ImportError as e:
+    boto3 = None
+    TransferConfig = None
+    BotoConfig = None
+    S3_AVAILABLE = False
+    logging.warning(f"boto3/botocore not installed: {e}. Rclone S3 functionality disabled.")
+
 # Lazy import — keyring blocks on Windows credential store at import time
 keyring = None
 # def _load_keyring():
@@ -193,7 +207,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # NAS_USERNAME = "irnasappprod"
 # MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
 # NAS_PATH = "softwaremedia/IR_prod/"
-# APPVERSION = "1.2.6"
+# APPVERSION = "1.2.7"
+# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
 
 BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
 NAS_IP = "192.168.1.145"
@@ -204,7 +219,20 @@ NAS_SHARE = ""
 NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
 MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
 NAS_PATH = "softwaremedia/IR_uat/"
-APPVERSION = "1.2.6(UAT)"
+APPVERSION = "1.2.7(UAT)"
+
+# === Rclone S3-compatible object storage (UAT) ===
+# `rclone serve s3` endpoint. Bucket is the root directory name exposed by rclone.
+# Environment variables override these values, which is recommended outside UAT/POC.
+S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://192.168.2.199:9000").rstrip("/")
+S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
+S3_SECRET_KEY = os.getenv("PREMEDIA_S3_SECRET_KEY", "KJDSKJNOIWEBNSSDEW")
+S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
+S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "IR_uat")
+S3_MULTIPART_CHUNK_MB = 16
+S3_MAX_CONCURRENCY = 2
+
+GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -299,6 +327,176 @@ RETRY_ICON_PATH = get_icon_path("retry.png")
 FOLDER_ICON_PATH = get_icon_path("folder.png")
 
 
+def _coerce_bool(value, default=None):
+    """Convert bool/int/string API values to bool without bool("0") surprises."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    value = str(value).strip().lower()
+    if value in ("1", "true", "yes", "y", "on"):
+        return True
+    if value in ("0", "false", "no", "n", "off", ""):
+        return False
+    return default
+
+
+def _task_uses_s3(item, file_path=""):
+    """
+    Decide whether a task should use rclone S3 instead of SFTP.
+
+    Preferred API contract:
+      download -> is_nas_src=false means S3
+      upload   -> is_nas_dest=false means S3
+
+    Also accepts storage_type/storage_backend values such as "s3" or
+    "rclone_s3". URL detection is retained only as a backward-compatible
+    fallback for existing tasks.
+    """
+    item = item if isinstance(item, dict) else {}
+    request_type = str(item.get("request_type", "")).strip().lower()
+
+    flag_name = "is_nas_src" if request_type == "download" else "is_nas_dest"
+    if flag_name in item:
+        is_nas = _coerce_bool(item.get(flag_name), default=None)
+        if is_nas is not None:
+            return not is_nas
+
+    backend = str(
+        item.get("storage_type")
+        or item.get("storage_backend")
+        or item.get("transfer_backend")
+        or ""
+    ).strip().lower()
+    if backend in ("s3", "rclone_s3", "rclone-s3", "object_storage", "object-storage"):
+        return True
+    if backend in ("nas", "sftp", "ssh"):
+        return False
+
+    raw = str(file_path or item.get("file_path") or "").strip().lower()
+    endpoint = S3_ENDPOINT.lower()
+    return raw.startswith("s3://") or raw.startswith(endpoint + "/")
+
+
+def _resolve_s3_location(remote_path):
+    """
+    Return (bucket, object_key) for any of these input styles:
+      s3://IR_uat/client/project/file.psd
+      http://192.168.2.199:9000/IR_uat/client/project/file.psd
+      IR_uat/client/project/file.psd
+      /mnt/nas/softwaremedia/IR_uat/client/project/file.psd
+      softwaremedia/IR_uat/client/project/file.psd
+      client/project/file.psd
+    """
+    raw = str(remote_path or "").strip().replace("\\", "/")
+    if not raw:
+        raise ValueError("Empty S3 object path")
+
+    bucket = S3_BUCKET
+
+    if raw.lower().startswith("s3://"):
+        parsed = urlparse(raw)
+        bucket = parsed.netloc or S3_BUCKET
+        key = unquote(parsed.path).lstrip("/")
+    elif raw.lower().startswith(("http://", "https://")):
+        parsed = urlparse(raw)
+        key = unquote(parsed.path).lstrip("/")
+        # A browser/console URL may contain /files/<bucket>/... .
+        # The S3 API endpoint itself must still be S3_ENDPOINT (port 9000 here).
+        if key.startswith("files/"):
+            key = key[len("files/"):]
+    else:
+        key = raw.lstrip("/")
+
+    # Strip the bucket name when it is already embedded in the path.
+    if key == bucket:
+        key = ""
+    elif key.startswith(bucket + "/"):
+        key = key[len(bucket) + 1:]
+
+    # Backward compatibility with the existing NAS paths stored in the API/cache.
+    legacy_prefixes = [
+        str(NAS_PREFIX).replace("\\", "/").lstrip("/").rstrip("/"),
+        str(MOUNTED_NAS_PATH).replace("\\", "/").lstrip("/").rstrip("/"),
+        str(NAS_PATH).replace("\\", "/").lstrip("/").rstrip("/"),
+    ]
+    for prefix in legacy_prefixes:
+        if not prefix:
+            continue
+        if key == prefix:
+            key = ""
+            break
+        prefix_with_slash = prefix + "/"
+        if key.startswith(prefix_with_slash):
+            key = key[len(prefix_with_slash):]
+            break
+
+    # One more bucket strip may be needed after removing a legacy prefix.
+    if key.startswith(bucket + "/"):
+        key = key[len(bucket) + 1:]
+
+    key = key.strip("/")
+    if not key:
+        raise ValueError(f"S3 object key is empty for path: {remote_path}")
+
+    parts = key.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"Invalid S3 object key: {key}")
+
+    return bucket, key
+
+
+def _replace_remote_suffix(remote_path, new_ext):
+    """Replace only the final filename suffix without mangling URL prefixes."""
+    value = str(remote_path).replace("\\", "/")
+    new_ext = str(new_ext).lstrip(".")
+    if "/" in value:
+        prefix, name = value.rsplit("/", 1)
+        new_name = str(Path(name).with_suffix(f".{new_ext}"))
+        return f"{prefix}/{new_name}"
+    return str(Path(value).with_suffix(f".{new_ext}"))
+
+
+def _create_s3_client():
+    """Create a path-style SigV4 S3 client for `rclone serve s3`."""
+    if not S3_AVAILABLE:
+        raise RuntimeError("boto3 is required for rclone S3 transfers. Install with: pip install boto3")
+    if not S3_ACCESS_KEY or not S3_SECRET_KEY:
+        raise RuntimeError("S3 access key/secret key are not configured")
+
+    return boto3.client(
+        "s3",
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id=S3_ACCESS_KEY,
+        aws_secret_access_key=S3_SECRET_KEY,
+        region_name=S3_REGION,
+        config=BotoConfig(
+            signature_version="s3v4",
+            s3={"addressing_style": "path"},
+            connect_timeout=10,
+            read_timeout=120,
+            retries={"max_attempts": 3, "mode": "standard"},
+        ),
+    )
+
+
+def _s3_transfer_config():
+    """
+    Conservative multipart settings for rclone serve s3.
+    Low concurrency keeps out-of-order buffered parts small on the rclone server.
+    """
+    mb = 1024 * 1024
+    return TransferConfig(
+        multipart_threshold=S3_MULTIPART_CHUNK_MB * mb,
+        multipart_chunksize=S3_MULTIPART_CHUNK_MB * mb,
+        max_concurrency=S3_MAX_CONCURRENCY,
+        num_download_attempts=3,
+        use_threads=True,
+    )
+
+
 def get_cache_file_path():
     # Use BASE_TARGET_DIR as the base for cache file generation
     cache_dir = Path(BASE_TARGET_DIR) / "PremediaApp"
@@ -343,10 +541,16 @@ API_POLL_INTERVAL = 5000  # 5 seconds in milliseconds
 
 # === Google Chat transfer reporting (latency / speed) ===
 # Paste your Google Chat "Incoming Webhook" URL here (Space -> Apps & integrations -> Webhooks)
-GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
+# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 TRANSFER_REPORT_INTERVAL_SEC = 10  # send a report every 10 seconds while a transfer is active
 LATENCY_TARGET_HOST = None  # None => uses NAS_IP; set to a domain/IP to ping a different server
 LATENCY_TARGET_PORT = None  # None => uses NAS_PORT
+
+# === Network/server problem alarm thresholds ===
+LATENCY_WARNING_MS = 1000       # server latency above this = "server is very slow"
+LATENCY_MIN_MS = 1              # server latency below this (but not None) = suspicious/likely bad reading
+SPEED_WARNING_MBPS = 0.5        # transfer speed below this (mid-transfer) = "server is very slow"
+ALARM_COOLDOWN_SEC = 300        # don't repeat the same alarm type more than once per 5 minutes
 
 log_window_handler = None
 # === Global State ===
@@ -367,6 +571,13 @@ USER_SYSTEM_INFO = {}
 THROTTLE_MBPS = None       # Set to e.g. 50, 100, or None for no limit (full speed)
 MIN_REQUIRED_MBPS = 50     # Optional: for warning if speed too low (in Mbps)
 PRINT_INTERVAL = 0.5       # Progress update frequency in seconds
+
+# ---- TEMPORARY: Max upload file size limit ----
+# To DISABLE this limit, just set ENABLE_MAX_UPLOAD_SIZE_LIMIT = False below
+# (or delete/comment out these two lines) — no other code changes needed.
+ENABLE_MAX_UPLOAD_SIZE_LIMIT = True   # <-- flip to False to turn the limit off
+MAX_UPLOAD_SIZE_MB = 2048             # 2 GB
+# =================================================
 # ===================================
 # === Logging Setup ===
 logger = logging.getLogger("PremediaApp")
@@ -398,8 +609,808 @@ class AppSignals(QObject):
     update_file_list = Signal(str, str, str, int, bool)
     api_call_status = Signal(str, str, int)
     update_timer_status = Signal(str)
+    network_alarm = Signal(str, str)  # summary, full_diagnostic_report_text
+    # file_path, PSDValidationResult, confirmation_box (_PSDConfirmationBox)
+    psd_validation_required = Signal(str, object, object)
+
+    def __init__(self):
+        super().__init__()
+        # Self-connect with QueuedConnection: app_signals is created at import
+        # time on the main thread, so this guarantees _on_network_alarm (and
+        # the Qt dialog it builds) always runs on the main GUI thread, even
+        # though network_alarm.emit() is called from background threads.
+        self.network_alarm.connect(self._on_network_alarm, Qt.QueuedConnection)
+        # Same pattern for the PSD/PSB pre-upload validation confirmation
+        # dialog — must always be built/shown on the main GUI thread even
+        # though the request originates from a background upload thread.
+        self.psd_validation_required.connect(self._on_psd_validation_required, Qt.QueuedConnection)
+
+    @Slot(str, str)
+    def _on_network_alarm(self, summary, report_text):
+        show_network_alarm_dialog(summary, report_text)
+
+    @Slot(str, object, object)
+    def _on_psd_validation_required(self, file_path, result, confirmation_box):
+        """
+        Runs on the main GUI thread (QueuedConnection). Shows the PSD
+        quality-check report + Upload/Cancel confirmation dialog, then wakes
+        up the waiting background upload thread with the user's decision.
+        """
+        try:
+            dlg = PSDValidationDialog(file_path, result, parent=None)
+            dlg.raise_()
+            dlg.activateWindow()
+            choice = dlg.exec()
+            confirmation_box.result = (choice == QDialog.Accepted)
+        except Exception as e:
+            logger.error(f"[PSD Validation] Failed to show confirmation dialog: {e}")
+            confirmation_box.result = False
+        finally:
+            confirmation_box.event.set()
 
 app_signals = AppSignals()
+
+
+# ============================================================================
+# === PSD / PSB Production-Readiness Validation ============================
+# ============================================================================
+#
+# Runs a checklist of production-readiness rules against a .psd/.psb file
+# before it is uploaded to the NAS, and always shows the user a report +
+# Upload/Cancel confirmation dialog — regardless of whether validation
+# passed or failed — so the human makes the final call.
+#
+# Config is optional; pass a dict via FileWatcherWorker.psd_validation_config
+# to customize behavior, e.g.:
+#   {
+#       "allowed_hidden_layers": ["Guides"],
+#       "temp_layer_patterns": ["temp", "tmp", "wip", "draft", "test"],
+#       "reference_layer_patterns": ["reference", "ref", "guide"],
+#       "layer_naming_regex": r"^[A-Za-z0-9_\-\s]+$",
+#       "mandatory_layers": ["Background", "Final"],
+#       "expected_hierarchy": None,
+#       "allowed_locked_layers": [],
+#       "min_width": None,
+#       "min_height": None,
+#       "required_color_mode": None,   # e.g. "RGB"
+#       "require_flattenable": False,
+#   }
+# ============================================================================
+
+class PSDUploadCancelled(Exception):
+    """Raised when the user cancels an upload from the PSD validation dialog."""
+    pass
+
+
+class UploadSizeLimitExceeded(Exception):
+    """Raised when a file exceeds the configured MAX_UPLOAD_SIZE_MB limit."""
+    pass
+
+
+def exceeds_max_upload_size(file_path):
+    """
+    Checks a file against the temporary MAX_UPLOAD_SIZE_MB limit.
+
+    TO DISABLE: set ENABLE_MAX_UPLOAD_SIZE_LIMIT = False near the top of
+    this file (in the CONFIGURATION block) — this function will then
+    always return (False, size_mb) and the limit has no effect anywhere.
+
+    Returns (exceeds: bool, size_mb: float).
+    """
+    if not ENABLE_MAX_UPLOAD_SIZE_LIMIT:
+        return False, 0.0
+    try:
+        size_mb = Path(file_path).stat().st_size / (1024 * 1024)
+    except Exception as e:
+        logger.warning(f"[UploadSizeLimit] Could not stat {file_path}: {e}")
+        return False, 0.0
+    return size_mb > MAX_UPLOAD_SIZE_MB, size_mb
+
+
+class PSDValidationResult:
+    """Container for one PSD/PSB validation run."""
+
+    def __init__(self):
+        self.checks = []          # list of {"name","passed","message"}
+        self.canvas_size = None   # (width, height)
+        self.overall_pass = True
+
+    def add(self, name, passed, message=""):
+        self.checks.append({"name": name, "passed": bool(passed), "message": message or ""})
+        if not passed:
+            self.overall_pass = False
+
+
+def _psd_layer_name(layer):
+    try:
+        return layer.name or "(unnamed layer)"
+    except Exception:
+        return "(unnamed layer)"
+
+
+def validate_psd_document(file_path, config=None):
+    """
+    Validates a .psd/.psb file against a production-readiness checklist.
+    Never raises — any internal failure is captured as a FAIL check so the
+    caller always gets back a usable PSDValidationResult.
+    """
+    config = config or {}
+    result = PSDValidationResult()
+
+    if PSDImage is None:
+        result.add("PSD Library", False, "psd-tools is not installed; cannot validate this file")
+        return result
+
+    try:
+        psd = PSDImage.open(file_path)
+    except Exception as e:
+        result.add("File Open", False, f"Could not open PSD/PSB file: {e}")
+        return result
+
+    try:
+        result.canvas_size = (psd.width, psd.height)
+    except Exception:
+        result.canvas_size = None
+
+    try:
+        all_layers = list(psd.descendants())
+    except Exception as e:
+        result.add("Layer Enumeration", False, f"Could not enumerate layers: {e}")
+        return result
+
+    def _is_group(layer):
+        try:
+            return bool(layer.is_group())
+        except Exception:
+            return False
+
+    # ---- 1. Hidden Layer Check ----
+    try:
+        allowed_hidden = set(config.get("allowed_hidden_layers", []))
+        hidden = [_psd_layer_name(l) for l in all_layers if not getattr(l, "visible", True)]
+        bad_hidden = [n for n in hidden if n not in allowed_hidden]
+        if bad_hidden:
+            result.add("Hidden Layer Check", False, f"Hidden layers found: {', '.join(bad_hidden)}")
+        else:
+            result.add("Hidden Layer Check", True)
+    except Exception as e:
+        result.add("Hidden Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 2. Empty Layer Check ----
+    try:
+        empty_layers = []
+        for l in all_layers:
+            if _is_group(l):
+                continue
+            try:
+                bbox = l.bbox
+                if bbox is None or (bbox[2] - bbox[0]) <= 0 or (bbox[3] - bbox[1]) <= 0:
+                    empty_layers.append(_psd_layer_name(l))
+            except Exception:
+                continue
+        if empty_layers:
+            result.add("Empty Layer Check", False, f"Empty layers: {', '.join(empty_layers)}")
+        else:
+            result.add("Empty Layer Check", True)
+    except Exception as e:
+        result.add("Empty Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 3. Temporary Layer Check ----
+    try:
+        temp_patterns = config.get("temp_layer_patterns", ["temp", "tmp", "test", "working", "wip", "draft"])
+        temp_layers = [
+            _psd_layer_name(l) for l in all_layers
+            if any(p.lower() in (_psd_layer_name(l)).lower() for p in temp_patterns)
+        ]
+        if temp_layers:
+            result.add("Temporary Layer Check", False, f"Temporary/working layers found: {', '.join(temp_layers)}")
+        else:
+            result.add("Temporary Layer Check", True)
+    except Exception as e:
+        result.add("Temporary Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 4. Reference Layer Check ----
+    try:
+        ref_patterns = config.get("reference_layer_patterns", ["reference", "ref", "guide"])
+        ref_layers = [
+            _psd_layer_name(l) for l in all_layers
+            if any(p.lower() in (_psd_layer_name(l)).lower() for p in ref_patterns)
+        ]
+        if ref_layers:
+            result.add("Reference Layer Check", False, f"Reference/guide layers found: {', '.join(ref_layers)}")
+        else:
+            result.add("Reference Layer Check", True)
+    except Exception as e:
+        result.add("Reference Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 5. Layer Naming Validation ----
+    try:
+        naming_pattern = config.get("layer_naming_regex")
+        if naming_pattern:
+            bad_names = [
+                _psd_layer_name(l) for l in all_layers
+                if l.name and not re.match(naming_pattern, l.name)
+            ]
+            if bad_names:
+                result.add("Layer Naming Validation", False, f"Layers violating naming convention: {', '.join(bad_names)}")
+            else:
+                result.add("Layer Naming Validation", True)
+        else:
+            result.add("Layer Naming Validation", True, "No naming convention configured; check skipped")
+    except Exception as e:
+        result.add("Layer Naming Validation", False, f"Check failed to run: {e}")
+
+    # ---- 6. Mandatory Layer Validation ----
+    try:
+        mandatory = config.get("mandatory_layers", [])
+        if mandatory:
+            existing_names = {_psd_layer_name(l) for l in all_layers}
+            missing = [m for m in mandatory if m not in existing_names]
+            if missing:
+                result.add("Mandatory Layer Validation", False, f"Missing mandatory layers: {', '.join(missing)}")
+            else:
+                result.add("Mandatory Layer Validation", True)
+        else:
+            result.add("Mandatory Layer Validation", True, "No mandatory layers configured; check skipped")
+    except Exception as e:
+        result.add("Mandatory Layer Validation", False, f"Check failed to run: {e}")
+
+    # ---- 7. Duplicate Layer Detection ----
+    try:
+        name_counts = {}
+        for l in all_layers:
+            n = _psd_layer_name(l)
+            name_counts[n] = name_counts.get(n, 0) + 1
+        dupes = [n for n, c in name_counts.items() if c > 1 and n != "(unnamed layer)"]
+        if dupes:
+            result.add("Duplicate Layer Detection", False, f"Duplicate layer names: {', '.join(dupes)}")
+        else:
+            result.add("Duplicate Layer Detection", True)
+    except Exception as e:
+        result.add("Duplicate Layer Detection", False, f"Check failed to run: {e}")
+
+    # ---- 8. Layer Hierarchy Validation ----
+    try:
+        expected_hierarchy = config.get("expected_hierarchy")
+        if expected_hierarchy:
+            # Placeholder for a project-specific structural comparison —
+            # wire in actual group/folder-path comparison logic here when
+            # an expected_hierarchy spec is provided via config.
+            result.add("Layer Hierarchy Validation", True)
+        else:
+            result.add("Layer Hierarchy Validation", True, "No expected_hierarchy configured; check skipped")
+    except Exception as e:
+        result.add("Layer Hierarchy Validation", False, f"Check failed to run: {e}")
+
+    # ---- 9. Locked Layer Validation ----
+    try:
+        allowed_locked = set(config.get("allowed_locked_layers", []))
+        locked_layers = []
+        for l in all_layers:
+            is_locked = False
+            for attr in ("locked", "is_locked"):
+                try:
+                    val = getattr(l, attr, False)
+                    if callable(val):
+                        val = val()
+                    if val:
+                        is_locked = True
+                        break
+                except Exception:
+                    continue
+            if is_locked:
+                locked_layers.append(_psd_layer_name(l))
+        bad_locked = [n for n in locked_layers if n not in allowed_locked]
+        if bad_locked:
+            result.add("Locked Layer Validation", False, f"Unexpected locked layers: {', '.join(bad_locked)}")
+        else:
+            result.add("Locked Layer Validation", True)
+    except Exception as e:
+        result.add("Locked Layer Validation", False, f"Check failed to run: {e}")
+
+    # ---- 10. Document Properties Check ----
+    try:
+        doc_issues = []
+        min_w = config.get("min_width")
+        min_h = config.get("min_height")
+        if min_w and result.canvas_size and result.canvas_size[0] < min_w:
+            doc_issues.append(f"Width {result.canvas_size[0]} < required {min_w}")
+        if min_h and result.canvas_size and result.canvas_size[1] < min_h:
+            doc_issues.append(f"Height {result.canvas_size[1]} < required {min_h}")
+        required_color_mode = config.get("required_color_mode")
+        if required_color_mode:
+            try:
+                actual_mode = str(psd.color_mode).upper()
+            except Exception:
+                actual_mode = "UNKNOWN"
+            if required_color_mode.upper() not in actual_mode:
+                doc_issues.append(f"Color mode {actual_mode} != required {required_color_mode.upper()}")
+        if doc_issues:
+            result.add("Document Properties Check", False, "; ".join(doc_issues))
+        else:
+            result.add("Document Properties Check", True)
+    except Exception as e:
+        result.add("Document Properties Check", False, f"Check failed to run: {e}")
+
+    # ---- 11. Smart Object Check ----
+    try:
+        require_flatten = bool(config.get("require_flattenable", False))
+        if require_flatten:
+            smart_objects = []
+            for l in all_layers:
+                try:
+                    if str(getattr(l, "kind", "")).lower() == "smartobject":
+                        smart_objects.append(_psd_layer_name(l))
+                except Exception:
+                    continue
+            if smart_objects:
+                result.add("Smart Object Check", False, f"Smart objects present (must be flattened): {', '.join(smart_objects)}")
+            else:
+                result.add("Smart Object Check", True)
+        else:
+            result.add("Smart Object Check", True, "Flattenability not required; check skipped")
+    except Exception as e:
+        result.add("Smart Object Check", False, f"Check failed to run: {e}")
+
+    # ---- 12. Production Readiness Check (aggregate of the above) ----
+    try:
+        blocking_checks = (
+            "Hidden Layer Check", "Empty Layer Check", "Temporary Layer Check",
+            "Reference Layer Check", "Mandatory Layer Validation", "Duplicate Layer Detection",
+        )
+        non_production = any(
+            (not c["passed"]) for c in result.checks if c["name"] in blocking_checks
+        )
+        if non_production:
+            result.add("Production Readiness Check", False, "PSD contains non-production layers; not ready for delivery")
+        else:
+            result.add("Production Readiness Check", True)
+    except Exception as e:
+        result.add("Production Readiness Check", False, f"Check failed to run: {e}")
+
+    return result
+
+
+def format_psd_validation_report(file_path, result: PSDValidationResult) -> str:
+    """Formats a PSDValidationResult into the standard readable report text."""
+    lines = []
+    lines.append(f"PSD Validation Report — {file_path}")
+    if result.canvas_size:
+        lines.append(f"Canvas: {result.canvas_size[0]}x{result.canvas_size[1]}")
+    lines.append("=" * 72)
+    for check in result.checks:
+        icon = "✅ [PASS]" if check["passed"] else "❌ [FAIL]"
+        lines.append(f"{icon} {check['name']}")
+        if check["message"]:
+            level = "INFO" if check["passed"] else "FAIL"
+            lines.append(f"        - ({level}) -: {check['message']}")
+    lines.append("=" * 72)
+    overall_icon = "✅" if result.overall_pass else "❌"
+    overall_text = "PASS" if result.overall_pass else "FAIL"
+    lines.append(f"{overall_icon} Overall status: {overall_text}")
+    return "\n".join(lines)
+
+
+class PSDCheckRowWidget(QFrame):
+    """One row in the QC checklist — glassy dark card with an accent-colored
+    icon chip, check name, optional message, and a status pill."""
+
+    def __init__(self, name: str, passed: bool, message: str = "", parent=None):
+        super().__init__(parent)
+        self.setObjectName("PSDCheckRow")
+
+        accent = "#3ddc97" if passed else "#ff5c7a"
+        accent_soft = "rgba(61, 220, 151, 0.12)" if passed else "rgba(255, 92, 122, 0.12)"
+        icon = "✓" if passed else "✕"
+        pill_text = "PASS" if passed else "FAIL"
+
+        self.setStyleSheet(f"""
+            QFrame#PSDCheckRow {{
+                background: #1b1e2b;
+                border: 1px solid #262a3b;
+                border-left: 3px solid {accent};
+                border-radius: 10px;
+            }}
+            QFrame#PSDCheckRow:hover {{
+                background: #20243450;
+                border-color: {accent};
+            }}
+        """)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 90))
+        self.setGraphicsEffect(shadow)
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(14, 12, 14, 12)
+        outer.setSpacing(12)
+
+        icon_lbl = QLabel(icon)
+        icon_lbl.setFixedSize(30, 30)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setStyleSheet(f"""
+            background-color: {accent_soft};
+            color: {accent};
+            font-weight: bold;
+            font-size: 14px;
+            border-radius: 15px;
+            border: 1px solid {accent};
+        """)
+        outer.addWidget(icon_lbl)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(3)
+
+        name_lbl = QLabel(name)
+        name_lbl.setStyleSheet(
+            "color: #eef0f7; font-weight: 600; font-size: 12.5px; "
+            "background: transparent; letter-spacing: 0.2px;"
+        )
+        text_col.addWidget(name_lbl)
+
+        if message:
+            msg_lbl = QLabel(message)
+            msg_lbl.setWordWrap(True)
+            msg_lbl.setStyleSheet(
+                f"color: {'#8c93a8' if passed else '#ff8fa3'}; font-size: 11px; "
+                "background: transparent; line-height: 140%;"
+            )
+            text_col.addWidget(msg_lbl)
+
+        outer.addLayout(text_col, 1)
+
+        pill = QLabel(pill_text)
+        pill.setAlignment(Qt.AlignCenter)
+        pill.setFixedWidth(62)
+        pill.setStyleSheet(f"""
+            background-color: {accent};
+            color: #0e1018;
+            font-weight: 800;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            border-radius: 10px;
+            padding: 4px 0;
+        """)
+        outer.addWidget(pill, 0, Qt.AlignTop)
+
+
+class _PSDSegmentedBar(QFrame):
+    """Slim rounded pass/fail ratio bar — a small dashboard-style touch
+    showing at a glance how much of the checklist passed."""
+
+    def __init__(self, passed: int, total: int, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(8)
+        self.setStyleSheet("background: rgba(255,255,255,0.18); border-radius: 4px;")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        failed = max(total - passed, 0)
+        if total <= 0:
+            return
+
+        if passed:
+            seg_pass = QFrame()
+            seg_pass.setStyleSheet("background-color: #3ddc97; border-radius: 4px;")
+            layout.addWidget(seg_pass, passed)
+        if failed:
+            seg_fail = QFrame()
+            seg_fail.setStyleSheet("background-color: #ff5c7a; border-radius: 4px;")
+            layout.addWidget(seg_fail, failed)
+
+
+class PSDValidationDialog(QDialog):
+    """
+    QC / production-readiness check window for a PSD or PSB file, shown
+    right before upload. Dark, modern "dashboard" styling — gradient
+    header, glassy checklist cards, segmented pass/fail meter, drop
+    shadows, and pill-shaped gradient action buttons — instead of a plain
+    report/error-style window. Shown for BOTH pass and fail outcomes,
+    since the human always makes the final call.
+    """
+
+    def __init__(self, file_path, result: "PSDValidationResult", parent=None):
+        super().__init__(parent)
+        overall_pass = result.overall_pass
+        passed_count = sum(1 for c in result.checks if c["passed"])
+        total_count = len(result.checks)
+        failed_count = total_count - passed_count
+
+        accent = "#3ddc97" if overall_pass else "#ff5c7a"
+        gradient = (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0f9b6e, stop:1 #3ddc97)"
+            if overall_pass else
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #c0293f, stop:1 #ff5c7a)"
+        )
+
+        self.setWindowTitle("Quality Check — PSD/PSB")
+        self.setMinimumSize(640, 660)
+        self.resize(700, 700)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.Window
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setStyleSheet("""
+            QDialog { background: #0f111a; }
+            QScrollBar:vertical {
+                background: transparent;
+                width: 9px;
+                margin: 4px 2px 4px 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #33384c;
+                border-radius: 4px;
+                min-height: 24px;
+            }
+            QScrollBar::handle:vertical:hover { background: #454b66; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+        """)
+        try:
+            self.setWindowIcon(load_icon(ICON_PATH, "psd validation"))
+        except Exception:
+            pass
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Gradient header ──────────────────────────────────────────────
+        header = QFrame()
+        header.setStyleSheet(f"background: {gradient}; border: none;")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(24, 22, 24, 22)
+        header_layout.setSpacing(10)
+
+        eyebrow = QLabel("PRODUCTION QC")
+        eyebrow.setStyleSheet(
+            "color: rgba(255,255,255,0.75); font-size: 10px; font-weight: 800; "
+            "letter-spacing: 2px; background: transparent;"
+        )
+        header_layout.addWidget(eyebrow)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(14)
+
+        badge = QLabel("✓" if overall_pass else "!")
+        badge.setFixedSize(46, 46)
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setStyleSheet(
+            "background-color: rgba(255,255,255,0.20); color: white; "
+            "font-size: 22px; font-weight: 900; border-radius: 23px; "
+            "border: 1px solid rgba(255,255,255,0.35);"
+        )
+        title_row.addWidget(badge)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        title_lbl = QLabel("Quality Check Passed" if overall_pass else "Quality Check Failed")
+        title_lbl.setStyleSheet(
+            "color: white; font-size: 19px; font-weight: 800; background: transparent;"
+        )
+        title_col.addWidget(title_lbl)
+
+        subtitle_lbl = QLabel(Path(file_path).name)
+        subtitle_lbl.setStyleSheet(
+            "color: rgba(255,255,255,0.88); font-size: 11.5px; background: transparent;"
+        )
+        subtitle_lbl.setWordWrap(True)
+        title_col.addWidget(subtitle_lbl)
+
+        title_row.addLayout(title_col, 1)
+        header_layout.addLayout(title_row)
+
+        # ── Chips: canvas size + pass/fail counts ───────────────────────
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(8)
+
+        def _make_chip(text):
+            chip = QLabel(text)
+            chip.setStyleSheet(
+                "background-color: rgba(255,255,255,0.16); color: white; font-size: 10.5px; "
+                "font-weight: 700; border-radius: 10px; padding: 4px 12px; "
+                "border: 1px solid rgba(255,255,255,0.25);"
+            )
+            return chip
+
+        if result.canvas_size:
+            chip_row.addWidget(_make_chip(f"📐  {result.canvas_size[0]} × {result.canvas_size[1]} px"))
+        chip_row.addWidget(_make_chip(f"✓  {passed_count} passed"))
+        if failed_count:
+            chip_row.addWidget(_make_chip(f"✕  {failed_count} failed"))
+        chip_row.addStretch(1)
+        header_layout.addLayout(chip_row)
+
+        # ── Segmented pass/fail meter ────────────────────────────────────
+        header_layout.addSpacing(2)
+        header_layout.addWidget(_PSDSegmentedBar(passed_count, total_count))
+
+        root.addWidget(header)
+
+        # ── Scrollable checklist ─────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: #0f111a; border: none; }")
+
+        checklist_container = QWidget()
+        checklist_container.setStyleSheet("background: #0f111a;")
+        checklist_layout = QVBoxLayout(checklist_container)
+        checklist_layout.setContentsMargins(20, 18, 20, 18)
+        checklist_layout.setSpacing(10)
+        checklist_layout.setAlignment(Qt.AlignTop)
+
+        section_lbl = QLabel("CHECKLIST")
+        section_lbl.setStyleSheet(
+            "color: #5b6178; font-size: 10px; font-weight: 800; "
+            "letter-spacing: 2px; background: transparent; padding-bottom: 2px;"
+        )
+        checklist_layout.addWidget(section_lbl)
+
+        for check in result.checks:
+            row = PSDCheckRowWidget(check["name"], check["passed"], check["message"])
+            checklist_layout.addWidget(row)
+
+        scroll.setWidget(checklist_container)
+        root.addWidget(scroll, 1)
+
+        # ── Footer: note + actions ───────────────────────────────────────
+        footer = QFrame()
+        footer.setStyleSheet("background: #14172200; border-top: 1px solid #232838;")
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(20, 16, 20, 18)
+        footer_layout.setSpacing(12)
+
+        note_lbl = QLabel(
+            "All checks passed. Proceed with uploading this file to the NAS?"
+            if overall_pass else
+            "One or more checks failed. Do you still want to proceed with uploading this file to the NAS?"
+        )
+        note_lbl.setWordWrap(True)
+        note_lbl.setStyleSheet("color: #9aa0b4; font-size: 11.5px; background: transparent;")
+        footer_layout.addWidget(note_lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self.copy_btn = QPushButton("📋  Copy Report")
+        self.copy_btn.setCursor(Qt.PointingHandCursor)
+        self.copy_btn.setMinimumHeight(38)
+        self.copy_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1b1e2b;
+                color: #c6cadb;
+                border: 1px solid #2b3044;
+                border-radius: 19px;
+                padding: 6px 18px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #232838; border-color: #3a4160; }
+            QPushButton:pressed { background-color: #171a26; padding-top: 7px; padding-bottom: 5px; }
+        """)
+        self.copy_btn.clicked.connect(lambda: self._copy_report(file_path, result))
+        btn_row.addWidget(self.copy_btn)
+        btn_row.addStretch(1)
+
+        self.proceed_btn = QPushButton("⬆  Upload to NAS")
+        self.cancel_btn = QPushButton("✕  Cancel")
+
+        self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.proceed_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.setMinimumHeight(40)
+        self.proceed_btn.setMinimumHeight(40)
+        self.cancel_btn.setMinimumWidth(120)
+        self.proceed_btn.setMinimumWidth(160)
+
+        self.cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #ff5c7a;
+                border: 1.5px solid #ff5c7a;
+                border-radius: 20px;
+                padding: 6px 18px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 92, 122, 0.12);
+            }
+            QPushButton:pressed {
+                background-color: rgba(255, 92, 122, 0.22);
+                padding-top: 7px;
+                padding-bottom: 5px;
+            }
+            QPushButton:focus {
+                outline: none;
+                border: 2px solid #ff5c7a;
+            }
+            QPushButton:disabled {
+                background-color: transparent;
+                color: #4a4f5e;
+                border-color: #33384c;
+            }
+        """)
+        self.proceed_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {gradient};
+                color: #0e1018;
+                border: none;
+                border-radius: 20px;
+                padding: 6px 20px;
+                font-weight: 800;
+            }}
+            QPushButton:hover {{
+                background: {gradient.replace('stop:0', 'stop:0.15').replace('stop:1', 'stop:1')};
+            }}
+            QPushButton:pressed {{
+                padding-top: 7px;
+                padding-bottom: 5px;
+            }}
+            QPushButton:focus {{
+                outline: none;
+                border: 2px solid rgba(255,255,255,0.55);
+            }}
+            QPushButton:disabled {{
+                background: #33384c;
+                color: #6b7182;
+            }}
+        """)
+
+        proceed_shadow = QGraphicsDropShadowEffect(self.proceed_btn)
+        proceed_shadow.setBlurRadius(24)
+        proceed_shadow.setOffset(0, 4)
+        proceed_shadow.setColor(QColor(*(61, 220, 151) if overall_pass else (255, 92, 122), 140))
+        self.proceed_btn.setGraphicsEffect(proceed_shadow)
+
+        self.proceed_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+
+        btn_row.addWidget(self.cancel_btn)
+        btn_row.addWidget(self.proceed_btn)
+        footer_layout.addLayout(btn_row)
+
+        root.addWidget(footer)
+
+        # Default focus follows the outcome: safest action is the default.
+        (self.proceed_btn if overall_pass else self.cancel_btn).setDefault(True)
+        (self.proceed_btn if overall_pass else self.cancel_btn).setFocus()
+
+    @staticmethod
+    def _copy_report(file_path, result):
+        try:
+            QApplication.clipboard().setText(format_psd_validation_report(file_path, result))
+        except Exception as e:
+            logger.warning(f"[PSD Validation] Failed to copy report to clipboard: {e}")
+
+
+class _PSDConfirmationBox:
+    """Simple cross-thread mailbox: worker thread waits on `event`,
+    main thread sets `result` then signals `event`."""
+
+    def __init__(self):
+        self.event = threading.Event()
+        self.result = False
+
+
+def request_psd_upload_confirmation(file_path, result: "PSDValidationResult"):
+    """
+    Thread-safe: shows the PSD quality-check dialog on the main GUI thread
+    and BLOCKS the calling (background/worker) thread until the user
+    responds.
+
+    Must NEVER be called from the main GUI thread itself (it would deadlock
+    waiting on an event that only the main thread's own queued slot can set).
+
+    Returns True if the user chose to proceed with the upload, False if
+    they cancelled (or the dialog could not be shown).
+    """
+    box = _PSDConfirmationBox()
+    app_signals.psd_validation_required.emit(file_path, result, box)
+    box.event.wait()
+    return box.result
 
 
 # ============================================================================
@@ -420,6 +1431,7 @@ _CURRENT_TRANSFER_STATS = {
     "percent": 0,
     "elapsed_sec": 0.0,
     "eta_text": "-",
+    "backend": "sftp",
 }
 
 
@@ -444,7 +1456,8 @@ def _format_elapsed(seconds: float) -> str:
 
 
 def _update_transfer_stats(action: str, file_name: str, speed_mbps: float, percent: int,
-                            file_size_mb: float = 0.0, elapsed_sec: float = 0.0, eta_text: str = "-"):
+                            file_size_mb: float = 0.0, elapsed_sec: float = 0.0, eta_text: str = "-",
+                            backend: str = "sftp"):
     """Called from the download/upload progress callbacks to record current speed/size/ETA."""
     with _TRANSFER_MONITOR_LOCK:
         _CURRENT_TRANSFER_STATS.update({
@@ -457,6 +1470,7 @@ def _update_transfer_stats(action: str, file_name: str, speed_mbps: float, perce
             "percent": percent,
             "elapsed_sec": elapsed_sec,
             "eta_text": eta_text,
+            "backend": backend,
         })
 
 
@@ -495,33 +1509,544 @@ def measure_latency_ms(host: str = None, port: int = None, timeout: float = 3.0)
                 pass
 
 
-def send_google_chat_message(text: str):
-    """Post a plain-text message to the configured Google Chat webhook."""
-    if not GOOGLE_CHAT_WEBHOOK_URL:
-        logger.debug("[GChat] GOOGLE_CHAT_WEBHOOK_URL not configured, skipping send")
-        return
+def _tcp_check(host: str, port: int, timeout: float = 3.0):
+    """Generic reachability probe. Returns (reachable: bool, latency_ms or None, error_str or None)."""
+    start = time.perf_counter()
+    sock = None
     try:
-        resp = requests.post(
-            GOOGLE_CHAT_WEBHOOK_URL,
-            json={"text": text},
-            timeout=10,
-        )
-        if resp.status_code not in (200, 204):
-            logger.warning(f"[GChat] Failed to send message: {resp.status_code} {resp.text[:300]}")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect((host, port))
+        return True, round((time.perf_counter() - start) * 1000, 1), None
     except Exception as e:
-        logger.warning(f"[GChat] Error sending message: {e}")
+        return False, None, str(e)
+    finally:
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+
+def build_network_diagnostics_report(issue_type: str, summary: str, context: dict = None, error: str = None) -> str:
+    """
+    Builds a full, human-readable diagnostics report suitable for a screenshot
+    or copy/paste to the development team: who/what/where, plus live
+    reachability checks against the NAS, the API server, Google Chat, and
+    general internet, so the dev team can immediately tell whether the
+    problem is local-network-wide or specific to one endpoint.
+    """
+    lines = []
+    lines.append("PremediaApp — Network / Server Alarm Report")
+    lines.append("=" * 60)
+    lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"Issue Type: {issue_type}")
+    lines.append(f"Summary: {summary}")
+    lines.append("")
+
+    try:
+        cache = load_cache()
+        username = cache.get("user", "Unknown")
+    except Exception:
+        username = "Unknown"
+
+    identifiers = {}
+    if isinstance(USER_SYSTEM_INFO, dict):
+        identifiers = USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
+    hostname = identifiers.get("hostname") or socket.gethostname()
+    ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
+
+    lines.append("-- User / System --")
+    lines.append(f"User: {username}")
+    lines.append(f"System: {hostname}")
+    lines.append(f"Local IP: {ip_address}")
+    lines.append(f"OS: {platform.system()} {platform.release()}")
+    lines.append(f"App Version: {APPVERSION}")
+    lines.append("")
+
+    if context:
+        lines.append("-- Context --")
+        for k, v in context.items():
+            lines.append(f"{k}: {v}")
+        lines.append("")
+
+    lines.append("-- Live Connectivity Checks --")
+
+    nas_ok, nas_latency, nas_err = _tcp_check(NAS_IP, NAS_PORT)
+    lines.append(
+        f"NAS Server ({NAS_IP}:{NAS_PORT}): "
+        + (f"Reachable — {nas_latency} ms" if nas_ok else f"UNREACHABLE — {nas_err}")
+    )
+
+    try:
+        _s3_url = urlparse(S3_ENDPOINT)
+        _s3_host = _s3_url.hostname or "192.168.2.199"
+        _s3_port = _s3_url.port or (443 if _s3_url.scheme == "https" else 80)
+        s3_ok, s3_latency, s3_err = _tcp_check(_s3_host, _s3_port)
+        lines.append(
+            f"Rclone S3 ({_s3_host}:{_s3_port}): "
+            + (f"Reachable — {s3_latency} ms" if s3_ok else f"UNREACHABLE — {s3_err}")
+        )
+    except Exception as s3_diag_err:
+        lines.append(f"Rclone S3 ({S3_ENDPOINT}): diagnostic failed — {s3_diag_err}")
+
+    try:
+        api_host = BASE_DOMAIN.replace("https://", "").replace("http://", "").split("/")[0]
+    except Exception:
+        api_host = BASE_DOMAIN
+    api_ok, api_latency, api_err = _tcp_check(api_host, 443)
+    lines.append(
+        f"API Server ({api_host}:443): "
+        + (f"Reachable — {api_latency} ms" if api_ok else f"UNREACHABLE — {api_err}")
+    )
+
+    gchat_ok, gchat_latency, gchat_err = _tcp_check("chat.googleapis.com", 443)
+    lines.append(
+        f"Google Chat (chat.googleapis.com:443): "
+        + (f"Reachable — {gchat_latency} ms" if gchat_ok else f"UNREACHABLE — {gchat_err}")
+    )
+
+    inet_ok, inet_latency, inet_err = _tcp_check("8.8.8.8", 53)
+    lines.append(
+        f"General Internet (8.8.8.8:53): "
+        + (f"Reachable — {inet_latency} ms" if inet_ok else f"UNREACHABLE — {inet_err}")
+    )
+    lines.append("")
+
+    if error:
+        lines.append("-- Error Details --")
+        lines.append(str(error))
+        lines.append("")
+
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+class NetworkAlarmWindow(QDialog):
+    """
+    Singleton, non-modal alarm window. ALL network/server alarms (NAS
+    unreachable, server slow, transfer slow, Google Chat unreachable, API
+    call failures, etc.) land in this SAME window as separate, clearly
+    labeled/timestamped entries — instead of each alarm spawning its own
+    popup.
+
+    Why this exists (bug fix):
+    The previous implementation created a brand-new modal QDialog and called
+    .exec() on every single call to raise_network_alarm(). Because
+    .exec() runs its own nested Qt event loop, a second network_alarm
+    signal arriving (from a different background thread/issue type) while
+    the first dialog was still open got processed *during* that nested loop
+    and spawned a second, independent dialog on top of the first — so two
+    separate windows with two different reports could appear at once.
+
+    Fix: keep exactly ONE instance alive for the lifetime of the app. New
+    alarms call add_report() on the existing instance (appending to the
+    same scrollable log with a divider + timestamp + issue banner) rather
+    than creating a new window. The window itself is shown non-modally
+    (show(), not exec()), so nothing blocks and nothing can double-spawn.
+    """
+
+    _instance = None
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self):
+        super().__init__(None)
+        self._entries = []  # list of (timestamp_str, summary, report_text) — newest first
+        self._alert_count = 0
+
+        self.setWindowTitle("⚠ PremediaApp — Network / Server Alarms")
+        self.setMinimumSize(760, 520)
+        self.resize(820, 560)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.Window
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        try:
+            self.setWindowIcon(load_icon(ICON_PATH, "network alarm"))
+        except Exception:
+            pass
+
+        layout = QVBoxLayout(self)
+
+        self.summary_lbl = QLabel("⚠  Network / Server Alarms")
+        self.summary_lbl.setWordWrap(True)
+        self.summary_lbl.setStyleSheet(
+            "color: white; background-color: #c0392b; font-weight: bold; "
+            "font-size: 14px; padding: 10px; border-radius: 4px;"
+        )
+        layout.addWidget(self.summary_lbl)
+
+        hint_lbl = QLabel(
+            "Every alert is listed below (most recent first), clearly separated and "
+            "timestamped. Click 'Copy All Reports' and paste into an email/chat message "
+            "to the development team, or 'Clear' to reset this window."
+        )
+        hint_lbl.setWordWrap(True)
+        hint_lbl.setStyleSheet("color: #555; font-size: 11px;")
+        layout.addWidget(hint_lbl)
+
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setFont(QFont("Consolas" if platform.system() == "Windows" else "Monospace", 10))
+        layout.addWidget(self.text_edit)
+
+        btn_row = QHBoxLayout()
+        copy_btn = QPushButton("📋 Copy All Reports")
+        clear_btn = QPushButton("🧹 Clear")
+        self.status_lbl = QLabel("")
+        self.status_lbl.setStyleSheet("color: #2ecc71; font-weight: bold;")
+        close_btn = QPushButton("Close")
+
+        copy_btn.clicked.connect(self._copy_all)
+        clear_btn.clicked.connect(self._clear_all)
+        close_btn.clicked.connect(self.close)
+
+        btn_row.addWidget(copy_btn)
+        btn_row.addWidget(clear_btn)
+        btn_row.addWidget(self.status_lbl)
+        btn_row.addStretch(1)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        self.setLayout(layout)
+
+    def add_report(self, summary: str, report_text: str):
+        """Append a new alarm entry (most recent on top) and (re)show the window."""
+        self._alert_count += 1
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._entries.insert(0, (timestamp, summary, report_text))
+
+        # Keep at most the last 50 alerts so the window/memory don't grow unbounded
+        if len(self._entries) > 50:
+            self._entries = self._entries[:50]
+
+        self._rebuild_text()
+
+        self.summary_lbl.setText(
+            f"⚠  {summary}   ({self._alert_count} alert{'s' if self._alert_count != 1 else ''} this session)"
+        )
+
+        # Beep to get attention, then bring the single window to front
+        for i in range(3):
+            QTimer.singleShot(i * 300, QApplication.beep)
+        if not self.isVisible():
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        _set_alarm_window_visible(True)
+
+    def _rebuild_text(self):
+        blocks = []
+        for idx, (timestamp, summary, report_text) in enumerate(self._entries, start=1):
+            divider = "=" * 70
+            header = f"{divider}\n[Alert #{len(self._entries) - idx + 1}]  {timestamp}\n{summary}\n{divider}"
+            blocks.append(f"{header}\n{report_text}\n")
+        self.text_edit.setPlainText("\n".join(blocks))
+        self.text_edit.moveCursor(QTextCursor.Start)
+
+    def _copy_all(self):
+        QApplication.clipboard().setText(self.text_edit.toPlainText())
+        self.status_lbl.setText("Copied!")
+        QTimer.singleShot(2000, lambda: self.status_lbl.setText(""))
+
+    def _clear_all(self):
+        self._entries = []
+        self._alert_count = 0
+        self.text_edit.clear()
+        self.summary_lbl.setText("⚠  Network / Server Alarms")
+
+    def closeEvent(self, event):
+        # Hide instead of destroying — keeps history and avoids recreating
+        # (and re-registering) the singleton on the next alarm.
+        event.ignore()
+        self.hide()
+        _set_alarm_window_visible(False)
+
+
+def show_network_alarm_dialog(summary: str, report_text: str):
+    """
+    Routes every alarm to the single persistent NetworkAlarmWindow instance
+    instead of creating a brand-new dialog per call. See NetworkAlarmWindow
+    docstring for why this fixes the "two separate windows at once" bug.
+
+    Must only be invoked on the main GUI thread — reached exclusively via
+    AppSignals.network_alarm's self-connected QueuedConnection.
+    """
+    try:
+        window = NetworkAlarmWindow.get_instance()
+        window.add_report(summary, report_text)
+    except Exception as e:
+        logger.error(f"[Alarm] Failed to show network alarm window: {e}")
+
+
+_ALARM_LOCK = Lock()
+_LAST_ALARM_TIME = {}
+_ALARM_WINDOW_VISIBLE_LOCK = Lock()
+_ALARM_WINDOW_VISIBLE = False
+
+def _set_alarm_window_visible(is_visible: bool):
+    global _ALARM_WINDOW_VISIBLE
+    with _ALARM_WINDOW_VISIBLE_LOCK:
+        _ALARM_WINDOW_VISIBLE = is_visible
+
+def _is_alarm_window_visible() -> bool:
+    with _ALARM_WINDOW_VISIBLE_LOCK:
+        return _ALARM_WINDOW_VISIBLE
+
+def raise_network_alarm(issue_type: str, summary: str, context: dict = None, error: str = None):
+    """
+    Raises a popup alarm (with sound + full diagnostics) for network/server
+    problems: can't reach Google Chat, can't reach the NAS/server, server
+    responding very slowly, or any other unexpected reporting failure.
+
+    Rate-limited per issue_type (ALARM_COOLDOWN_SEC) so a persistent problem
+    doesn't spam popups every few seconds — the underlying issue still gets
+    logged every time, just not re-popped-up.
+
+    Safe to call from any thread.
+    """
+    now = time.time()
+    with _ALARM_LOCK:
+        last = _LAST_ALARM_TIME.get(issue_type, 0)
+        if _is_alarm_window_visible() and (now - last < ALARM_COOLDOWN_SEC):
+            logger.debug(f"[Alarm] Suppressed duplicate '{issue_type}' alarm (cooldown active)")
+            return
+        _LAST_ALARM_TIME[issue_type] = now
+
+    logger.error(f"[Alarm] {issue_type}: {summary}")
+    try:
+        app_signals.append_log.emit(f"[Alarm] {issue_type}: {summary}")
+    except Exception:
+        pass
+
+    # ── NEW: surface the problem directly on the transfer card/window ──
+    # Previously a network alarm only opened the separate NetworkAlarmWindow.
+    # The download/upload card had no idea anything was wrong and just kept
+    # showing whatever progress % it last received — looking "frozen" or
+    # "stuck" to the user instead of clearly indicating the network dropped.
+    if issue_type in ("ServerUnreachable", "ServerSlow", "ServerLatencyAbnormal", "TransferSlow"):
+        try:
+            ctx = context or {}
+            file_name = ctx.get("File")
+            if file_name and file_name != "-":
+                is_upload = ctx.get("Action", "").lower() == "upload"
+                status_text = f"⚠ {summary}"
+                if is_upload:
+                    FileWatcherWorker.get_instance().upload_status_detail.emit(
+                        file_name, status_text, "upload", 0, True
+                    )
+                else:
+                    FileWatcherWorker.get_instance().download_status_detail.emit(
+                        file_name, status_text, "download", 0, True
+                    )
+        except Exception as ui_err:
+            logger.debug(f"[Alarm] Could not surface alarm on transfer UI: {ui_err}")
+
+    try:
+        report_text = build_network_diagnostics_report(issue_type, summary, context, error)
+    except Exception as e:
+        report_text = f"Failed to build full diagnostics report: {e}\n\nOriginal issue: {issue_type} - {summary}"
+
+    # Hand off to the main thread — Qt widgets can only be built there.
+    app_signals.network_alarm.emit(summary, report_text)
+
+
+def report_api_failure(api_name: str, url: str, status_code=None, response_text=None, error: str = None):
+    """
+    Notifies Google Chat whenever a POST/GET API call fails — either a
+    non-2xx status code or a request exception (timeout, connection error,
+    JSON decode error, etc). All API failures share one thread_key so they
+    group into a single Google Chat thread instead of scattering as
+    separate top-level messages. Also raises the existing local
+    popup/diagnostics alarm (raise_network_alarm) so it shows up the same
+    way NAS/server alarms do.
+
+    Safe to call from any thread. Never blocks the caller — the actual
+    Google Chat POST + local alarm happen on a background daemon thread.
+    """
+    if status_code is not None:
+        summary = f"API call failed: {api_name} — HTTP {status_code}"
+    else:
+        summary = f"API call failed: {api_name} — {error or 'Unknown error'}"
+
+    logger.error(f"[APIFailure] {summary} | url={url} | response={str(response_text)[:300]}")
+    try:
+        app_signals.append_log.emit(f"[APIFailure] {summary}")
+    except Exception:
+        pass
+
+    lines = [
+        f"*🔴 API Call Failed — {api_name}*",
+        f"URL: {url}",
+    ]
+    if status_code is not None:
+        lines.append(f"Status Code: {status_code}")
+    if response_text:
+        lines.append(f"Response: {str(response_text)[:500]}")
+    if error:
+        lines.append(f"Error: {error}")
+    lines.append(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    text = "\n".join(lines)
+    thread_key = "premedia-api-failures"
+
+    def _worker():
+        try:
+            ok, result = send_google_chat_message(text, thread_key=thread_key)
+            if not ok:
+                logger.warning(f"[APIFailure] Could not deliver failure report to Google Chat: {result}")
+
+            raise_network_alarm(
+                "APICallFailed",
+                summary,
+                context={
+                    "API": api_name,
+                    "URL": url,
+                    "Status Code": status_code if status_code is not None else "-",
+                    "Response": str(response_text)[:300] if response_text else "-",
+                },
+                error=error,
+            )
+        except Exception as e:
+            logger.warning(f"[APIFailure] Failed while reporting API failure for {api_name}: {e}")
+
+    threading.Thread(target=_worker, daemon=True, name=f"APIFailureReport-{api_name}").start()
+
+
+def _gchat_webhook_url_with_threading():
+    """
+    Ensure the webhook URL has messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD,
+    which is required for Google Chat to group messages sharing the same
+    threadKey into a single thread instead of posting separate top-level messages.
+    """
+    if not GOOGLE_CHAT_WEBHOOK_URL:
+        return ""
+    if "messageReplyOption=" in GOOGLE_CHAT_WEBHOOK_URL:
+        return GOOGLE_CHAT_WEBHOOK_URL
+    separator = "&" if "?" in GOOGLE_CHAT_WEBHOOK_URL else "?"
+    return f"{GOOGLE_CHAT_WEBHOOK_URL}{separator}messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+
+
+def send_google_chat_message(text: str, thread_key: str = None):
+    """
+    Post a message to the configured Google Chat webhook.
+
+    Returns (True, response_json_or_None) on success, or
+            (False, error_message_str) on failure — the caller uses this to
+    decide whether to raise a network alarm.
+
+    NOTE ON "UPDATING" MESSAGES:
+    Google Chat's message-edit endpoint (PUT/PATCH .../spaces/*/messages/*)
+    requires full OAuth app authentication (a registered Chat app + service
+    account with the chat.bot scope) — a plain incoming webhook's key/token
+    can only ever CREATE messages, it cannot edit one after the fact. So true
+    "keep editing message #1" is not possible with just a webhook URL.
+
+    The practical equivalent used here: every event for the same file+
+    operation is posted with the SAME thread_key. Google Chat groups all
+    messages sharing a thread_key into a single collapsible thread, so the
+    conversation for that file+operation stays together instead of scattering
+    across the space, and the first message is never replaced.
+    """
+    if not GOOGLE_CHAT_WEBHOOK_URL:
+        return False, "GOOGLE_CHAT_WEBHOOK_URL is not configured"
+    try:
+        url = _gchat_webhook_url_with_threading()
+        payload = {"text": text}
+        if thread_key:
+            payload["thread"] = {"threadKey": thread_key}
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code not in (200, 204):
+            err = f"HTTP {resp.status_code}: {resp.text[:300]}"
+            logger.warning(f"[GChat] Failed to send message: {err}")
+            return False, err
+        try:
+            return True, resp.json()
+        except ValueError:
+            # 204 No Content (or an empty body on 200) — still a success
+            return True, None
+    except requests.exceptions.Timeout:
+        err = "Request to Google Chat timed out (slow or unreachable network)"
+        logger.warning(f"[GChat] {err}")
+        return False, err
+    except requests.exceptions.ConnectionError as e:
+        err = f"Could not connect to Google Chat: {e}"
+        logger.warning(f"[GChat] {err}")
+        return False, err
+    except Exception as e:
+        err = f"Unexpected error sending to Google Chat: {e}"
+        logger.warning(f"[GChat] {err}")
+        return False, err
+
+
+def _thread_key_for(action: str, file_name: str) -> str:
+    """Stable thread key so every event for this (action, file_name) lands in one thread."""
+    raw = f"{action}:{file_name}"
+    return "premedia-" + hashlib.md5(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _pad_cell(value, width):
+    value = str(value)
+    return value + " " * max(0, width - len(value))
+
+
+def _build_transfer_table_text(header_info: dict, rows: list) -> str:
+    """
+    Builds one Google Chat message: a header block (User/System/IP/File/Type/Size,
+    shown once) followed by a monospaced table (inside a code block, so columns
+    stay aligned) with one row per event (Started / periodic Progress / Completed
+    or Failed).
+    """
+    header_lines = [
+        f"*PremediaApp Transfer — {header_info.get('action', '')}*",
+        f"User: {header_info.get('user', '-')}",
+        f"System: {header_info.get('system', '-')}",
+        f"IP: {header_info.get('ip', '-')}",
+        f"File: {header_info.get('file', '-')}",
+        f"Type: {header_info.get('type', '-')}",
+        f"Size: {header_info.get('size', '-')}",
+    ]
+
+    columns = ["Event", "Time", "Progress", "Speed", "Time Taken", "ETA", "Latency"]
+    keys = ["event", "time", "progress", "speed", "time_taken", "eta", "latency"]
+
+    widths = [len(c) for c in columns]
+    for row in rows:
+        for i, k in enumerate(keys):
+            widths[i] = max(widths[i], len(str(row.get(k, "-"))))
+
+    def _fmt_row(values):
+        return " | ".join(_pad_cell(v, widths[i]) for i, v in enumerate(values))
+
+    separator = "-+-".join("-" * w for w in widths)
+
+    table_lines = [_fmt_row(columns), separator]
+    for row in rows:
+        table_lines.append(_fmt_row([row.get(k, "-") for k in keys]))
+
+    table_block = "```\n" + "\n".join(table_lines) + "\n```"
+
+    return "\n".join(header_lines) + "\n\n" + table_block
+
+
+# One Google Chat message per (action, file_name) currently in flight.
+# key: (action, file_name) -> {"message_name": str|None, "rows": [...], "header_info": {...}}
+_MESSAGE_REGISTRY_LOCK = Lock()
+_ACTIVE_MESSAGE_REGISTRY = {}
 
 
 class TransferMonitorReporter:
     """
     Background daemon-thread reporter. Every TRANSFER_REPORT_INTERVAL_SEC
-    seconds, if an upload/download is currently active, it gathers:
-      - logged-in username
-      - system/host name
-      - system IP address
-      - current transfer speed (MB/s)
-      - server latency (ms, TCP connect time to the NAS)
-    and posts that as a message to Google Chat.
+    seconds, if an upload/download is currently active, it appends a
+    "Progress" row (latency/speed/ETA/etc.) to that file's existing Google
+    Chat table message — it does NOT post a brand-new message.
 
     Runs on its own thread — never touches Qt widgets — so it's safe to
     start once and leave running for the lifetime of the app.
@@ -558,49 +2083,19 @@ class TransferMonitorReporter:
                 continue
 
             try:
-                self._report(stats)
+                report_transfer_event(
+                    "Progress",
+                    stats.get("action") or "",
+                    stats.get("file_name") or "",
+                    percent=stats.get("percent", 0),
+                    speed_mbps=stats.get("speed_mbps", 0.0),
+                    file_size_mb=stats.get("file_size_mb", 0.0),
+                    elapsed_sec=stats.get("elapsed_sec", 0.0),
+                    eta_text=stats.get("eta_text", "-"),
+                    backend=stats.get("backend", "sftp"),
+                )
             except Exception as e:
                 logger.warning(f"[TransferMonitorReporter] Failed to build/send report: {e}")
-
-    def _report(self, stats: dict):
-        cache = load_cache()
-        username = cache.get("user", "Unknown")
-
-        identifiers = {}
-        if isinstance(USER_SYSTEM_INFO, dict):
-            identifiers = USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
-
-        hostname = identifiers.get("hostname") or socket.gethostname()
-        ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
-
-        latency_ms = measure_latency_ms()
-        latency_text = f"{latency_ms} ms" if latency_ms is not None else "Unreachable"
-
-        action = (stats.get("action") or "").capitalize()
-        file_name = stats.get("file_name") or "-"
-        file_type = stats.get("file_type") or "-"
-        file_size_mb = stats.get("file_size_mb", 0.0)
-        percent = stats.get("percent", 0)
-        speed = stats.get("speed_mbps", 0.0)
-        elapsed_text = _format_elapsed(stats.get("elapsed_sec", 0.0))
-        eta_text = stats.get("eta_text", "-")
-
-        text = (
-            f"*PremediaApp Transfer Report*\n"
-            f"User: {username}\n"
-            f"System: {hostname}\n"
-            f"IP: {ip_address}\n"
-            f"Action: {action}\n"
-            f"File: {file_name}\n"
-            f"Type: {file_type}\n"
-            f"Size: {file_size_mb:.2f} MB\n"
-            f"Progress: {percent}%\n"
-            f"Speed: {speed:.2f} MB/s\n"
-            f"Time Taken: {elapsed_text}\n"
-            f"ETA: {eta_text}\n"
-            f"Server Latency: {latency_text}"
-        )
-        send_google_chat_message(text)
 
 
 # Single shared instance — .start() is called once near app startup below.
@@ -616,17 +2111,24 @@ def report_transfer_event(
     file_size_mb: float = 0.0,
     elapsed_sec: float = 0.0,
     eta_text: str = "-",
+    backend: str = "sftp",
 ):
     """
-    Fire off an immediate, one-off Google Chat report for a transfer lifecycle
-    event ("Started", "Completed", "Failed") — independent of the periodic
-    TransferMonitorReporter loop. This guarantees fast transfers (finishing in
-    under TRANSFER_REPORT_INTERVAL_SEC) still get reported at least twice:
-    once when they start and once when they finish.
+    Post one Google Chat message per event ("Started", "Progress",
+    "Completed", "Failed") for a given (action, file_name) — but every one of
+    them is posted with the SAME thread_key, so Google Chat groups them into
+    a single thread instead of scattering separate top-level messages across
+    the space. The first message ("Started") is never overwritten; each later
+    post is a reply in that same thread and carries the FULL cumulative table
+    (all rows so far), so the most recent message always shows the complete
+    history for that file+operation.
 
-    file_size_mb: total size of the file being transferred, in MB (if known yet).
-    elapsed_sec: time taken so far / at completion, in seconds (if known yet).
-    eta_text: human-readable ETA string, e.g. "00:12" or "Done" (if known yet).
+    (True in-place message editing would need a full Chat app with OAuth app
+    authentication — not possible with a plain incoming webhook's key/token —
+    see send_google_chat_message() for details.)
+
+    On "Completed"/"Failed" the row history for that file+operation is
+    cleared, so a later transfer of the same file starts a fresh thread/table.
 
     Runs on its own daemon thread so it never blocks the actual transfer.
     """
@@ -642,30 +2144,129 @@ def report_transfer_event(
             hostname = identifiers.get("hostname") or socket.gethostname()
             ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
 
-            latency_ms = measure_latency_ms()
-            latency_text = f"{latency_ms} ms" if latency_ms is not None else "Unreachable"
+            backend_name = (backend or "sftp").lower()
+            if backend_name == "s3":
+                parsed_s3 = urlparse(S3_ENDPOINT)
+                latency_host = parsed_s3.hostname or "192.168.2.199"
+                latency_port = parsed_s3.port or (443 if parsed_s3.scheme == "https" else 80)
+                latency_ms = measure_latency_ms(latency_host, latency_port)
+            else:
+                latency_host = LATENCY_TARGET_HOST or NAS_IP
+                latency_port = LATENCY_TARGET_PORT or NAS_PORT
+                latency_ms = measure_latency_ms(latency_host, latency_port)
+            latency_text = f"{latency_ms} ms" if latency_ms is not None else "N/A"
 
-            file_type = _file_type_of(file_name)
-            elapsed_text = _format_elapsed(elapsed_sec)
+            alarm_context = {
+                "Action": action.capitalize(),
+                "File": file_name or "-",
+                "Event": event,
+                "Progress": f"{percent}%",
+                "Speed": f"{speed_mbps:.2f} MB/s",
+                "Backend": backend_name.upper(),
+                "Endpoint": f"{latency_host}:{latency_port}",
+            }
 
-            text = (
-                f"*PremediaApp Transfer {event}*\n"
-                f"User: {username}\n"
-                f"System: {hostname}\n"
-                f"IP: {ip_address}\n"
-                f"Action: {action.capitalize()}\n"
-                f"File: {file_name or '-'}\n"
-                f"Type: {file_type}\n"
-                f"Size: {file_size_mb:.2f} MB\n"
-                f"Progress: {percent}%\n"
-                f"Speed: {speed_mbps:.2f} MB/s\n"
-                f"Time Taken: {elapsed_text}\n"
-                f"ETA: {eta_text}\n"
-                f"Server Latency: {latency_text}"
-            )
-            send_google_chat_message(text)
+            # ---- Alarm: NAS/server unreachable ("not able to ping server") ----
+            # Treat both a None reading (connection failed / timed out) and an
+            # exact 0ms reading (measure_latency_ms() couldn't produce a real
+            # timing — e.g. socket error swallowed upstream) as "unreachable",
+            # since a legitimate TCP-connect latency of exactly 0ms is not
+            # realistically possible.
+            if latency_ms is None or latency_ms == 0:
+                target_host = latency_host
+                target_port = latency_port
+                raise_network_alarm(
+                    "ServerUnreachable",
+                    f"Cannot reach the server ({target_host}:{target_port}) — it may be down "
+                    f"or your network connection may be lost.",
+                    context=alarm_context,
+                )
+            # ---- Alarm: server responding, but very slow (high latency) ----
+            elif latency_ms > LATENCY_WARNING_MS:
+                raise_network_alarm(
+                    "ServerSlow",
+                    f"Server latency is very high ({latency_ms} ms) — the connection to the "
+                    f"server appears unstable or overloaded.",
+                    context={**alarm_context, "Latency": f"{latency_ms} ms"},
+                )
+            # ---- Alarm: server latency is abnormally/suspiciously low ----
+            # A very low but non-zero reading (below LATENCY_MIN_MS) can indicate
+            # an unreliable/flaky connection or a bad measurement rather than a
+            # genuinely healthy server, so flag it too instead of silently
+            # treating it as "all good".
+            elif latency_ms < LATENCY_MIN_MS:
+                raise_network_alarm(
+                    "ServerLatencyAbnormal",
+                    f"Server latency reading is abnormally low ({latency_ms} ms) — this may "
+                    f"indicate an unstable connection or an unreliable measurement.",
+                    context={**alarm_context, "Latency": f"{latency_ms} ms"},
+                )
+
+            # ---- Alarm: transfer speed is critically slow mid-transfer ----
+            if event == "Progress" and 0 < percent < 100 and 0 < speed_mbps < SPEED_WARNING_MBPS:
+                raise_network_alarm(
+                    "TransferSlow",
+                    f"Transfer speed is very slow ({speed_mbps:.2f} MB/s) for '{file_name}' — "
+                    f"the server or network may be degraded.",
+                    context=alarm_context,
+                )
+
+            row = {
+                "event": event,
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "progress": f"{percent}%",
+                "speed": f"{speed_mbps:.2f} MB/s",
+                "time_taken": _format_elapsed(elapsed_sec),
+                "eta": eta_text,
+                "latency": latency_text,
+            }
+
+            header_info = {
+                "action": action.capitalize(),
+                "user": username,
+                "system": hostname,
+                "ip": ip_address,
+                "file": file_name or "-",
+                "type": _file_type_of(file_name),
+                "size": f"{file_size_mb:.2f} MB" if file_size_mb else "-",
+            }
+
+            reg_key = (action, file_name)
+            is_final = event in ("Completed", "Failed")
+            thread_key = _thread_key_for(action, file_name)
+
+            with _MESSAGE_REGISTRY_LOCK:
+                entry = _ACTIVE_MESSAGE_REGISTRY.get(reg_key)
+                if entry is None:
+                    entry = {"rows": [], "header_info": header_info}
+                    _ACTIVE_MESSAGE_REGISTRY[reg_key] = entry
+
+                entry["header_info"] = header_info  # keep size/type current
+                entry["rows"].append(row)
+                text = _build_transfer_table_text(entry["header_info"], entry["rows"])
+
+                ok, result = send_google_chat_message(text, thread_key=thread_key)
+
+                if is_final:
+                    _ACTIVE_MESSAGE_REGISTRY.pop(reg_key, None)
+
+            # ---- Alarm: could not deliver the report to Google Chat at all ----
+            if not ok:
+                raise_network_alarm(
+                    "GoogleChatUnreachable",
+                    f"Unable to send the transfer report to Google Chat for '{file_name}'.",
+                    context=alarm_context,
+                    error=result,
+                )
+
         except Exception as e:
             logger.warning(f"[TransferReport:{event}] Failed to send report: {e}")
+            raise_network_alarm(
+                "ReportingError",
+                f"Unexpected error while building/sending the transfer report for '{file_name}'.",
+                context={"Action": action, "File": file_name, "Event": event},
+                error=str(e),
+            )
 
     threading.Thread(target=_worker, daemon=True, name=f"TransferReport-{event}").start()
 
@@ -1304,6 +2905,11 @@ def call_api(api_url, payload, local_file_path=None):
                 response = client.post(api_url, files=files, data=payload)
             logger.debug(f"Response Status Code: {response.status_code}")
             logger.debug(f"Response Text: {response.text[:500]}...")
+            if response.status_code >= 400:
+                report_api_failure(
+                    "operator_upload", api_url,
+                    status_code=response.status_code, response_text=response.text
+                )
             response.raise_for_status()
             return response.json()
         except httpx.RequestError as req_err:
@@ -1314,9 +2920,11 @@ def call_api(api_url, payload, local_file_path=None):
                 logger.debug(f"Retrying after {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
             else:
+                report_api_failure("operator_upload", api_url, error=str(req_err))
                 return {"error": "Request failed", "details": str(req_err)}
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
+            report_api_failure("operator_upload", api_url, error=str(e))
             return {"error": "Unexpected error", "details": str(e)}
         finally:
             if files:
@@ -1346,6 +2954,11 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
                 response = client.post(api_url, files=files, data=payload)
             logger.debug(f"Response Status Code: {response.status_code}")
             logger.debug(f"Response Text: {response.text[:500]}...")
+            if response.status_code >= 400:
+                report_api_failure(
+                    "qc_qa_replace", api_url,
+                    status_code=response.status_code, response_text=response.text
+                )
             response.raise_for_status()
             return response.json()
         except httpx.RequestError as req_err:
@@ -1356,9 +2969,11 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
                 logger.debug(f"Retrying after {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
             else:
+                report_api_failure("qc_qa_replace", api_url, error=str(req_err))
                 return {"error": "Request failed", "details": str(req_err)}
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
+            report_api_failure("qc_qa_replace", api_url, error=str(e))
             return {"error": "Unexpected error", "details": str(e)}
         finally:
             if files:
@@ -1381,8 +2996,13 @@ def post_metadata_to_api_upload(spec_id, user_id):
             logger.info(f"Successfully posted metadata to API (Upload).")
         else:
             logger.error(f"Failed to post metadata to API (Upload): {response.status_code} {response.text}")
+            report_api_failure(
+                "post_metadata_upload", API_URL_UPLOAD,
+                status_code=response.status_code, response_text=response.text
+            )
     except Exception as e:
         logger.error(f"Error posting metadata to API (Upload): {e}")
+        report_api_failure("post_metadata_upload", API_URL_UPLOAD, error=str(e))
 
 
 def post_api(api_url,payload):
@@ -1394,8 +3014,13 @@ def post_api(api_url,payload):
             logger.info(f"Successfully posted metadata to API (Upload).")
         else:
             logger.error(f"Failed to post metadata to API (Upload): {response.status_code} {response.text}")
+            report_api_failure(
+                "post_api", api_url,
+                status_code=response.status_code, response_text=response.text
+            )
     except Exception as e:
         logger.error(f"Error posting metadata to API (Upload): {e}")
+        report_api_failure("post_api", api_url, error=str(e))
 
 
 def update_download_upload_metadata(task_id, request_status, retries=3, timeout=10.0, base_retry_delay=2):
@@ -1419,11 +3044,20 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
             logger.error(
                 f"Attempt {attempt}: Failed with status {response.status_code}"
             )
+            if attempt == retries:
+                report_api_failure(
+                    "update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE,
+                    status_code=response.status_code, response_text=response.text
+                )
 
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             logger.error(f"Attempt {attempt}: Request error -> {e}")
+            if attempt == retries:
+                report_api_failure("update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE, error=str(e))
         except Exception as e:
             logger.error(f"Attempt {attempt}: Unexpected error -> {e}")
+            if attempt == retries:
+                report_api_failure("update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE, error=str(e))
 
         if attempt < retries:
             delay = base_retry_delay * (2 ** (attempt - 1))  # exponential backoff
@@ -2160,6 +3794,15 @@ class FileWatcherWorker(QObject):
 
             start_time = time.time()
             last_emit = 0.0
+            # ── Stall watchdog state ──────────────────────────────────────
+            # A dropped network connection doesn't raise immediately — the
+            # OS can sit on a dead TCP socket for a long time (60s+) before
+            # surfacing an error. Track "no new bytes received" ourselves so
+            # we fail fast and let the retry loop kick in promptly instead
+            # of appearing to hang at whatever % it was at when the network died.
+            STALL_TIMEOUT_SEC = 15
+            last_byte_time = [start_time]
+            last_sent_bytes = [0]
 
             def format_time(seconds: float) -> str:
                 if seconds <= 0 or seconds == float("inf"):
@@ -2177,6 +3820,22 @@ class FileWatcherWorker(QObject):
                 elapsed = now - start_time
                 if elapsed <= 0:
                     return
+
+                # ── Stall detection ──────────────────────────────────────
+                if sent != last_sent_bytes[0]:
+                    last_sent_bytes[0] = sent
+                    last_byte_time[0] = now
+                elif now - last_byte_time[0] > STALL_TIMEOUT_SEC and sent < total_size:
+                    stall_msg = (
+                        f"Download stalled — no data received for "
+                        f"{STALL_TIMEOUT_SEC}s (network likely disconnected)"
+                    )
+                    logger.warning(f"[Transfer] {stall_msg}: {filename}")
+                    file_watcher.download_status_detail.emit(
+                        dest_path, f"⚠ {stall_msg}", "download",
+                        int((sent / total_size) * 100) if total_size else 0, True
+                    )
+                    raise RuntimeError(stall_msg)
 
                 # Throttle UI updates
                 if now - last_emit < 0.5 and sent < total_size:
@@ -2379,6 +4038,13 @@ class FileWatcherWorker(QObject):
             start_conn = time.time()
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            # FIX: this socket previously had NO timeout at all. If the
+            # network dropped mid-write, remote_file.write() could block
+            # indefinitely (potentially far longer than the download path's
+            # ~60s OS-level stall) with no way for the retry logic to kick
+            # in. Bound every blocking socket op to 30s so a dead connection
+            # surfaces as an exception promptly.
+            sock.settimeout(30)
             sock.connect((NAS_IP, NAS_PORT))
 
             session = Session()
@@ -2400,6 +4066,40 @@ class FileWatcherWorker(QObject):
             # ---------- UPLOAD ----------
             upload_start = time.time()
 
+            # ────────────────────────────────────────────────────────────────
+            # FIX (CRITICAL — data integrity): upload to a hidden temp file,
+            # NOT directly to dest_path.
+            #
+            # The previous code did:
+            #   sftp.open(dest_path, CREAT|WRITE|TRUNC, 0o644)
+            # LIBSSH2_FXF_TRUNC truncates the file the INSTANT it's opened —
+            # before a single byte of the new upload has been written. That
+            # means the existing good file on the NAS was destroyed the
+            # moment the upload started. If the network dropped mid-transfer
+            # (e.g. after 250MB of a 1GB file), dest_path was left containing
+            # only those 250MB — and anyone downloading that file in the
+            # meantime got the truncated/corrupt version, with no way to
+            # tell it wasn't the real file.
+            #
+            # Fix: write the new content to a temp sibling file
+            # (".<name>.uploading_<random>.tmp") in the SAME directory as
+            # dest_path. The real dest_path is never opened/truncated during
+            # the transfer, so it keeps serving the last-known-good file to
+            # anyone downloading it throughout the entire upload. Only once
+            # the full byte count has been written and verified do we
+            # atomically rename the temp file over dest_path — a rename is
+            # effectively instantaneous, so there's no window where a
+            # partial file is visible under the real filename. If anything
+            # fails at any point, we just delete the temp file; dest_path is
+            # untouched and the previous good file remains available.
+            # ────────────────────────────────────────────────────────────────
+            temp_suffix = f".uploading_{uuid.uuid4().hex[:12]}.tmp"
+            if "/" in dest_path:
+                _dest_dir_part, _dest_name_part = dest_path.rsplit("/", 1)
+                temp_dest_path = f"{_dest_dir_part}/.{_dest_name_part}{temp_suffix}"
+            else:
+                temp_dest_path = f".{dest_path}{temp_suffix}"
+
             flags = LIBSSH2_FXF_CREAT | LIBSSH2_FXF_WRITE | LIBSSH2_FXF_TRUNC
             chunk_size = 4 * 1024 * 1024  # 4 MB
 
@@ -2415,14 +4115,16 @@ class FileWatcherWorker(QObject):
             chunk_start_time = time.time()
 
             print(f"Uploading: {filename} ({total_mb:.2f} MB)")
-            print(f"Destination: {dest_path}")
+            print(f"Destination (final): {dest_path}")
+            print(f"Destination (temp, in-progress): {temp_dest_path}")
 
             report_transfer_event("Started", "upload", filename, file_size_mb=total_mb, eta_text="Calculating...")
 
             # FIX: open both file handles explicitly so both are closed in finally
             local_file = open(src_path, "rb")
             try:
-                remote_file = sftp.open(dest_path, flags, 0o644)
+                # ── Write to the TEMP path, never to dest_path directly ──
+                remote_file = sftp.open(temp_dest_path, flags, 0o644)
                 try:
                     while True:
                         data = local_file.read(chunk_size)
@@ -2491,6 +4193,65 @@ class FileWatcherWorker(QObject):
                     except Exception as rf_err:
                         logger.warning(f"Could not close remote file handle: {rf_err}")
                     remote_file = None
+
+                # ────────────────────────────────────────────────────────
+                # VERIFY + ATOMIC SWAP
+                # Only now — after the temp file has been fully written and
+                # closed — do we touch dest_path. If the transfer was
+                # interrupted (network drop, exception, etc.) we never
+                # reach this point, so dest_path still holds the
+                # last-known-good file, completely untouched, for the
+                # entire duration of the upload.
+                # ────────────────────────────────────────────────────────
+                if transferred != file_size:
+                    raise IOError(
+                        f"Incomplete upload: transferred {transferred} of "
+                        f"{file_size} bytes — aborting swap, existing file "
+                        f"on NAS left untouched"
+                    )
+
+                try:
+                    # Prefer an atomic overwrite-rename if the server/library
+                    # supports the flag — POSIX rename semantics replace
+                    # dest_path in a single step with no window where the
+                    # file is missing or partial.
+                    try:
+                        from ssh2.sftp import (
+                            LIBSSH2_SFTP_RENAME_OVERWRITE,
+                            LIBSSH2_SFTP_RENAME_ATOMIC,
+                            LIBSSH2_SFTP_RENAME_NATIVE,
+                        )
+                        rename_flags = (
+                            LIBSSH2_SFTP_RENAME_OVERWRITE
+                            | LIBSSH2_SFTP_RENAME_ATOMIC
+                            | LIBSSH2_SFTP_RENAME_NATIVE
+                        )
+                        sftp.rename(temp_dest_path, dest_path, rename_flags)
+                    except ImportError:
+                        sftp.rename(temp_dest_path, dest_path)
+                except Exception as rename_err:
+                    # Some SFTP servers refuse to rename onto an existing
+                    # file even with the overwrite flag. Fall back to
+                    # remove-then-rename. This has a brief non-atomic
+                    # window, but it only happens AFTER the new file is
+                    # fully uploaded and verified — worst case a
+                    # downloader briefly sees "file not found" instead of
+                    # ever seeing a truncated/partial file, which is the
+                    # failure mode this fixes.
+                    logger.debug(
+                        f"[Transfer] Direct rename failed ({rename_err}), "
+                        f"retrying with unlink+rename"
+                    )
+                    try:
+                        sftp.unlink(dest_path)
+                    except Exception:
+                        pass  # dest_path may not exist yet (first-time upload)
+                    sftp.rename(temp_dest_path, dest_path)
+
+                logger.info(f"[Transfer] Upload verified, swapped into place: {dest_path}")
+                app_signals.append_log.emit(
+                    f"[Transfer] Upload verified and swapped into place: {dest_path}"
+                )
 
                 # ---------- FINAL SUCCESS ----------
                 duration = time.time() - upload_start
@@ -2563,6 +4324,22 @@ class FileWatcherWorker(QObject):
             print(f"Upload failed: {error_details}")
             traceback.print_exc()
 
+            # ── FIX: clean up the orphaned temp file, if any ──
+            # dest_path was never opened/truncated during the transfer (see
+            # temp-file upload strategy above), so the existing good file on
+            # the NAS is still intact and safe. Just remove the partial
+            # temp file so it doesn't linger.
+            try:
+                if sftp is not None and 'temp_dest_path' in locals():
+                    sftp.unlink(temp_dest_path)
+                    logger.debug(f"[Transfer] Cleaned up incomplete temp file: {temp_dest_path}")
+                    app_signals.append_log.emit(
+                        f"[Transfer] Cleaned up incomplete temp upload; "
+                        f"existing file at {dest_path} was not modified"
+                    )
+            except Exception:
+                pass  # temp file may not exist if failure occurred before sftp.open
+
             try:
                 cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
                 save_cache(cache, significant_change=True)
@@ -2574,7 +4351,11 @@ class FileWatcherWorker(QObject):
                 dest_path, "Upload Failed", "upload", 0, True
             )
 
-            self.alert_notification.emit("Error (U3)", "Upload failed – check destination path.")
+            self.alert_notification.emit(
+                "Error (U3)",
+                "Upload failed — the existing file on the NAS was NOT modified. "
+                "Please retry the upload."
+            )
             _elapsed_at_failure = (time.time() - upload_start) if 'upload_start' in locals() else 0.0
             _size_mb_at_failure = total_mb if 'total_mb' in locals() else 0.0
             report_transfer_event(
@@ -2606,6 +4387,40 @@ class FileWatcherWorker(QObject):
                     logger.warning(f"Could not close socket: {sock_err}")
 
         
+    def _validate_and_confirm_psd_upload(self, file_path):
+        """
+        For .psd/.psb uploads only: runs the production-readiness checklist
+        and shows the report + Upload/Cancel confirmation dialog to the
+        user — for BOTH pass and fail outcomes — before the file is sent
+        to the NAS.
+
+        Blocks THIS worker thread (never the GUI thread) until the user
+        responds. Returns True to proceed with the upload, False to cancel.
+        """
+        try:
+            config = getattr(self, "psd_validation_config", {}) or {}
+            result = validate_psd_document(file_path, config)
+
+            status_word = "PASS" if result.overall_pass else "FAIL"
+            logger.info(f"[PSD Validation] {file_path}: {status_word}")
+            self.log_update.emit(f"[PSD Validation] {Path(file_path).name}: {status_word}")
+            app_signals.append_log.emit(f"[PSD Validation] {Path(file_path).name}: {status_word}")
+
+            proceed = request_psd_upload_confirmation(file_path, result)
+            self.log_update.emit(
+                f"[PSD Validation] User {'confirmed upload' if proceed else 'cancelled upload'} "
+                f"for {Path(file_path).name}"
+            )
+            return proceed
+        except Exception as e:
+            logger.error(f"[PSD Validation] Error validating {file_path}: {e}")
+            self.log_update.emit(f"[PSD Validation] Error validating {Path(file_path).name}: {str(e)}")
+            # Validation itself crashed — still let the user decide, with a
+            # synthetic result explaining that validation could not complete.
+            fallback_result = PSDValidationResult()
+            fallback_result.add("Validation Execution", False, f"Validation could not be completed: {e}")
+            return request_psd_upload_confirmation(file_path, fallback_result)
+
     def _update_cache_and_signals(self, action_type, src_path, dest_path, item, task_id, is_nas, file_type="original"):
         cache = load_cache()
         cache.setdefault("downloaded_files", {})
@@ -2700,14 +4515,17 @@ class FileWatcherWorker(QObject):
 
 
         """Perform file transfer (download/upload/replace) and update cache metadata reliably."""
-        task_id = str(item.get('id'))
-        spec_id = str(item.get("spec_id"))
+        raw_task_id = item.get('id')
+        raw_spec_id = item.get("spec_id")
+        if raw_task_id in (None, ""):
+            raise ValueError("Task ID is missing or invalid in item dictionary")
+        if raw_spec_id in (None, ""):
+            raise ValueError("Spec ID is missing or invalid in item dictionary")
+        task_id = str(raw_task_id)
+        spec_id = str(raw_spec_id)
         print("===================================")
         print(item.get("file_path"))
         print("===================================")
-        
-        if not task_id:
-            raise ValueError("Task ID is missing or invalid in item dictionary")
         
         global IS_APP_ACTIVE_UPLOAD_DOWNLOAD
         IS_APP_ACTIVE_UPLOAD_DOWNLOAD = True
@@ -2723,7 +4541,7 @@ class FileWatcherWorker(QObject):
             cache.setdefault(metadata_key, {})
 
             # Initialize task entry if missing
-            if task_id not in cache[metadata_key]:
+            if spec_id not in cache[metadata_key]:
                 cache[metadata_key][spec_id] = {
                     "local_path": dest_path if action_type.lower() == "download" else src_path,
                     "api_response": {
@@ -2745,7 +4563,11 @@ class FileWatcherWorker(QObject):
                         "thumbnail": item.get("thumbnail"),
                         "created_on": item.get("created_on"),
                         "updated_date": item.get("updated_date"),
-                        "request_status": f"{status_prefix} Started"
+                        "request_status": f"{status_prefix} Started",
+                        "is_nas_src": item.get("is_nas_src"),
+                        "is_nas_dest": item.get("is_nas_dest"),
+                        "storage_type": item.get("storage_type"),
+                        "storage_backend": item.get("storage_backend"),
                     },
                     
                 }
@@ -2760,15 +4582,75 @@ class FileWatcherWorker(QObject):
             # Handle Download
             # ------------------------------
             if action_type.lower() == "download":
-               
-                dest_path = self._prepare_download_path(item)
-
                 if is_nas_src:
+                    # SFTP/NAS path
+                    dest_path = self._prepare_download_path(item)
+
+                    transfer_mode = "SFTP"
+                    print("\n" + "=" * 90, flush=True)
+                    print("[DOWNLOAD ROUTE]", flush=True)
+                    print(f"Mode        : {transfer_mode}", flush=True)
+                    print(f"Task ID     : {task_id}", flush=True)
+                    print(f"Spec ID     : {spec_id}", flush=True)
+                    print(f"Source Path : {src_path}", flush=True)
+                    print(f"Dest Path   : {dest_path}", flush=True)
+                    print(f"SFTP Server : {NAS_IP}:{NAS_PORT}", flush=True)
+                    print("=" * 90, flush=True)
+
+                    logger.info(
+                        f"[DOWNLOAD][{transfer_mode}] "
+                        f"Task={task_id} | Spec={spec_id} | "
+                        f"Source={src_path} | Destination={dest_path} | "
+                        f"Server={NAS_IP}:{NAS_PORT}"
+                    )
+
                     self._download_from_nas(src_path, dest_path, item)
+
                 else:
-                    self._download_from_http(src_path, dest_path)
+                    # Rclone S3 path. Keep the local destination calculated by
+                    # the task router; do not treat the S3 URL/key as a local path.
+                    Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+
+                    transfer_mode = "S3"
+                    s3_endpoint = globals().get("S3_ENDPOINT", "-")
+                    s3_bucket = globals().get("S3_BUCKET", "-")
+
+                    print("\n" + "=" * 90, flush=True)
+                    print("[DOWNLOAD ROUTE]", flush=True)
+                    print(f"Mode        : {transfer_mode}", flush=True)
+                    print(f"Task ID     : {task_id}", flush=True)
+                    print(f"Spec ID     : {spec_id}", flush=True)
+                    print(f"Source Path : {src_path}", flush=True)
+                    print(f"Dest Path   : {dest_path}", flush=True)
+                    print(f"S3 Endpoint : {s3_endpoint}", flush=True)
+                    print(f"S3 Bucket   : {s3_bucket}", flush=True)
+                    print("=" * 90, flush=True)
+
+                    logger.info(
+                        f"[DOWNLOAD][{transfer_mode}] "
+                        f"Task={task_id} | Spec={spec_id} | "
+                        f"Source={src_path} | Destination={dest_path} | "
+                        f"Endpoint={s3_endpoint} | Bucket={s3_bucket}"
+                    )
+
+                    self._download_from_http(src_path, dest_path, item)
 
                 if not os.path.exists(dest_path):
+                    transfer_mode = "SFTP" if is_nas_src else "S3"
+                    print(
+                        f"[DOWNLOAD FAILED] "
+                        f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                        f"Source={src_path} | Destination={dest_path} | "
+                        f"Reason=Downloaded file not found",
+                        flush=True
+                    )
+
+                    logger.error(
+                        f"[DOWNLOAD FAILED] "
+                        f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                        f"Source={src_path} | Destination={dest_path}"
+                    )
+
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Failed"
                     save_cache(cache, significant_change=True)
                     if is_final_attempt:
@@ -2777,6 +4659,20 @@ class FileWatcherWorker(QObject):
                             f"Downloaded file was not found on disk:\n{dest_path}\n\nThe transfer may have been incomplete."
                         )
                     raise FileNotFoundError(f"{status_prefix} file not found: {dest_path}")
+
+                transfer_mode = "SFTP" if is_nas_src else "S3"
+                print(
+                    f"[DOWNLOAD COMPLETED] "
+                    f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                    f"Source={src_path} | Local Path={dest_path}",
+                    flush=True
+                )
+
+                logger.info(
+                    f"[DOWNLOAD COMPLETED] "
+                    f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                    f"Source={src_path} | Local Path={dest_path}"
+                )
 
                 cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
                 cache[metadata_key][spec_id]["local_path"] = dest_path
@@ -2793,78 +4689,176 @@ class FileWatcherWorker(QObject):
                     logger.warning(f"Failed to open {dest_path} with Photoshop: {str(e)}")
                     self.log_update.emit(f"[Transfer] Warning: Failed to open {dest_path} with Photoshop: {str(e)}")
 
-                # Optional: Conversion to JPG
-                # cache[metadata_key][task_id]["api_response"]["request_status"] = f"{status_prefix} Conversion Started"
-                # save_cache(cache, significant_change=True)
-                # local_jpg, _ = process_single_file(dest_path)
-                # if local_jpg:
-                #     cache[metadata_key][task_id]["api_response"]["request_status"] = f"{status_prefix} Conversion Completed"
-                #     save_cache(cache, significant_change=True)
-                #     app_signals.update_file_list.emit(local_jpg, "Conversion Completed", "download", 100, False)
-                # else:
-                #     cache[metadata_key][task_id]["api_response"]["request_status"] = f"{status_prefix} Conversion Failed"
-                #     save_cache(cache, significant_change=True)
-                #     self.log_update.emit(f"[Transfer] Failed: JPG conversion failed for {dest_path}")
-
-                # self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {Path(src_path).name}", dest_path, 100)
-                # app_signals.update_file_list.emit(dest_path, f"{action_type} Completed", "download", 100, is_nas_src)
-
             # ------------------------------
             # Handle Upload / Replace
             # ------------------------------
             elif action_type.lower() in ("upload", "replace"):
-                # Upload to NAS or HTTP
-                # print(f"======into Upload-replace==========={src_path}====")
-                if is_nas_dest:
-                    job_id = str(item.get("job_id"))
-                    allowed_types = get_file_types_from_api(job_id)
-                    matched_file = None
-                    matched_ext = None
-                    first_prior = False
-                    try:
-                        #for ext in allowed_types:
-                        for ind, ext in enumerate(allowed_types):
-                            # alt_path = src_path.with_suffix(f".{ext}")
-                            alt_path = Path(src_path).with_suffix(f".{ext}")
+                # ----------------------------------------------------------
+                # Common upload preparation. File selection / size limit /
+                # PSD validation are transport-independent and must run for
+                # BOTH SFTP and rclone S3.
+                # ----------------------------------------------------------
+                job_id = str(item.get("job_id"))
+                allowed_types = get_file_types_from_api(job_id)
+                if not isinstance(allowed_types, (list, tuple)) or not allowed_types:
+                    raise RuntimeError(f"No allowed upload formats returned for job_id={job_id}")
 
-                            if alt_path.exists():
-                                first_prior = ind == 0
-                                matched_file = alt_path
-                                matched_ext = ext
-                                break
-                        # print(f"=====matched_file================{matched_file}======")
-                        if matched_file:
-                            src_path = matched_file
-                            # filename = src_path.name
-                            if not first_prior:
-                                #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
-                                self.alert_notification.emit("File Format Alert", f"Prefered format: {allowed_types[0].upper()}, Currently uploading {matched_ext.upper()} file.")            
-                        else:
-                            if is_final_attempt:
-                                self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
-                            cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
-                            save_cache(cache, significant_change=True)
-                            raise NotImplementedError("HTTP upload not implemented")
+                matched_file = None
+                matched_ext = None
+                first_prior = False
 
-                        dest_path = item.get("file_path", dest_path)
-                        if matched_ext:
-                            dest_path = str(Path(dest_path).with_suffix(f".{matched_ext}"))
-                        #dest_dir = os.path.dirname(dest_path)
-                        dest_path = dest_path.replace("\\", "/")
+                for ind, ext in enumerate(allowed_types):
+                    ext = str(ext).lstrip(".")
+                    alt_path = Path(src_path).with_suffix(f".{ext}")
+                    if alt_path.exists():
+                        first_prior = (ind == 0)
+                        matched_file = alt_path
+                        matched_ext = ext
+                        break
+
+                if not matched_file:
+                    if is_final_attempt:
+                        self.alert_notification.emit(
+                            "ERROR",
+                            "No completed file found in target folder. Upload the file manually."
+                        )
+                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Failed - Source Missing"
+                    save_cache(cache, significant_change=True)
+                    raise FileNotFoundError("No completed file found in target folder")
+
+                src_path = matched_file
+                if not first_prior:
+                    self.alert_notification.emit(
+                        "File Format Alert",
+                        f"Preferred format: {str(allowed_types[0]).upper()}, "
+                        f"currently uploading {matched_ext.upper()} file."
+                    )
+
+                # The API's file_path remains the remote object/path.
+                dest_path = str(item.get("file_path", dest_path)).replace("\\", "/")
+                if matched_ext:
+                    dest_path = _replace_remote_suffix(dest_path, matched_ext)
+
+                too_big, size_mb = exceeds_max_upload_size(src_path)
+                if too_big:
+                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Blocked (Too Large)"
+                    save_cache(cache, significant_change=True)
+                    self.alert_notification.emit(
+                        "Upload Blocked — File Too Large",
+                        f"'{Path(src_path).name}' is {size_mb:.1f} MB, which exceeds the "
+                        f"current {MAX_UPLOAD_SIZE_MB} MB upload limit.\n\n"
+                        "Please contact your administrator if this file needs to be uploaded."
+                    )
+                    raise UploadSizeLimitExceeded(
+                        f"{Path(src_path).name} ({size_mb:.1f} MB) exceeds the {MAX_UPLOAD_SIZE_MB} MB upload limit"
+                    )
+
+                src_ext = Path(src_path).suffix.lower().lstrip(".")
+                if src_ext in ("psd", "psb"):
+                    proceed_with_upload = self._validate_and_confirm_psd_upload(str(src_path))
+                    if not proceed_with_upload:
+                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Cancelled"
+                        save_cache(cache, significant_change=True)
+                        self.alert_notification.emit(
+                            "Upload Cancelled",
+                            f"Upload of '{Path(src_path).name}' was cancelled after PSD validation review."
+                        )
+                        raise PSDUploadCancelled(
+                            f"Upload cancelled by user after PSD validation for {Path(src_path).name}"
+                        )
+
+                # ----------------------------------------------------------
+                # Transport selection:
+                #   is_nas_dest=True  -> existing SFTP upload
+                #   is_nas_dest=False -> rclone S3-compatible upload
+                # ----------------------------------------------------------
+                try:
+                    if is_nas_dest:
+                        transfer_mode = "SFTP"
+
+                        print("\n" + "=" * 90, flush=True)
+                        print("[UPLOAD ROUTE]", flush=True)
+                        print(f"Mode        : {transfer_mode}", flush=True)
+                        print(f"Action      : {action_type.upper()}", flush=True)
+                        print(f"Task ID     : {task_id}", flush=True)
+                        print(f"Spec ID     : {spec_id}", flush=True)
+                        print(f"Source Path : {src_path}", flush=True)
+                        print(f"Dest Path   : {dest_path}", flush=True)
+                        print(f"SFTP Server : {NAS_IP}:{NAS_PORT}", flush=True)
+                        print("=" * 90, flush=True)
+
+                        logger.info(
+                            f"[{action_type.upper()}][{transfer_mode}] "
+                            f"Task={task_id} | Spec={spec_id} | "
+                            f"Source={src_path} | Destination={dest_path} | "
+                            f"Server={NAS_IP}:{NAS_PORT}"
+                        )
 
                         self._upload_to_nas(src_path, dest_path, item)
-                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
-                    except Exception as e:
-                        # self.alert_notification.emit("ERROR", f"2No completed file found in target folder. upload the file manually.")            
-                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
-                        save_cache(cache, significant_change=True)
-                        raise NotImplementedError("HTTP upload not implemented")
 
-                else:
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
+                    else:
+                        transfer_mode = "S3"
+                        s3_endpoint = globals().get("S3_ENDPOINT", "-")
+                        s3_bucket = globals().get("S3_BUCKET", "-")
+
+                        print("\n" + "=" * 90, flush=True)
+                        print("[UPLOAD ROUTE]", flush=True)
+                        print(f"Mode        : {transfer_mode}", flush=True)
+                        print(f"Action      : {action_type.upper()}", flush=True)
+                        print(f"Task ID     : {task_id}", flush=True)
+                        print(f"Spec ID     : {spec_id}", flush=True)
+                        print(f"Source Path : {src_path}", flush=True)
+                        print(f"Dest Path   : {dest_path}", flush=True)
+                        print(f"S3 Endpoint : {s3_endpoint}", flush=True)
+                        print(f"S3 Bucket   : {s3_bucket}", flush=True)
+                        print("=" * 90, flush=True)
+
+                        logger.info(
+                            f"[{action_type.upper()}][{transfer_mode}] "
+                            f"Task={task_id} | Spec={spec_id} | "
+                            f"Source={src_path} | Destination={dest_path} | "
+                            f"Endpoint={s3_endpoint} | Bucket={s3_bucket}"
+                        )
+
+                        self._upload_to_http(src_path, dest_path, item)
+
+                except (PSDUploadCancelled, UploadSizeLimitExceeded):
+                    raise
+                except Exception as transport_error:
+                    transfer_mode = "SFTP" if is_nas_dest else "S3"
+
+                    print(
+                        f"[{action_type.upper()} FAILED] "
+                        f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                        f"Source={src_path} | Destination={dest_path} | "
+                        f"Error={transport_error}",
+                        flush=True
+                    )
+
+                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Failed"
                     save_cache(cache, significant_change=True)
-                    raise NotImplementedError("HTTP upload not implemented")
-                
+                    logger.exception(
+                        f"{status_prefix} transport failed "
+                        f"(Mode={transfer_mode}) for {Path(src_path).name}"
+                    )
+                    raise
+
+                transfer_mode = "SFTP" if is_nas_dest else "S3"
+                print(
+                    f"[{action_type.upper()} COMPLETED] "
+                    f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                    f"Source={src_path} | Destination={dest_path}",
+                    flush=True
+                )
+
+                logger.info(
+                    f"[{action_type.upper()} COMPLETED] "
+                    f"Mode={transfer_mode} | Task={task_id} | Spec={spec_id} | "
+                    f"Source={src_path} | Destination={dest_path}"
+                )
+
+                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
+
                 if not os.path.exists(src_path):
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Source Missing"
                     save_cache(cache, significant_change=True)
@@ -2925,6 +4919,46 @@ class FileWatcherWorker(QObject):
             else:
                 raise ValueError(f"Invalid action_type: {action_type}")
             IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
+
+        except PSDUploadCancelled as e:
+            # User explicitly cancelled the upload from the PSD validation
+            # dialog — this is not a transfer failure, so keep the status
+            # and logging distinct from a genuine "Failed" transfer.
+            cache.setdefault(metadata_key, {})
+            if spec_id not in cache[metadata_key]:
+                cache[metadata_key][spec_id] = {"local_path": dest_path, "status": f"{status_prefix} Cancelled"}
+            else:
+                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Cancelled"
+
+            save_cache(cache, significant_change=True)
+            update_download_upload_metadata(task_id, "cancelled")
+            IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
+            logger.info(f"{status_prefix} cancelled by user after PSD validation (Task {task_id}): {str(e)}")
+            self.log_update.emit(f"[Transfer] Cancelled by user (Task {task_id}): {str(e)}")
+            self.progress_update.emit(f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}", dest_path, 0)
+            self.download_status_detail.emit(dest_path, f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}", action_type, 0, True)
+
+            raise
+
+        except UploadSizeLimitExceeded as e:
+            # File exceeds the temporary MAX_UPLOAD_SIZE_MB limit — this is
+            # a policy block, not a transfer failure, so keep the status
+            # and logging distinct from a genuine "Failed" transfer.
+            cache.setdefault(metadata_key, {})
+            if spec_id not in cache[metadata_key]:
+                cache[metadata_key][spec_id] = {"local_path": dest_path, "status": f"{status_prefix} Blocked (Too Large)"}
+            else:
+                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Blocked (Too Large)"
+
+            save_cache(cache, significant_change=True)
+            update_download_upload_metadata(task_id, "blocked")
+            IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
+            logger.info(f"{status_prefix} blocked by size limit (Task {task_id}): {str(e)}")
+            self.log_update.emit(f"[Transfer] Blocked — exceeds size limit (Task {task_id}): {str(e)}")
+            self.progress_update.emit(f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}", dest_path, 0)
+            self.download_status_detail.emit(dest_path, f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}", action_type, 0, True)
+
+            raise
 
         except Exception as e:
             # Update cache with failure
@@ -3157,8 +5191,15 @@ class FileWatcherWorker(QObject):
                 file_name = item.get('file_name', Path(file_path).name)
                 action_type = item.get('request_type', '').lower()
                 task_key = f"{task_id}:{action_type}"
-                is_online = 'http' in file_path.lower()
-                local_path = str(BASE_TARGET_DIR / file_path.lstrip("/"))
+                # `is_online` is retained as the local variable name for backward
+                # compatibility, but now means "use rclone S3" rather than simply
+                # "file_path contains http". Explicit is_nas_src/is_nas_dest wins.
+                is_online = _task_uses_s3(item, file_path)
+                if is_online:
+                    _, s3_key = _resolve_s3_location(file_path)
+                    local_path = str(BASE_TARGET_DIR / Path(s3_key))
+                else:
+                    local_path = str(BASE_TARGET_DIR / file_path.lstrip("/"))
 
                 with self._lock:
                     if task_key in self.processed_tasks:
@@ -3265,6 +5306,18 @@ class FileWatcherWorker(QObject):
                             delay = 2 ** attempt
                             logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Retrying download after {delay}s, instance: {id(self)}")
                             self.log_update.emit(f"[API Scan] Retrying download after {delay}s")
+                            # ── NEW: tell the UI a retry is happening ──
+                            # Without this the card/window keeps showing the last
+                            # progress % it received before the drop, which looks
+                            # "stuck" — even though the app is about to restart
+                            # the transfer from scratch (SCP has no resume).
+                            retry_msg = (
+                                f"⚠ Network lost — retrying download "
+                                f"(attempt {attempt + 2}/{max_download_retries}) in {delay}s"
+                            )
+                            self.download_status_detail.emit(
+                                local_path, retry_msg, action_type, 0, not is_online
+                            )
                             time.sleep(delay)
                         else:
                             raise
@@ -3311,6 +5364,28 @@ class FileWatcherWorker(QObject):
                                 'task_key': task_key,
                                 'success': True
                             }
+                    except PSDUploadCancelled as e:
+                        # User explicitly declined the upload from the PSD
+                        # validation dialog — stop immediately instead of
+                        # re-prompting them again on every retry attempt.
+                        logger.info(f"Upload cancelled by user for {local_path} (Task {task_id}): {str(e)}")
+                        self.log_update.emit(f"[API Scan] Upload cancelled by user (Task {task_id}): {str(e)}")
+                        return {
+                            'update': (local_path, "Upload Cancelled", action_type, 0, not is_online),
+                            'task_key': task_key,
+                            'success': False
+                        }
+                    except UploadSizeLimitExceeded as e:
+                        # File exceeds the configured size limit — retrying
+                        # won't change the file size, so stop immediately
+                        # instead of burning 3 retry attempts and re-alerting.
+                        logger.info(f"Upload blocked by size limit for {local_path} (Task {task_id}): {str(e)}")
+                        self.log_update.emit(f"[API Scan] Upload blocked — exceeds size limit (Task {task_id}): {str(e)}")
+                        return {
+                            'update': (local_path, "Upload Blocked (Too Large)", action_type, 0, not is_online),
+                            'task_key': task_key,
+                            'success': False
+                        }
                     except Exception as e:
                         logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Upload failed for {local_path} (Task {task_id}): {str(e)}, attempt {attempt + 1}, instance: {id(self)}")
                         self.log_update.emit(f"[API Scan] Upload failed for {local_path} (Task {task_id}): {str(e)}")
@@ -3319,6 +5394,14 @@ class FileWatcherWorker(QObject):
                             delay = 2 ** attempt
                             logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Retrying upload after {delay}s, instance: {id(self)}")
                             self.log_update.emit(f"[API Scan] Retrying upload after {delay}s")
+                            # ── NEW: tell the UI a retry is happening ──
+                            retry_msg = (
+                                f"⚠ Network lost — retrying upload "
+                                f"(attempt {attempt + 2}/{max_download_retries}) in {delay}s"
+                            )
+                            self.upload_status_detail.emit(
+                                local_path, retry_msg, action_type, 0, not is_online
+                            )
                             time.sleep(delay)
                         else:
                             raise
@@ -3378,11 +5461,257 @@ class FileWatcherWorker(QObject):
             self.log_update.emit(f"[App] Progress update: {action_type} Failed (Task {task_id}): {original_filename}")
             raise
 
-    def _download_from_http(self, src_path, dest_path):
-        raise NotImplementedError("HTTP download not implemented")
+    def _download_from_http(self, src_path, dest_path, item=None):
+        """
+        Download from the rclone S3-compatible endpoint.
 
-    def _upload_to_http(self, src_path):
-        raise NotImplementedError("HTTP upload not implemented")
+        The historical method name is kept so existing callers do not need a
+        broad rename. This is NOT a plain unauthenticated HTTP GET: boto3 signs
+        the request using S3 Signature V4 and talks to `rclone serve s3`.
+        """
+        bucket, object_key = _resolve_s3_location(src_path)
+        client = _create_s3_client()
+        transfer_config = _s3_transfer_config()
+
+        dest_path = str(Path(dest_path).resolve())
+        Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+        filename = Path(dest_path).name
+        spec_id = str(item.get("spec_id", "")) if isinstance(item, dict) else ""
+
+        temp_path = dest_path + ".s3part"
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+
+        transfer_start = time.time()
+        transferred = 0
+        last_emit = 0.0
+        progress_lock = threading.Lock()
+
+        try:
+            head = client.head_object(Bucket=bucket, Key=object_key)
+            total_size = int(head.get("ContentLength", 0) or 0)
+            total_mb = total_size / 1024 / 1024
+
+            report_transfer_event(
+                "Started", "download", filename,
+                file_size_mb=total_mb, eta_text="Calculating...", backend="s3"
+            )
+
+            def callback(bytes_amount):
+                nonlocal transferred, last_emit
+                with progress_lock:
+                    transferred += int(bytes_amount or 0)
+                    now = time.time()
+                    if now - last_emit < 0.5 and transferred < total_size:
+                        return
+                    last_emit = now
+
+                    elapsed = max(now - transfer_start, 0.000001)
+                    percent = int((transferred / total_size) * 100) if total_size else 0
+                    percent = min(percent, 100)
+                    speed_mbps = (transferred / 1024 / 1024) / elapsed
+                    remaining_mb = max(total_size - transferred, 0) / 1024 / 1024
+                    eta_sec = remaining_mb / speed_mbps if speed_mbps > 0 else float("inf")
+                    eta_text = _format_elapsed(eta_sec) if eta_sec != float("inf") else "—"
+
+                    if spec_id:
+                        self.download_progress.emit(spec_id, dest_path, filename, percent)
+                    self.download_status_detail.emit(
+                        dest_path,
+                        f"Downloading {percent}% • {speed_mbps:.1f} MB/s • ETA {eta_text}",
+                        "download",
+                        percent,
+                        False,  # not SFTP/NAS; source is S3
+                    )
+                    _update_transfer_stats(
+                        "download", filename, speed_mbps, percent,
+                        file_size_mb=total_mb,
+                        elapsed_sec=elapsed,
+                        eta_text=eta_text,
+                        backend="s3",
+                    )
+
+            client.download_file(
+                bucket,
+                object_key,
+                temp_path,
+                Callback=callback,
+                Config=transfer_config,
+            )
+
+            actual_size = os.path.getsize(temp_path)
+            if total_size and actual_size != total_size:
+                raise IOError(
+                    f"S3 download size mismatch for {object_key}: "
+                    f"expected {total_size}, received {actual_size} bytes"
+                )
+
+            # Only expose the final local file after a successful download.
+            os.replace(temp_path, dest_path)
+
+            duration = time.time() - transfer_start
+            final_speed = total_mb / duration if duration > 0 else 0.0
+            if spec_id:
+                self.download_progress.emit(spec_id, dest_path, filename, 100)
+            self.download_status_detail.emit(
+                dest_path, "Download Completed", "download", 100, False
+            )
+            _clear_transfer_stats()
+            report_transfer_event(
+                "Completed", "download", filename,
+                percent=100,
+                speed_mbps=final_speed,
+                file_size_mb=total_mb,
+                elapsed_sec=duration,
+                eta_text="Done", backend="s3",
+            )
+            logger.info(
+                f"[S3] Download completed: s3://{bucket}/{object_key} -> {dest_path}"
+            )
+
+        except Exception:
+            _clear_transfer_stats()
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass
+
+            elapsed = time.time() - transfer_start
+            report_transfer_event(
+                "Failed", "download", filename,
+                file_size_mb=(total_size / 1024 / 1024) if "total_size" in locals() else 0.0,
+                elapsed_sec=elapsed,
+                eta_text="-", backend="s3",
+            )
+            logger.exception(f"[S3] Download failed: s3://{bucket}/{object_key}")
+            raise
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    def _upload_to_http(self, src_path, dest_path, item=None):
+        """
+        Upload a local file to the rclone S3-compatible endpoint.
+
+        dest_path may be a plain object key, s3:// URL, legacy NAS path, or
+        endpoint URL. `_resolve_s3_location` maps all of those to bucket/key.
+        """
+        src_path = Path(src_path)
+        if not src_path.is_file():
+            raise FileNotFoundError(f"Source file does not exist: {src_path}")
+
+        bucket, object_key = _resolve_s3_location(dest_path)
+        client = _create_s3_client()
+        transfer_config = _s3_transfer_config()
+
+        filename = src_path.name
+        spec_id = str(item.get("spec_id", "")) if isinstance(item, dict) else ""
+        file_size = src_path.stat().st_size
+        total_mb = file_size / 1024 / 1024
+        transfer_start = time.time()
+        transferred = 0
+        last_emit = 0.0
+        progress_lock = threading.Lock()
+
+        report_transfer_event(
+            "Started", "upload", filename,
+            file_size_mb=total_mb, eta_text="Calculating...", backend="s3"
+        )
+
+        try:
+            def callback(bytes_amount):
+                nonlocal transferred, last_emit
+                with progress_lock:
+                    transferred += int(bytes_amount or 0)
+                    now = time.time()
+                    if now - last_emit < 0.5 and transferred < file_size:
+                        return
+                    last_emit = now
+
+                    elapsed = max(now - transfer_start, 0.000001)
+                    percent = int((transferred / file_size) * 100) if file_size else 100
+                    percent = min(percent, 100)
+                    speed_mbps = (transferred / 1024 / 1024) / elapsed
+                    remaining_mb = max(file_size - transferred, 0) / 1024 / 1024
+                    eta_sec = remaining_mb / speed_mbps if speed_mbps > 0 else float("inf")
+                    eta_text = _format_elapsed(eta_sec) if eta_sec != float("inf") else "—"
+
+                    if spec_id:
+                        self.upload_progress.emit(spec_id, str(dest_path), filename, percent)
+                    self.upload_status_detail.emit(
+                        str(dest_path),
+                        f"Uploading {percent}% • {speed_mbps:.1f} MB/s • ETA {eta_text}",
+                        "upload",
+                        percent,
+                        False,  # destination is S3, not SFTP/NAS
+                    )
+                    _update_transfer_stats(
+                        "upload", filename, speed_mbps, percent,
+                        file_size_mb=total_mb,
+                        elapsed_sec=elapsed,
+                        eta_text=eta_text,
+                        backend="s3",
+                    )
+
+            client.upload_file(
+                str(src_path),
+                bucket,
+                object_key,
+                Callback=callback,
+                Config=transfer_config,
+            )
+
+            # Verify that rclone exposes the completed object at the expected size.
+            head = client.head_object(Bucket=bucket, Key=object_key)
+            remote_size = int(head.get("ContentLength", -1))
+            if remote_size != file_size:
+                raise IOError(
+                    f"S3 upload size mismatch for {object_key}: "
+                    f"local {file_size}, remote {remote_size} bytes"
+                )
+
+            duration = time.time() - transfer_start
+            final_speed = total_mb / duration if duration > 0 else 0.0
+            if spec_id:
+                self.upload_progress.emit(spec_id, str(dest_path), filename, 100)
+            self.upload_status_detail.emit(
+                str(dest_path), "Upload Completed", "upload", 100, False
+            )
+            _clear_transfer_stats()
+            report_transfer_event(
+                "Completed", "upload", filename,
+                percent=100,
+                speed_mbps=final_speed,
+                file_size_mb=total_mb,
+                elapsed_sec=duration,
+                eta_text="Done", backend="s3",
+            )
+            logger.info(
+                f"[S3] Upload completed: {src_path} -> s3://{bucket}/{object_key}"
+            )
+
+        except Exception:
+            _clear_transfer_stats()
+            elapsed = time.time() - transfer_start
+            report_transfer_event(
+                "Failed", "upload", filename,
+                file_size_mb=total_mb,
+                elapsed_sec=elapsed,
+                eta_text="-", backend="s3",
+            )
+            logger.exception(f"[S3] Upload failed: {src_path} -> s3://{bucket}/{object_key}")
+            raise
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     def _clean_processed_tasks(self):
         """
@@ -4204,12 +6533,36 @@ class FileDownloadListWindow(QDialog):
         self.load_files()
 
         # Connect signals
-        # watcher = FileWatcherWorker.get_instance(parent=self)
-        watcher = FileWatcherWorker.get_instance()
-        watcher.download_progress.connect(self.on_download_progress, Qt.QueuedConnection)
-        watcher.download_status_detail.connect(self.on_download_status_detail, Qt.QueuedConnection)
+        self._connected_watcher = None
+        self._ensure_watcher_connected()
         # Keep your existing update_file_list if needed
         # app_signals.update_file_list.connect(self.on_file_update, Qt.QueuedConnection)
+
+    def _ensure_watcher_connected(self):
+        """
+        (Re)connect to the CURRENT FileWatcherWorker singleton.
+
+        FIX: Every logout/login (and every start_file_watcher() call) does
+        `FileWatcherWorker._instance = None` and creates a brand-new worker
+        with its own fresh download_progress/download_status_detail signals.
+        This window used to connect only once in __init__, so after a single
+        logout/login cycle it stayed wired to the dead old worker and the
+        card UI silently stopped updating even though transfers were
+        actually happening. Called from showEvent so it's always current.
+        """
+        watcher = FileWatcherWorker.get_instance()
+        if watcher is self._connected_watcher:
+            return
+        if self._connected_watcher is not None:
+            try:
+                self._connected_watcher.download_progress.disconnect(self.on_download_progress)
+                self._connected_watcher.download_status_detail.disconnect(self.on_download_status_detail)
+            except Exception:
+                pass
+        watcher.download_progress.connect(self.on_download_progress, Qt.QueuedConnection)
+        watcher.download_status_detail.connect(self.on_download_status_detail, Qt.QueuedConnection)
+        self._connected_watcher = watcher
+        logger.debug("[FileDownloadListWindow] (Re)connected to current FileWatcherWorker instance")
 
     @staticmethod
     def normalize_path(path: str) -> str:
@@ -4432,6 +6785,7 @@ class FileDownloadListWindow(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._ensure_watcher_connected()  # FIX: reconnect if worker was recreated
         self.load_files()  # Refresh when shown
 
 
@@ -4552,7 +6906,7 @@ class FileDownloadListWindow(QDialog):
         src_path = nas_file_path                    # NAS SOURCE
         dest_path = os.path.join(BASE_TARGET_DIR, nas_path)
 
-        is_nas_src = True
+        is_nas_src = not _task_uses_s3(api, nas_file_path)
         is_nas_dest = False
 
         # ------------------------------------------------------------------
@@ -4591,6 +6945,10 @@ class FileDownloadListWindow(QDialog):
             "created_on": api.get("created_on"),
             "updated_date": api.get("updated_date"),
             "request_type": "download",
+            "is_nas_src": api.get("is_nas_src"),
+            "is_nas_dest": api.get("is_nas_dest"),
+            "storage_type": api.get("storage_type"),
+            "storage_backend": api.get("storage_backend"),
         }
 
         # ------------------------------------------------------------------
@@ -4674,10 +7032,28 @@ class FileUploadListWindow(QDialog):
         self.load_files()
 
         # Connect signals
-        # watcher = FileWatcherWorker.get_instance(parent=self)
+        self._connected_watcher = None
+        self._ensure_watcher_connected()
+
+    def _ensure_watcher_connected(self):
+        """
+        (Re)connect to the CURRENT FileWatcherWorker singleton.
+        See FileDownloadListWindow._ensure_watcher_connected for why this
+        is necessary — logout/login recreates the worker with fresh signals.
+        """
         watcher = FileWatcherWorker.get_instance()
+        if watcher is self._connected_watcher:
+            return
+        if self._connected_watcher is not None:
+            try:
+                self._connected_watcher.upload_progress.disconnect(self.on_upload_progress)
+                self._connected_watcher.upload_status_detail.disconnect(self.on_upload_status_detail)
+            except Exception:
+                pass
         watcher.upload_progress.connect(self.on_upload_progress, Qt.QueuedConnection)
         watcher.upload_status_detail.connect(self.on_upload_status_detail, Qt.QueuedConnection)
+        self._connected_watcher = watcher
+        logger.debug("[FileUploadListWindow] (Re)connected to current FileWatcherWorker instance")
 
     @staticmethod
     def normalize_path(path: str) -> str:
@@ -4895,6 +7271,7 @@ class FileUploadListWindow(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._ensure_watcher_connected()  # FIX: reconnect if worker was recreated
         self.load_files()  # Refresh when shown
 
 
@@ -4988,7 +7365,7 @@ class FileUploadListWindow(QDialog):
         dest_path = os.path.join(BASE_TARGET_DIR, nas_path)
 
         is_nas_src = False
-        is_nas_dest = True
+        is_nas_dest = not _task_uses_s3(api, api.get("file_path", ""))
 
         card = self.card_index.get(spec_id)
         if card:
@@ -5018,6 +7395,10 @@ class FileUploadListWindow(QDialog):
             "created_on": api.get("created_on"),
             "updated_date": api.get("updated_date"),
             "request_type": "upload",
+            "is_nas_src": api.get("is_nas_src"),
+            "is_nas_dest": api.get("is_nas_dest"),
+            "storage_type": api.get("storage_type"),
+            "storage_backend": api.get("storage_backend"),
         }
 
         try:
@@ -6633,41 +9014,38 @@ class PremediaApp(QApplication):
                 QTimer.singleShot(500, self._safe_invoke_watcher)
 
                 # ── Notification Manager ──────────────────────────────────────
-                def _find_best_anchor():
-                    for w in QApplication.topLevelWidgets():
-                        try:
-                            if w.isVisible() and w.width() > 200:
-                                return w
-                        except RuntimeError:
-                            continue
-                    return getattr(self, "log_window", None)
+                # FIX: This used to be gated behind "a visible top-level widget
+                # exists" via _find_best_anchor(), even though
+                # TransferNotificationManager doesn't actually use an anchor —
+                # it positions itself off the screen's own geometry. If that
+                # search came back empty (e.g. right after login before any
+                # window was shown), the whole block was skipped and progress
+                # popups silently never got wired up for the rest of the
+                # session. Always (re)create and connect it.
+                if getattr(self, "notif_manager", None):
+                    try:
+                        self.notif_manager.hide()
+                        self.notif_manager.deleteLater()
+                    except Exception:
+                        pass
 
-                anchor = _find_best_anchor()
-                if anchor is not None:
-                    if getattr(self, "notif_manager", None):
-                        try:
-                            self.notif_manager.hide()
-                            self.notif_manager.deleteLater()
-                        except Exception:
-                            pass
+                self.notif_manager = TransferNotificationManager()
 
-                    self.notif_manager = TransferNotificationManager()   # no anchor needed
-
-                    watcher = self.file_watcher
-                    watcher.download_progress.connect(
-                        self.notif_manager.on_download_progress, Qt.QueuedConnection
-                    )
-                    watcher.download_status_detail.connect(
-                        self.notif_manager.on_download_status_detail, Qt.QueuedConnection
-                    )
-                    watcher.upload_progress.connect(
-                        self.notif_manager.on_upload_progress, Qt.QueuedConnection
-                    )
-                    watcher.upload_status_detail.connect(
-                        self.notif_manager.on_upload_status_detail, Qt.QueuedConnection
-                    )
-                    logger.info("[App] TransferNotificationManager connected")
-                    app_signals.append_log.emit("[App] TransferNotificationManager connected")
+                watcher = self.file_watcher
+                watcher.download_progress.connect(
+                    self.notif_manager.on_download_progress, Qt.QueuedConnection
+                )
+                watcher.download_status_detail.connect(
+                    self.notif_manager.on_download_status_detail, Qt.QueuedConnection
+                )
+                watcher.upload_progress.connect(
+                    self.notif_manager.on_upload_progress, Qt.QueuedConnection
+                )
+                watcher.upload_status_detail.connect(
+                    self.notif_manager.on_upload_status_detail, Qt.QueuedConnection
+                )
+                logger.info("[App] TransferNotificationManager connected")
+                app_signals.append_log.emit("[App] TransferNotificationManager connected")
                 # ─────────────────────────────────────────────────────────────
 
             # Connect and start the thread

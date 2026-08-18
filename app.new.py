@@ -6,13 +6,13 @@ from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout, QHeaderView, QProgressBar, QSizePolicy,QLabel, QFrame, QScrollArea, QGridLayout
 )
 from updater_client import check_for_update
-APPVERSION = "1.1.46"  # your current version
+  # your current version
 
-from PySide6.QtGui import QIcon, QTextCursor, QAction, QCursor, QFont,QPixmap, QDesktopServices
-from PySide6.QtCore import QRunnable, QThreadPool, QEvent, QSize, QThread, QTimer, Qt, QObject, Signal, QMetaObject, Slot, QLockFile, QDir, QEventLoop, QUrl, Q_ARG, QMimeData
+from PySide6.QtGui import QIcon, QTextCursor, QAction, QCursor, QFont,QPixmap, QDesktopServices, QColor
+from PySide6.QtCore import QRunnable, QThreadPool, QEvent, QSize, QThread, QTimer, Qt, QObject, Signal, QMetaObject, Slot, QLockFile, QDir, QEventLoop, QUrl, Q_ARG, QMimeData, QPropertyAnimation, QEvent
 from PySide6.QtNetwork import QLocalServer, QLocalSocket, QNetworkAccessManager, QNetworkRequest
 from login import Ui_Dialog
-from PySide6.QtWidgets import QLineEdit
+from PySide6.QtWidgets import QLineEdit, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
 
 import sys
 import logging
@@ -64,7 +64,17 @@ except ImportError:
     tifffile = None
 import pytz
 import shutil
-import keyring
+# Lazy import — keyring blocks on Windows credential store at import time
+keyring = None
+# def _load_keyring():
+#     global keyring
+#     try:
+#         import keyring as _kr
+#         keyring = _kr
+#     except Exception as e:
+#         logger.warning(f"keyring unavailable: {e}")
+
+# threading.Thread(target=_load_keyring, daemon=True).start()
 try:
     import imagecodecs
 except ImportError:
@@ -124,49 +134,18 @@ def _show_already_running_popup(app_name: str):
             app = QApplication(sys.argv)
             owns_app = True
 
-        QMessageBox.warning(
-            None,
-            f"{app_name} Already Running",
-            f"{app_name} is already running on your machine. Only one instance is allowed.",
-        )
-
+        # QMessageBox.warning(
+        #     None,
+        #     f"{app_name} Already Running",
+        #     f"{app_name} is already running on your machine. Only one instance is allowed.",
+        # )
+        show_alert(f"{app_name} Already Running", f"{app_name} is already running on your machine. Only one instance is allowed.", QMessageBox.Warning)
         if owns_app:
             app.quit()
 
     except Exception:
         # Absolute fallback (no Qt available)
         sys.stderr.write(f"{app_name} is already running.\n")
-
-
-
-# def fast_scp_upload(ssh_transport, src_path, dest_path):
-#     with SCPClient(ssh_transport, socket_timeout=30) as scp:
-#         scp.put(src_path, dest_path)
-
-def fast_scp_upload(transport, src_path, dest_path):
-
-    # ---- MAXIMIZE UPLOAD WINDOW ----
-    transport.default_window_size = 33554432     # 32MB window by Mohan
-    transport.default_max_packet_size = 1048576  # 1MB packet by Mohan
-    transport.packetizer.REKEY_BYTES = pow(2, 40)
-    transport.packetizer.REKEY_PACKETS = pow(2, 40)
-
-    # ---- OPTIMIZED SCP ----
-    scp = SCPClient(
-        transport,
-        socket_timeout=30,
-        buff_size=1048576   # 1 MB chunks increased by Mohan
-    )
-
-    # ---- PUT IS FASTER THAN PUTFO ON WINDOWS ----
-    scp.put(src_path, dest_path)
-
-    scp.close()
-    
-    transport.close()  # transport close to prevent leakage by Mohan
-
-
-
 
 
 SUPPORTED_EXTENSIONS = [
@@ -191,6 +170,7 @@ except ImportError as e:
     logging.error(f"Failed to import traceback module: {e}")
     traceback = None  # Fallback to None if import fails
 
+
 # At the top of the file, ensure all imports are explicit
 try:
     from PIL import Image
@@ -213,6 +193,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # NAS_USERNAME = "irnasappprod"
 # MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
 # NAS_PATH = "softwaremedia/IR_prod/"
+# APPVERSION = "1.2.7"
+# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
 
 BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
 NAS_IP = "192.168.1.145"
@@ -223,6 +205,8 @@ NAS_SHARE = ""
 NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
 MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
 NAS_PATH = "softwaremedia/IR_uat/"
+APPVERSION = "1.2.7(UAT)"
+GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -342,6 +326,7 @@ CACHE_FILE = get_cache_file_path()
 CACHE_DAYS = 10
 API_URL = f"{BASE_DOMAIN}/api/ir_production/get/projectList?business=image_retouching"
 DOWNLOAD_UPLOAD_API = f"{BASE_DOMAIN}/api/get_download_upload/submission"
+FILE_FORMAT_API = f"{BASE_DOMAIN}/api/file-formats"
 OAUTH_URL = f"{BASE_DOMAIN}/oauth/token"
 USER_VALIDATE_URL = f"{BASE_DOMAIN}/api/user/validate"
 API_URL_CREATE = f"{BASE_DOMAIN}/api/nas_create/creative"
@@ -357,10 +342,26 @@ IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
 
 
 API_POLL_INTERVAL = 5000  # 5 seconds in milliseconds
+
+# === Google Chat transfer reporting (latency / speed) ===
+# Paste your Google Chat "Incoming Webhook" URL here (Space -> Apps & integrations -> Webhooks)
+# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
+TRANSFER_REPORT_INTERVAL_SEC = 10  # send a report every 10 seconds while a transfer is active
+LATENCY_TARGET_HOST = None  # None => uses NAS_IP; set to a domain/IP to ping a different server
+LATENCY_TARGET_PORT = None  # None => uses NAS_PORT
+
+# === Network/server problem alarm thresholds ===
+LATENCY_WARNING_MS = 1000       # server latency above this = "server is very slow"
+LATENCY_MIN_MS = 1              # server latency below this (but not None) = suspicious/likely bad reading
+SPEED_WARNING_MBPS = 0.5        # transfer speed below this (mid-transfer) = "server is very slow"
+ALARM_COOLDOWN_SEC = 300        # don't repeat the same alarm type more than once per 5 minutes
+
 log_window_handler = None
 # === Global State ===
 GLOBAL_CACHE = None
 CACHE_WRITE_LOCK = threading.Lock()
+_MEMORY_CACHE = None          # in-memory cache object
+_MEMORY_CACHE_DIRTY = False   # True when memory cache differs from disk
 HTTP_SESSION = requests.Session()
 FILE_WATCHER_RUNNING = False
 LOGGING_ACTIVE = True
@@ -374,6 +375,13 @@ USER_SYSTEM_INFO = {}
 THROTTLE_MBPS = None       # Set to e.g. 50, 100, or None for no limit (full speed)
 MIN_REQUIRED_MBPS = 50     # Optional: for warning if speed too low (in Mbps)
 PRINT_INTERVAL = 0.5       # Progress update frequency in seconds
+
+# ---- TEMPORARY: Max upload file size limit ----
+# To DISABLE this limit, just set ENABLE_MAX_UPLOAD_SIZE_LIMIT = False below
+# (or delete/comment out these two lines) — no other code changes needed.
+ENABLE_MAX_UPLOAD_SIZE_LIMIT = True   # <-- flip to False to turn the limit off
+MAX_UPLOAD_SIZE_MB = 2048             # 2 GB
+# =================================================
 # ===================================
 # === Logging Setup ===
 logger = logging.getLogger("PremediaApp")
@@ -405,8 +413,1949 @@ class AppSignals(QObject):
     update_file_list = Signal(str, str, str, int, bool)
     api_call_status = Signal(str, str, int)
     update_timer_status = Signal(str)
+    network_alarm = Signal(str, str)  # summary, full_diagnostic_report_text
+    # file_path, PSDValidationResult, confirmation_box (_PSDConfirmationBox)
+    psd_validation_required = Signal(str, object, object)
+
+    def __init__(self):
+        super().__init__()
+        # Self-connect with QueuedConnection: app_signals is created at import
+        # time on the main thread, so this guarantees _on_network_alarm (and
+        # the Qt dialog it builds) always runs on the main GUI thread, even
+        # though network_alarm.emit() is called from background threads.
+        self.network_alarm.connect(self._on_network_alarm, Qt.QueuedConnection)
+        # Same pattern for the PSD/PSB pre-upload validation confirmation
+        # dialog — must always be built/shown on the main GUI thread even
+        # though the request originates from a background upload thread.
+        self.psd_validation_required.connect(self._on_psd_validation_required, Qt.QueuedConnection)
+
+    @Slot(str, str)
+    def _on_network_alarm(self, summary, report_text):
+        show_network_alarm_dialog(summary, report_text)
+
+    @Slot(str, object, object)
+    def _on_psd_validation_required(self, file_path, result, confirmation_box):
+        """
+        Runs on the main GUI thread (QueuedConnection). Shows the PSD
+        quality-check report + Upload/Cancel confirmation dialog, then wakes
+        up the waiting background upload thread with the user's decision.
+        """
+        try:
+            dlg = PSDValidationDialog(file_path, result, parent=None)
+            dlg.raise_()
+            dlg.activateWindow()
+            choice = dlg.exec()
+            confirmation_box.result = (choice == QDialog.Accepted)
+        except Exception as e:
+            logger.error(f"[PSD Validation] Failed to show confirmation dialog: {e}")
+            confirmation_box.result = False
+        finally:
+            confirmation_box.event.set()
 
 app_signals = AppSignals()
+
+
+# ============================================================================
+# === PSD / PSB Production-Readiness Validation ============================
+# ============================================================================
+#
+# Runs a checklist of production-readiness rules against a .psd/.psb file
+# before it is uploaded to the NAS, and always shows the user a report +
+# Upload/Cancel confirmation dialog — regardless of whether validation
+# passed or failed — so the human makes the final call.
+#
+# Config is optional; pass a dict via FileWatcherWorker.psd_validation_config
+# to customize behavior, e.g.:
+#   {
+#       "allowed_hidden_layers": ["Guides"],
+#       "temp_layer_patterns": ["temp", "tmp", "wip", "draft", "test"],
+#       "reference_layer_patterns": ["reference", "ref", "guide"],
+#       "layer_naming_regex": r"^[A-Za-z0-9_\-\s]+$",
+#       "mandatory_layers": ["Background", "Final"],
+#       "expected_hierarchy": None,
+#       "allowed_locked_layers": [],
+#       "min_width": None,
+#       "min_height": None,
+#       "required_color_mode": None,   # e.g. "RGB"
+#       "require_flattenable": False,
+#   }
+# ============================================================================
+
+class PSDUploadCancelled(Exception):
+    """Raised when the user cancels an upload from the PSD validation dialog."""
+    pass
+
+
+class UploadSizeLimitExceeded(Exception):
+    """Raised when a file exceeds the configured MAX_UPLOAD_SIZE_MB limit."""
+    pass
+
+
+def exceeds_max_upload_size(file_path):
+    """
+    Checks a file against the temporary MAX_UPLOAD_SIZE_MB limit.
+
+    TO DISABLE: set ENABLE_MAX_UPLOAD_SIZE_LIMIT = False near the top of
+    this file (in the CONFIGURATION block) — this function will then
+    always return (False, size_mb) and the limit has no effect anywhere.
+
+    Returns (exceeds: bool, size_mb: float).
+    """
+    if not ENABLE_MAX_UPLOAD_SIZE_LIMIT:
+        return False, 0.0
+    try:
+        size_mb = Path(file_path).stat().st_size / (1024 * 1024)
+    except Exception as e:
+        logger.warning(f"[UploadSizeLimit] Could not stat {file_path}: {e}")
+        return False, 0.0
+    return size_mb > MAX_UPLOAD_SIZE_MB, size_mb
+
+
+class PSDValidationResult:
+    """Container for one PSD/PSB validation run."""
+
+    def __init__(self):
+        self.checks = []          # list of {"name","passed","message"}
+        self.canvas_size = None   # (width, height)
+        self.overall_pass = True
+
+    def add(self, name, passed, message=""):
+        self.checks.append({"name": name, "passed": bool(passed), "message": message or ""})
+        if not passed:
+            self.overall_pass = False
+
+
+def _psd_layer_name(layer):
+    try:
+        return layer.name or "(unnamed layer)"
+    except Exception:
+        return "(unnamed layer)"
+
+
+def _psd_layer_path(layer):
+    """
+    Full breadcrumb path of a layer through its parent groups, e.g.
+    'Background / Details / Shadow'. Falls back to the bare name if the
+    parent chain can't be walked. Used so that a flagged layer can always
+    be pinpointed even when the same layer name is reused in different
+    groups (a very common case in production PSDs).
+    """
+    try:
+        parts = [_psd_layer_name(layer)]
+        parent = getattr(layer, "parent", None)
+        seen = set()
+        while parent is not None and not (hasattr(parent, "kind") and str(getattr(parent, "kind", "")).lower() == "psdimage"):
+            pid = id(parent)
+            if pid in seen:
+                break
+            seen.add(pid)
+            try:
+                p_name = _psd_layer_name(parent)
+            except Exception:
+                break
+            if not p_name or p_name == "(unnamed layer)":
+                break
+            parts.append(p_name)
+            parent = getattr(parent, "parent", None)
+        return " / ".join(reversed(parts))
+    except Exception:
+        return _psd_layer_name(layer)
+
+
+def _format_layer_list(names, limit=20):
+    """
+    Formats a list of offending layer names/paths into a readable,
+    de-duplicated, order-preserving, length-capped string for use inside a
+    check's failure message.
+    """
+    seen = []
+    for n in names:
+        if n and n not in seen:
+            seen.append(n)
+    if not seen:
+        return ""
+    if len(seen) > limit:
+        shown = seen[:limit]
+        return ", ".join(shown) + f"  (+{len(seen) - limit} more)"
+    return ", ".join(seen)
+
+
+# Layer kinds that are content-bearing by design but carry NO pixel bbox
+# (they don't rasterize their own pixels — an adjustment layer tweaks
+# whatever is below it, a fill layer is defined by its fill, not a bbox).
+# The Empty Layer Check must skip these kinds entirely, otherwise a
+# perfectly valid Hue/Saturation, Curves, Solid Color, etc. layer gets
+# incorrectly flagged as "empty".
+PSD_NON_RASTER_LAYER_KINDS = {
+    # Fill layers
+    "solidcolorfill", "patternfill", "gradientfill",
+    # Adjustment layers
+    "brightnesscontrast", "curves", "exposure", "levels", "vibrance",
+    "huesaturation", "colorbalance", "blackandwhite", "photofilter",
+    "channelmixer", "colorlookup", "invert", "posterize", "threshold",
+    "selectivecolor", "gradientmap",
+}
+
+# Photoshop's default auto-generated duplicate naming: "Layer 1 copy",
+# "Layer 1 copy 2", "copy of Background", etc. — used by the Duplicate
+# Layer Detection check to catch un-renamed duplicated layers even when
+# their name doesn't exactly collide with another layer's name.
+_PSD_COPY_SUFFIX_RE = re.compile(r'(?:^|[\s_\-])copy(?:[\s_\-]?\d+)?$', re.IGNORECASE)
+_PSD_COPY_OF_PREFIX_RE = re.compile(r'^copy of\b', re.IGNORECASE)
+
+
+def _psd_layer_content_hash(layer):
+    """
+    Best-effort exact hash of a layer's rendered pixel content, used to
+    catch duplicate image/pixel layers that were copy-pasted and renamed
+    to something different rather than left with the default "copy" name.
+    Uses exact pixel bytes (not a perceptual hash), so only genuinely
+    identical image data is matched — a resized/edited copy will not.
+    Returns None if the layer has no renderable content or hashing fails
+    for any reason (never raises).
+    """
+    try:
+        img = layer.topil()
+        if img is None:
+            return None
+        img = img.convert("RGBA")
+        return hashlib.sha256(img.tobytes()).hexdigest()
+    except Exception:
+        return None
+
+
+def validate_psd_document(file_path, config=None):
+    """
+    Validates a .psd/.psb file against a production-readiness checklist.
+    Every failing check names the exact offending layer(s) — using a full
+    group-path breadcrumb where relevant so nested/duplicate-named layers
+    are unambiguous — so the QC report always tells you precisely which
+    layer(s) need fixing, never just "some layers failed".
+
+    Never raises — any internal failure is captured as a FAIL check so the
+    caller always gets back a usable PSDValidationResult.
+    """
+    config = config or {}
+    result = PSDValidationResult()
+
+    # offending layer paths collected per-check, used to build the
+    # Production Readiness Check rollup message at the end
+    offenders_by_check = {}
+
+    if PSDImage is None:
+        result.add("PSD Library", False, "psd-tools is not installed; cannot validate this file")
+        return result
+
+    try:
+        psd = PSDImage.open(file_path)
+    except Exception as e:
+        result.add("File Open", False, f"Could not open PSD/PSB file: {e}")
+        return result
+
+    try:
+        result.canvas_size = (psd.width, psd.height)
+    except Exception:
+        result.canvas_size = None
+
+    try:
+        all_layers = list(psd.descendants())
+    except Exception as e:
+        result.add("Layer Enumeration", False, f"Could not enumerate layers: {e}")
+        return result
+
+    def _is_group(layer):
+        try:
+            return bool(layer.is_group())
+        except Exception:
+            return False
+
+    # ---- 1. Hidden Layer Check ----
+    try:
+        allowed_hidden = set(config.get("allowed_hidden_layers", []))
+        bad_hidden = [
+            _psd_layer_path(l) for l in all_layers
+            if not getattr(l, "visible", True) and _psd_layer_name(l) not in allowed_hidden
+        ]
+        if bad_hidden:
+            offenders_by_check["Hidden Layer Check"] = bad_hidden
+            result.add(
+                "Hidden Layer Check", False,
+                f"{len(bad_hidden)} hidden layer(s) found — must be visible or removed: {_format_layer_list(bad_hidden)}"
+            )
+        else:
+            result.add("Hidden Layer Check", True)
+    except Exception as e:
+        result.add("Hidden Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 2. Empty Layer Check ----
+    try:
+        # Allow project config to add extra "non-raster, never empty" kinds
+        # on top of the built-in adjustment/fill layer list, if needed.
+        non_raster_kinds = PSD_NON_RASTER_LAYER_KINDS | set(
+            k.lower() for k in config.get("extra_non_raster_layer_kinds", [])
+        )
+
+        empty_layers = []
+        for l in all_layers:
+            if _is_group(l):
+                continue
+            try:
+                kind = str(getattr(l, "kind", "")).lower()
+                if kind in non_raster_kinds:
+                    # Adjustment/fill layers (Hue-Saturation, Curves, Levels,
+                    # Solid Color, Gradient Map, etc.) don't carry pixel
+                    # content by design — a missing/zero bbox on these is
+                    # normal and does NOT mean the layer is empty.
+                    continue
+                bbox = l.bbox
+                if bbox is None or (bbox[2] - bbox[0]) <= 0 or (bbox[3] - bbox[1]) <= 0:
+                    empty_layers.append(_psd_layer_path(l))
+            except Exception:
+                continue
+        if empty_layers:
+            offenders_by_check["Empty Layer Check"] = empty_layers
+            result.add(
+                "Empty Layer Check", False,
+                f"{len(empty_layers)} empty layer(s) with no content: {_format_layer_list(empty_layers)}"
+            )
+        else:
+            result.add("Empty Layer Check", True)
+    except Exception as e:
+        result.add("Empty Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 3. Temporary Layer Check ----
+    try:
+        # "background" is included by default: a plain (non-group) layer
+        # named/containing "background" is NOT allowed (usually the
+        # untouched original canvas layer left in by mistake), but a
+        # "Background" GROUP/FOLDER is explicitly fine and must NOT be
+        # flagged — teams commonly organize layers under a Background group.
+        temp_patterns = config.get(
+            "temp_layer_patterns",
+            ["temp", "tmp", "test", "working", "wip", "draft", "background"]
+        )
+        temp_layers = []
+        for l in all_layers:
+            name_lower = _psd_layer_name(l).lower()
+            is_grp = _is_group(l)
+            for p in temp_patterns:
+                p_lower = p.lower()
+                if p_lower not in name_lower:
+                    continue
+                if p_lower == "background" and is_grp:
+                    # Background group/folder — allowed, skip this pattern
+                    continue
+                temp_layers.append(_psd_layer_path(l))
+                break
+        if temp_layers:
+            offenders_by_check["Temporary Layer Check"] = temp_layers
+            result.add(
+                "Temporary Layer Check", False,
+                f"{len(temp_layers)} temporary/working layer(s) must be removed before delivery: {_format_layer_list(temp_layers)}"
+            )
+        else:
+            result.add("Temporary Layer Check", True)
+    except Exception as e:
+        result.add("Temporary Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 4. Reference Layer Check ----
+    try:
+        ref_patterns = config.get("reference_layer_patterns", ["reference", "ref", "guide"])
+        ref_layers = [
+            _psd_layer_path(l) for l in all_layers
+            if any(p.lower() in (_psd_layer_name(l)).lower() for p in ref_patterns)
+        ]
+        if ref_layers:
+            offenders_by_check["Reference Layer Check"] = ref_layers
+            result.add(
+                "Reference Layer Check", False,
+                f"{len(ref_layers)} reference/guide layer(s) must be removed: {_format_layer_list(ref_layers)}"
+            )
+        else:
+            result.add("Reference Layer Check", True)
+    except Exception as e:
+        result.add("Reference Layer Check", False, f"Check failed to run: {e}")
+
+    # ---- 5. Layer Naming Validation ----
+    try:
+        bad_names = []
+        space_issue_paths = []
+        pattern_issue_paths = []
+
+        # Built-in rule (always enforced, no config needed): a layer name
+        # must not have leading or trailing whitespace, e.g. " Layer 1" or
+        # "Layer 1 " are both rejected.
+        for l in all_layers:
+            raw_name = l.name if l.name is not None else ""
+            if raw_name != raw_name.strip():
+                path_label = f"{_psd_layer_path(l)} [leading/trailing space in name]"
+                bad_names.append(path_label)
+                space_issue_paths.append(_psd_layer_path(l))
+
+        naming_pattern = config.get("layer_naming_regex")
+        if naming_pattern:
+            for l in all_layers:
+                if l.name and not re.match(naming_pattern, l.name):
+                    path_label = f"{_psd_layer_path(l)} [violates naming convention]"
+                    bad_names.append(path_label)
+                    pattern_issue_paths.append(_psd_layer_path(l))
+
+        if bad_names:
+            offenders_by_check["Layer Naming Validation"] = list(set(space_issue_paths + pattern_issue_paths))
+            result.add(
+                "Layer Naming Validation", False,
+                f"{len(bad_names)} layer naming issue(s) found: {_format_layer_list(bad_names)}"
+            )
+        elif naming_pattern:
+            result.add("Layer Naming Validation", True)
+        else:
+            result.add(
+                "Layer Naming Validation", True,
+                "No custom naming convention configured; leading/trailing-space rule applied"
+            )
+    except Exception as e:
+        result.add("Layer Naming Validation", False, f"Check failed to run: {e}")
+
+    # ---- 6. Mandatory Layer Validation ----
+    try:
+        mandatory = config.get("mandatory_layers", [])
+        if mandatory:
+            existing_names = {_psd_layer_name(l) for l in all_layers}
+            missing = [m for m in mandatory if m not in existing_names]
+            if missing:
+                result.add(
+                    "Mandatory Layer Validation", False,
+                    f"{len(missing)} required layer(s) are missing from this file: {_format_layer_list(missing)}"
+                )
+            else:
+                result.add("Mandatory Layer Validation", True)
+        else:
+            result.add("Mandatory Layer Validation", True, "No mandatory layers configured; check skipped")
+    except Exception as e:
+        result.add("Mandatory Layer Validation", False, f"Check failed to run: {e}")
+
+    # ---- 7. Duplicate Layer Detection ----
+    try:
+        occurrences_by_name = {}
+        copy_named_layers = []
+        content_hash_groups = {}   # (kind, content_hash) -> [paths]
+
+        for l in all_layers:
+            n = _psd_layer_name(l)
+            path = _psd_layer_path(l)
+
+            # a) same layer name
+            if n != "(unnamed layer)":
+                occurrences_by_name.setdefault(n, []).append(path)
+
+            # b) Photoshop's default "... copy" / "copy of ..." naming —
+            #    an un-renamed duplicate, not allowed even if the name no
+            #    longer collides with the original.
+            if n != "(unnamed layer)" and (
+                _PSD_COPY_SUFFIX_RE.search(n) or _PSD_COPY_OF_PREFIX_RE.match(n)
+            ):
+                copy_named_layers.append(path)
+
+            # c) same kind + identical rendered image content, EVEN when
+            #    given a different name — catches a layer that was
+            #    duplicated then manually renamed to hide that it's a copy.
+            if not _is_group(l):
+                try:
+                    kind = str(getattr(l, "kind", "")).lower()
+                except Exception:
+                    kind = ""
+                if kind and kind not in PSD_NON_RASTER_LAYER_KINDS:
+                    content_hash = _psd_layer_content_hash(l)
+                    if content_hash:
+                        content_hash_groups.setdefault((kind, content_hash), []).append(path)
+
+        dupe_details = []
+        dupe_paths_flat = []
+
+        for name, paths in occurrences_by_name.items():
+            if len(paths) > 1:
+                dupe_details.append(f"'{name}' ×{len(paths)} same name [{'; '.join(paths)}]")
+                dupe_paths_flat.extend(paths)
+
+        if copy_named_layers:
+            dupe_details.append(
+                f"{len(copy_named_layers)} layer(s) left with default 'copy' naming — "
+                f"rename or remove: {_format_layer_list(copy_named_layers)}"
+            )
+            dupe_paths_flat.extend(copy_named_layers)
+
+        for (kind, _hash), paths in content_hash_groups.items():
+            if len(paths) > 1:
+                dupe_details.append(
+                    f"{len(paths)} '{kind}' layer(s) with identical image content despite different names "
+                    f"[{'; '.join(paths)}]"
+                )
+                dupe_paths_flat.extend(paths)
+
+        if dupe_details:
+            offenders_by_check["Duplicate Layer Detection"] = list(dict.fromkeys(dupe_paths_flat))
+            result.add(
+                "Duplicate Layer Detection", False,
+                f"{len(dupe_details)} duplicate/copy issue(s) found: {_format_layer_list(dupe_details, limit=15)}"
+            )
+        else:
+            result.add("Duplicate Layer Detection", True)
+    except Exception as e:
+        result.add("Duplicate Layer Detection", False, f"Check failed to run: {e}")
+
+    # ---- 8. Layer Hierarchy Validation ----
+    try:
+        expected_hierarchy = config.get("expected_hierarchy")
+        if expected_hierarchy:
+            # Compares the top-level group names against the expected list.
+            # Extend this comparison if you need deeper (nested) structural
+            # validation — the offending group names are still always named
+            # explicitly in the failure message either way.
+            try:
+                actual_top_level = [_psd_layer_name(l) for l in psd if _is_group(l)]
+            except Exception:
+                actual_top_level = [_psd_layer_name(l) for l in all_layers if _is_group(l)]
+
+            missing_groups = [g for g in expected_hierarchy if g not in actual_top_level]
+            extra_groups = [g for g in actual_top_level if g not in expected_hierarchy]
+
+            issues = []
+            if missing_groups:
+                issues.append(f"missing expected group(s): {_format_layer_list(missing_groups)}")
+            if extra_groups:
+                issues.append(f"unexpected group(s) present: {_format_layer_list(extra_groups)}")
+
+            if issues:
+                result.add("Layer Hierarchy Validation", False, "; ".join(issues))
+            else:
+                result.add("Layer Hierarchy Validation", True)
+        else:
+            result.add("Layer Hierarchy Validation", True, "No expected_hierarchy configured; check skipped")
+    except Exception as e:
+        result.add("Layer Hierarchy Validation", False, f"Check failed to run: {e}")
+
+    # ---- 9. Locked Layer Validation ----
+    try:
+        allowed_locked = set(config.get("allowed_locked_layers", []))
+        bad_locked = []
+        for l in all_layers:
+            is_locked = False
+            for attr in ("locked", "is_locked"):
+                try:
+                    val = getattr(l, attr, False)
+                    if callable(val):
+                        val = val()
+                    if val:
+                        is_locked = True
+                        break
+                except Exception:
+                    continue
+            if is_locked and _psd_layer_name(l) not in allowed_locked:
+                bad_locked.append(_psd_layer_path(l))
+
+        if bad_locked:
+            offenders_by_check["Locked Layer Validation"] = bad_locked
+            result.add(
+                "Locked Layer Validation", False,
+                f"{len(bad_locked)} unexpected locked layer(s): {_format_layer_list(bad_locked)}"
+            )
+        else:
+            result.add("Locked Layer Validation", True)
+    except Exception as e:
+        result.add("Locked Layer Validation", False, f"Check failed to run: {e}")
+
+    # ---- 10. Document Properties Check ----
+    try:
+        doc_issues = []
+        min_w = config.get("min_width")
+        min_h = config.get("min_height")
+        if min_w and result.canvas_size and result.canvas_size[0] < min_w:
+            doc_issues.append(f"Width {result.canvas_size[0]}px < required {min_w}px")
+        if min_h and result.canvas_size and result.canvas_size[1] < min_h:
+            doc_issues.append(f"Height {result.canvas_size[1]}px < required {min_h}px")
+        required_color_mode = config.get("required_color_mode")
+        if required_color_mode:
+            try:
+                actual_mode = str(psd.color_mode).upper()
+            except Exception:
+                actual_mode = "UNKNOWN"
+            if required_color_mode.upper() not in actual_mode:
+                doc_issues.append(f"Color mode {actual_mode} != required {required_color_mode.upper()}")
+        if doc_issues:
+            result.add("Document Properties Check", False, "; ".join(doc_issues))
+        else:
+            result.add("Document Properties Check", True)
+    except Exception as e:
+        result.add("Document Properties Check", False, f"Check failed to run: {e}")
+
+    # ---- 11. Smart Object Check ----
+    try:
+        require_flatten = bool(config.get("require_flattenable", False))
+        if require_flatten:
+            smart_objects = []
+            for l in all_layers:
+                try:
+                    if str(getattr(l, "kind", "")).lower() == "smartobject":
+                        smart_objects.append(_psd_layer_path(l))
+                except Exception:
+                    continue
+            if smart_objects:
+                offenders_by_check["Smart Object Check"] = smart_objects
+                result.add(
+                    "Smart Object Check", False,
+                    f"{len(smart_objects)} smart object layer(s) must be flattened: {_format_layer_list(smart_objects)}"
+                )
+            else:
+                result.add("Smart Object Check", True)
+        else:
+            result.add("Smart Object Check", True, "Flattenability not required; check skipped")
+    except Exception as e:
+        result.add("Smart Object Check", False, f"Check failed to run: {e}")
+
+    # ---- 12. Production Readiness Check (aggregate of the above) ----
+    try:
+        blocking_checks = (
+            "Hidden Layer Check", "Empty Layer Check", "Temporary Layer Check",
+            "Reference Layer Check", "Mandatory Layer Validation", "Duplicate Layer Detection",
+        )
+        failed_blocking = [name for name in blocking_checks
+                            if any(c["name"] == name and not c["passed"] for c in result.checks)]
+
+        if failed_blocking:
+            # Roll up every offending layer named across the blocking
+            # checks so the reader gets one consolidated "fix these" list.
+            all_offenders = []
+            for check_name in failed_blocking:
+                all_offenders.extend(offenders_by_check.get(check_name, []))
+            failed_labels = ", ".join(failed_blocking)
+            if all_offenders:
+                result.add(
+                    "Production Readiness Check", False,
+                    f"Not ready for delivery — failed: {failed_labels}. "
+                    f"Layer(s) to fix: {_format_layer_list(all_offenders)}"
+                )
+            else:
+                result.add(
+                    "Production Readiness Check", False,
+                    f"Not ready for delivery — failed: {failed_labels}"
+                )
+        else:
+            result.add("Production Readiness Check", True)
+    except Exception as e:
+        result.add("Production Readiness Check", False, f"Check failed to run: {e}")
+
+    return result
+
+
+def format_psd_validation_report(file_path, result: PSDValidationResult) -> str:
+    """Formats a PSDValidationResult into the standard readable report text."""
+    lines = []
+    lines.append(f"PSD Validation Report — {file_path}")
+    if result.canvas_size:
+        lines.append(f"Canvas: {result.canvas_size[0]}x{result.canvas_size[1]}")
+    lines.append("=" * 72)
+    for check in result.checks:
+        icon = "✅ [PASS]" if check["passed"] else "❌ [FAIL]"
+        lines.append(f"{icon} {check['name']}")
+        if check["message"]:
+            level = "INFO" if check["passed"] else "FAIL"
+            lines.append(f"        - ({level}) -: {check['message']}")
+    lines.append("=" * 72)
+    overall_icon = "✅" if result.overall_pass else "❌"
+    overall_text = "PASS" if result.overall_pass else "FAIL"
+    lines.append(f"{overall_icon} Overall status: {overall_text}")
+    return "\n".join(lines)
+
+
+class PSDCheckRowWidget(QFrame):
+    """One row in the QC checklist — glassy dark card with an accent-colored
+    icon chip, check name, optional message, and a status pill."""
+
+    def __init__(self, name: str, passed: bool, message: str = "", parent=None):
+        super().__init__(parent)
+        self.setObjectName("PSDCheckRow")
+
+        accent = "#3ddc97" if passed else "#ff5c7a"
+        accent_soft = "rgba(61, 220, 151, 0.12)" if passed else "rgba(255, 92, 122, 0.12)"
+        icon = "✓" if passed else "✕"
+        pill_text = "PASS" if passed else "FAIL"
+
+        self.setStyleSheet(f"""
+            QFrame#PSDCheckRow {{
+                background: #1b1e2b;
+                border: 1px solid #262a3b;
+                border-left: 3px solid {accent};
+                border-radius: 10px;
+            }}
+            QFrame#PSDCheckRow:hover {{
+                background: #20243450;
+                border-color: {accent};
+            }}
+        """)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 90))
+        self.setGraphicsEffect(shadow)
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(14, 12, 14, 12)
+        outer.setSpacing(12)
+
+        icon_lbl = QLabel(icon)
+        icon_lbl.setFixedSize(30, 30)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setStyleSheet(f"""
+            background-color: {accent_soft};
+            color: {accent};
+            font-weight: bold;
+            font-size: 14px;
+            border-radius: 15px;
+            border: 1px solid {accent};
+        """)
+        outer.addWidget(icon_lbl)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(3)
+
+        name_lbl = QLabel(name)
+        name_lbl.setStyleSheet(
+            "color: #eef0f7; font-weight: 600; font-size: 12.5px; "
+            "background: transparent; letter-spacing: 0.2px;"
+        )
+        text_col.addWidget(name_lbl)
+
+        if message:
+            msg_lbl = QLabel(message)
+            msg_lbl.setWordWrap(True)
+            msg_lbl.setStyleSheet(
+                f"color: {'#8c93a8' if passed else '#ff8fa3'}; font-size: 11px; "
+                "background: transparent; line-height: 140%;"
+            )
+            text_col.addWidget(msg_lbl)
+
+        outer.addLayout(text_col, 1)
+
+        pill = QLabel(pill_text)
+        pill.setAlignment(Qt.AlignCenter)
+        pill.setFixedWidth(62)
+        pill.setStyleSheet(f"""
+            background-color: {accent};
+            color: #0e1018;
+            font-weight: 800;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            border-radius: 10px;
+            padding: 4px 0;
+        """)
+        outer.addWidget(pill, 0, Qt.AlignTop)
+
+
+class _PSDSegmentedBar(QFrame):
+    """Slim rounded pass/fail ratio bar — a small dashboard-style touch
+    showing at a glance how much of the checklist passed."""
+
+    def __init__(self, passed: int, total: int, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(8)
+        self.setStyleSheet("background: rgba(255,255,255,0.18); border-radius: 4px;")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        failed = max(total - passed, 0)
+        if total <= 0:
+            return
+
+        if passed:
+            seg_pass = QFrame()
+            seg_pass.setStyleSheet("background-color: #3ddc97; border-radius: 4px;")
+            layout.addWidget(seg_pass, passed)
+        if failed:
+            seg_fail = QFrame()
+            seg_fail.setStyleSheet("background-color: #ff5c7a; border-radius: 4px;")
+            layout.addWidget(seg_fail, failed)
+
+
+class PSDValidationDialog(QDialog):
+    """
+    QC / production-readiness check window for a PSD or PSB file, shown
+    right before upload. Dark, modern "dashboard" styling — gradient
+    header, glassy checklist cards, segmented pass/fail meter, drop
+    shadows, and pill-shaped gradient action buttons — instead of a plain
+    report/error-style window. Shown for BOTH pass and fail outcomes,
+    since the human always makes the final call.
+    """
+
+    def __init__(self, file_path, result: "PSDValidationResult", parent=None):
+        super().__init__(parent)
+        overall_pass = result.overall_pass
+        passed_count = sum(1 for c in result.checks if c["passed"])
+        total_count = len(result.checks)
+        failed_count = total_count - passed_count
+
+        accent = "#3ddc97" if overall_pass else "#ff5c7a"
+        gradient = (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0f9b6e, stop:1 #3ddc97)"
+            if overall_pass else
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #c0293f, stop:1 #ff5c7a)"
+        )
+
+        self.setWindowTitle("Quality Check — PSD/PSB")
+        self.setMinimumSize(640, 660)
+        self.resize(700, 700)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.Window
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setStyleSheet("""
+            QDialog { background: #0f111a; }
+            QScrollBar:vertical {
+                background: transparent;
+                width: 9px;
+                margin: 4px 2px 4px 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #33384c;
+                border-radius: 4px;
+                min-height: 24px;
+            }
+            QScrollBar::handle:vertical:hover { background: #454b66; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+        """)
+        try:
+            self.setWindowIcon(load_icon(ICON_PATH, "psd validation"))
+        except Exception:
+            pass
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Gradient header ──────────────────────────────────────────────
+        header = QFrame()
+        header.setStyleSheet(f"background: {gradient}; border: none;")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(24, 22, 24, 22)
+        header_layout.setSpacing(10)
+
+        eyebrow = QLabel("PRODUCTION QC")
+        eyebrow.setStyleSheet(
+            "color: rgba(255,255,255,0.75); font-size: 10px; font-weight: 800; "
+            "letter-spacing: 2px; background: transparent;"
+        )
+        header_layout.addWidget(eyebrow)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(14)
+
+        badge = QLabel("✓" if overall_pass else "!")
+        badge.setFixedSize(46, 46)
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setStyleSheet(
+            "background-color: rgba(255,255,255,0.20); color: white; "
+            "font-size: 22px; font-weight: 900; border-radius: 23px; "
+            "border: 1px solid rgba(255,255,255,0.35);"
+        )
+        title_row.addWidget(badge)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        title_lbl = QLabel("Quality Check Passed" if overall_pass else "Quality Check Failed")
+        title_lbl.setStyleSheet(
+            "color: white; font-size: 19px; font-weight: 800; background: transparent;"
+        )
+        title_col.addWidget(title_lbl)
+
+        subtitle_lbl = QLabel(Path(file_path).name)
+        subtitle_lbl.setStyleSheet(
+            "color: rgba(255,255,255,0.88); font-size: 11.5px; background: transparent;"
+        )
+        subtitle_lbl.setWordWrap(True)
+        title_col.addWidget(subtitle_lbl)
+
+        title_row.addLayout(title_col, 1)
+        header_layout.addLayout(title_row)
+
+        # ── Chips: canvas size + pass/fail counts ───────────────────────
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(8)
+
+        def _make_chip(text):
+            chip = QLabel(text)
+            chip.setStyleSheet(
+                "background-color: rgba(255,255,255,0.16); color: white; font-size: 10.5px; "
+                "font-weight: 700; border-radius: 10px; padding: 4px 12px; "
+                "border: 1px solid rgba(255,255,255,0.25);"
+            )
+            return chip
+
+        if result.canvas_size:
+            chip_row.addWidget(_make_chip(f"📐  {result.canvas_size[0]} × {result.canvas_size[1]} px"))
+        chip_row.addWidget(_make_chip(f"✓  {passed_count} passed"))
+        if failed_count:
+            chip_row.addWidget(_make_chip(f"✕  {failed_count} failed"))
+        chip_row.addStretch(1)
+        header_layout.addLayout(chip_row)
+
+        # ── Segmented pass/fail meter ────────────────────────────────────
+        header_layout.addSpacing(2)
+        header_layout.addWidget(_PSDSegmentedBar(passed_count, total_count))
+
+        root.addWidget(header)
+
+        # ── Scrollable checklist ─────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: #0f111a; border: none; }")
+
+        checklist_container = QWidget()
+        checklist_container.setStyleSheet("background: #0f111a;")
+        checklist_layout = QVBoxLayout(checklist_container)
+        checklist_layout.setContentsMargins(20, 18, 20, 18)
+        checklist_layout.setSpacing(10)
+        checklist_layout.setAlignment(Qt.AlignTop)
+
+        section_lbl = QLabel("CHECKLIST")
+        section_lbl.setStyleSheet(
+            "color: #5b6178; font-size: 10px; font-weight: 800; "
+            "letter-spacing: 2px; background: transparent; padding-bottom: 2px;"
+        )
+        checklist_layout.addWidget(section_lbl)
+
+        for check in result.checks:
+            row = PSDCheckRowWidget(check["name"], check["passed"], check["message"])
+            checklist_layout.addWidget(row)
+
+        scroll.setWidget(checklist_container)
+        root.addWidget(scroll, 1)
+
+        # ── Footer: note + actions ───────────────────────────────────────
+        footer = QFrame()
+        footer.setStyleSheet("background: #14172200; border-top: 1px solid #232838;")
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(20, 16, 20, 18)
+        footer_layout.setSpacing(12)
+
+        note_lbl = QLabel(
+            "All checks passed. Proceed with uploading this file to the NAS?"
+            if overall_pass else
+            "One or more checks failed. Do you still want to proceed with uploading this file to the NAS?"
+        )
+        note_lbl.setWordWrap(True)
+        note_lbl.setStyleSheet("color: #9aa0b4; font-size: 11.5px; background: transparent;")
+        footer_layout.addWidget(note_lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self.copy_btn = QPushButton("📋  Copy Report")
+        self.copy_btn.setCursor(Qt.PointingHandCursor)
+        self.copy_btn.setMinimumHeight(38)
+        self.copy_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1b1e2b;
+                color: #c6cadb;
+                border: 1px solid #2b3044;
+                border-radius: 19px;
+                padding: 6px 18px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #232838; border-color: #3a4160; }
+            QPushButton:pressed { background-color: #171a26; padding-top: 7px; padding-bottom: 5px; }
+        """)
+        self.copy_btn.clicked.connect(lambda: self._copy_report(file_path, result))
+        btn_row.addWidget(self.copy_btn)
+        btn_row.addStretch(1)
+
+        self.proceed_btn = QPushButton("⬆  Upload to NAS")
+        self.cancel_btn = QPushButton("✕  Cancel")
+
+        self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.proceed_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.setMinimumHeight(40)
+        self.proceed_btn.setMinimumHeight(40)
+        self.cancel_btn.setMinimumWidth(120)
+        self.proceed_btn.setMinimumWidth(160)
+
+        self.cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #ff5c7a;
+                border: 1.5px solid #ff5c7a;
+                border-radius: 20px;
+                padding: 6px 18px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 92, 122, 0.12);
+            }
+            QPushButton:pressed {
+                background-color: rgba(255, 92, 122, 0.22);
+                padding-top: 7px;
+                padding-bottom: 5px;
+            }
+            QPushButton:focus {
+                outline: none;
+                border: 2px solid #ff5c7a;
+            }
+            QPushButton:disabled {
+                background-color: transparent;
+                color: #4a4f5e;
+                border-color: #33384c;
+            }
+        """)
+        self.proceed_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {gradient};
+                color: #0e1018;
+                border: none;
+                border-radius: 20px;
+                padding: 6px 20px;
+                font-weight: 800;
+            }}
+            QPushButton:hover {{
+                background: {gradient.replace('stop:0', 'stop:0.15').replace('stop:1', 'stop:1')};
+            }}
+            QPushButton:pressed {{
+                padding-top: 7px;
+                padding-bottom: 5px;
+            }}
+            QPushButton:focus {{
+                outline: none;
+                border: 2px solid rgba(255,255,255,0.55);
+            }}
+            QPushButton:disabled {{
+                background: #33384c;
+                color: #6b7182;
+            }}
+        """)
+
+        proceed_shadow = QGraphicsDropShadowEffect(self.proceed_btn)
+        proceed_shadow.setBlurRadius(24)
+        proceed_shadow.setOffset(0, 4)
+        proceed_shadow.setColor(QColor(*(61, 220, 151) if overall_pass else (255, 92, 122), 140))
+        self.proceed_btn.setGraphicsEffect(proceed_shadow)
+
+        self.proceed_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+
+        btn_row.addWidget(self.cancel_btn)
+        btn_row.addWidget(self.proceed_btn)
+        footer_layout.addLayout(btn_row)
+
+        root.addWidget(footer)
+
+        # Default focus follows the outcome: safest action is the default.
+        (self.proceed_btn if overall_pass else self.cancel_btn).setDefault(True)
+        (self.proceed_btn if overall_pass else self.cancel_btn).setFocus()
+
+    @staticmethod
+    def _copy_report(file_path, result):
+        try:
+            QApplication.clipboard().setText(format_psd_validation_report(file_path, result))
+        except Exception as e:
+            logger.warning(f"[PSD Validation] Failed to copy report to clipboard: {e}")
+
+
+class _PSDConfirmationBox:
+    """Simple cross-thread mailbox: worker thread waits on `event`,
+    main thread sets `result` then signals `event`."""
+
+    def __init__(self):
+        self.event = threading.Event()
+        self.result = False
+
+
+def request_psd_upload_confirmation(file_path, result: "PSDValidationResult"):
+    """
+    Thread-safe: shows the PSD quality-check dialog on the main GUI thread
+    and BLOCKS the calling (background/worker) thread until the user
+    responds.
+
+    Must NEVER be called from the main GUI thread itself (it would deadlock
+    waiting on an event that only the main thread's own queued slot can set).
+
+    Returns True if the user chose to proceed with the upload, False if
+    they cancelled (or the dialog could not be shown).
+    """
+    box = _PSDConfirmationBox()
+    app_signals.psd_validation_required.emit(file_path, result, box)
+    box.event.wait()
+    return box.result
+
+
+# ============================================================================
+# === Google Chat transfer reporting (latency + speed, every N seconds) ====
+# ============================================================================
+
+# Shared "what's happening right now" state, updated by the download/upload
+# progress callbacks (which already compute speed_mbps every ~0.5s), and
+# read every TRANSFER_REPORT_INTERVAL_SEC by the background reporter thread.
+_TRANSFER_MONITOR_LOCK = Lock()
+_CURRENT_TRANSFER_STATS = {
+    "active": False,
+    "action": None,       # "download" or "upload"
+    "file_name": None,
+    "file_type": None,
+    "file_size_mb": 0.0,
+    "speed_mbps": 0.0,
+    "percent": 0,
+    "elapsed_sec": 0.0,
+    "eta_text": "-",
+}
+
+
+def _file_type_of(name: str) -> str:
+    """Return a short human-readable file type/extension label, e.g. 'JPG', 'PSD'."""
+    if not name:
+        return "-"
+    ext = Path(name).suffix.lstrip(".").upper()
+    return ext or "UNKNOWN"
+
+
+def _format_elapsed(seconds: float) -> str:
+    try:
+        seconds = max(0, int(seconds))
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        if h:
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+    except Exception:
+        return "-"
+
+
+def _update_transfer_stats(action: str, file_name: str, speed_mbps: float, percent: int,
+                            file_size_mb: float = 0.0, elapsed_sec: float = 0.0, eta_text: str = "-"):
+    """Called from the download/upload progress callbacks to record current speed/size/ETA."""
+    with _TRANSFER_MONITOR_LOCK:
+        _CURRENT_TRANSFER_STATS.update({
+            "active": True,
+            "action": action,
+            "file_name": file_name,
+            "file_type": _file_type_of(file_name),
+            "file_size_mb": file_size_mb,
+            "speed_mbps": speed_mbps,
+            "percent": percent,
+            "elapsed_sec": elapsed_sec,
+            "eta_text": eta_text,
+        })
+
+
+def _clear_transfer_stats():
+    """Called when a transfer finishes (success or failure) to stop reporting it."""
+    with _TRANSFER_MONITOR_LOCK:
+        _CURRENT_TRANSFER_STATS["active"] = False
+        _CURRENT_TRANSFER_STATS["speed_mbps"] = 0.0
+        _CURRENT_TRANSFER_STATS["percent"] = 0
+        _CURRENT_TRANSFER_STATS["elapsed_sec"] = 0.0
+        _CURRENT_TRANSFER_STATS["eta_text"] = "-"
+
+
+def measure_latency_ms(host: str = None, port: int = None, timeout: float = 3.0):
+    """
+    Simple TCP-connect latency check against the NAS/server (in milliseconds).
+    Returns None if the host is unreachable within the timeout.
+    """
+    host = host or LATENCY_TARGET_HOST or NAS_IP
+    port = port or LATENCY_TARGET_PORT or NAS_PORT
+    start = time.perf_counter()
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect((host, port))
+        return round((time.perf_counter() - start) * 1000, 1)
+    except Exception as e:
+        logger.debug(f"[Latency] Could not reach {host}:{port}: {e}")
+        return None
+    finally:
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+
+def _tcp_check(host: str, port: int, timeout: float = 3.0):
+    """Generic reachability probe. Returns (reachable: bool, latency_ms or None, error_str or None)."""
+    start = time.perf_counter()
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect((host, port))
+        return True, round((time.perf_counter() - start) * 1000, 1), None
+    except Exception as e:
+        return False, None, str(e)
+    finally:
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+
+def build_network_diagnostics_report(issue_type: str, summary: str, context: dict = None, error: str = None) -> str:
+    """
+    Builds a full, human-readable diagnostics report suitable for a screenshot
+    or copy/paste to the development team: who/what/where, plus live
+    reachability checks against the NAS, the API server, Google Chat, and
+    general internet, so the dev team can immediately tell whether the
+    problem is local-network-wide or specific to one endpoint.
+    """
+    lines = []
+    lines.append("PremediaApp — Network / Server Alarm Report")
+    lines.append("=" * 60)
+    lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"Issue Type: {issue_type}")
+    lines.append(f"Summary: {summary}")
+    lines.append("")
+
+    try:
+        cache = load_cache()
+        username = cache.get("user", "Unknown")
+    except Exception:
+        username = "Unknown"
+
+    identifiers = {}
+    if isinstance(USER_SYSTEM_INFO, dict):
+        identifiers = USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
+    hostname = identifiers.get("hostname") or socket.gethostname()
+    ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
+
+    lines.append("-- User / System --")
+    lines.append(f"User: {username}")
+    lines.append(f"System: {hostname}")
+    lines.append(f"Local IP: {ip_address}")
+    lines.append(f"OS: {platform.system()} {platform.release()}")
+    lines.append(f"App Version: {APPVERSION}")
+    lines.append("")
+
+    if context:
+        lines.append("-- Context --")
+        for k, v in context.items():
+            lines.append(f"{k}: {v}")
+        lines.append("")
+
+    lines.append("-- Live Connectivity Checks --")
+
+    nas_ok, nas_latency, nas_err = _tcp_check(NAS_IP, NAS_PORT)
+    lines.append(
+        f"NAS Server ({NAS_IP}:{NAS_PORT}): "
+        + (f"Reachable — {nas_latency} ms" if nas_ok else f"UNREACHABLE — {nas_err}")
+    )
+
+    try:
+        api_host = BASE_DOMAIN.replace("https://", "").replace("http://", "").split("/")[0]
+    except Exception:
+        api_host = BASE_DOMAIN
+    api_ok, api_latency, api_err = _tcp_check(api_host, 443)
+    lines.append(
+        f"API Server ({api_host}:443): "
+        + (f"Reachable — {api_latency} ms" if api_ok else f"UNREACHABLE — {api_err}")
+    )
+
+    gchat_ok, gchat_latency, gchat_err = _tcp_check("chat.googleapis.com", 443)
+    lines.append(
+        f"Google Chat (chat.googleapis.com:443): "
+        + (f"Reachable — {gchat_latency} ms" if gchat_ok else f"UNREACHABLE — {gchat_err}")
+    )
+
+    inet_ok, inet_latency, inet_err = _tcp_check("8.8.8.8", 53)
+    lines.append(
+        f"General Internet (8.8.8.8:53): "
+        + (f"Reachable — {inet_latency} ms" if inet_ok else f"UNREACHABLE — {inet_err}")
+    )
+    lines.append("")
+
+    if error:
+        lines.append("-- Error Details --")
+        lines.append(str(error))
+        lines.append("")
+
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+class NetworkAlarmWindow(QDialog):
+    """
+    Singleton, non-modal alarm window. ALL network/server alarms (NAS
+    unreachable, server slow, transfer slow, Google Chat unreachable, API
+    call failures, etc.) land in this SAME window as separate, clearly
+    labeled/timestamped entries — instead of each alarm spawning its own
+    popup.
+
+    Why this exists (bug fix):
+    The previous implementation created a brand-new modal QDialog and called
+    .exec() on every single call to raise_network_alarm(). Because
+    .exec() runs its own nested Qt event loop, a second network_alarm
+    signal arriving (from a different background thread/issue type) while
+    the first dialog was still open got processed *during* that nested loop
+    and spawned a second, independent dialog on top of the first — so two
+    separate windows with two different reports could appear at once.
+
+    Fix: keep exactly ONE instance alive for the lifetime of the app. New
+    alarms call add_report() on the existing instance (appending to the
+    same scrollable log with a divider + timestamp + issue banner) rather
+    than creating a new window. The window itself is shown non-modally
+    (show(), not exec()), so nothing blocks and nothing can double-spawn.
+    """
+
+    _instance = None
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self):
+        super().__init__(None)
+        self._entries = []  # list of (timestamp_str, summary, report_text) — newest first
+        self._alert_count = 0
+
+        self.setWindowTitle("⚠ PremediaApp — Network / Server Alarms")
+        self.setMinimumSize(760, 520)
+        self.resize(820, 560)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.Window
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        try:
+            self.setWindowIcon(load_icon(ICON_PATH, "network alarm"))
+        except Exception:
+            pass
+
+        layout = QVBoxLayout(self)
+
+        self.summary_lbl = QLabel("⚠  Network / Server Alarms")
+        self.summary_lbl.setWordWrap(True)
+        self.summary_lbl.setStyleSheet(
+            "color: white; background-color: #c0392b; font-weight: bold; "
+            "font-size: 14px; padding: 10px; border-radius: 4px;"
+        )
+        layout.addWidget(self.summary_lbl)
+
+        hint_lbl = QLabel(
+            "Every alert is listed below (most recent first), clearly separated and "
+            "timestamped. Click 'Copy All Reports' and paste into an email/chat message "
+            "to the development team, or 'Clear' to reset this window."
+        )
+        hint_lbl.setWordWrap(True)
+        hint_lbl.setStyleSheet("color: #555; font-size: 11px;")
+        layout.addWidget(hint_lbl)
+
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setFont(QFont("Consolas" if platform.system() == "Windows" else "Monospace", 10))
+        layout.addWidget(self.text_edit)
+
+        btn_row = QHBoxLayout()
+        copy_btn = QPushButton("📋 Copy All Reports")
+        clear_btn = QPushButton("🧹 Clear")
+        self.status_lbl = QLabel("")
+        self.status_lbl.setStyleSheet("color: #2ecc71; font-weight: bold;")
+        close_btn = QPushButton("Close")
+
+        copy_btn.clicked.connect(self._copy_all)
+        clear_btn.clicked.connect(self._clear_all)
+        close_btn.clicked.connect(self.close)
+
+        btn_row.addWidget(copy_btn)
+        btn_row.addWidget(clear_btn)
+        btn_row.addWidget(self.status_lbl)
+        btn_row.addStretch(1)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        self.setLayout(layout)
+
+    def add_report(self, summary: str, report_text: str):
+        """Append a new alarm entry (most recent on top) and (re)show the window."""
+        self._alert_count += 1
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._entries.insert(0, (timestamp, summary, report_text))
+
+        # Keep at most the last 50 alerts so the window/memory don't grow unbounded
+        if len(self._entries) > 50:
+            self._entries = self._entries[:50]
+
+        self._rebuild_text()
+
+        self.summary_lbl.setText(
+            f"⚠  {summary}   ({self._alert_count} alert{'s' if self._alert_count != 1 else ''} this session)"
+        )
+
+        # Beep to get attention, then bring the single window to front
+        for i in range(3):
+            QTimer.singleShot(i * 300, QApplication.beep)
+        if not self.isVisible():
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        _set_alarm_window_visible(True)
+
+    def _rebuild_text(self):
+        blocks = []
+        for idx, (timestamp, summary, report_text) in enumerate(self._entries, start=1):
+            divider = "=" * 70
+            header = f"{divider}\n[Alert #{len(self._entries) - idx + 1}]  {timestamp}\n{summary}\n{divider}"
+            blocks.append(f"{header}\n{report_text}\n")
+        self.text_edit.setPlainText("\n".join(blocks))
+        self.text_edit.moveCursor(QTextCursor.Start)
+
+    def _copy_all(self):
+        QApplication.clipboard().setText(self.text_edit.toPlainText())
+        self.status_lbl.setText("Copied!")
+        QTimer.singleShot(2000, lambda: self.status_lbl.setText(""))
+
+    def _clear_all(self):
+        self._entries = []
+        self._alert_count = 0
+        self.text_edit.clear()
+        self.summary_lbl.setText("⚠  Network / Server Alarms")
+
+    def closeEvent(self, event):
+        # Hide instead of destroying — keeps history and avoids recreating
+        # (and re-registering) the singleton on the next alarm.
+        event.ignore()
+        self.hide()
+        _set_alarm_window_visible(False)
+
+
+def show_network_alarm_dialog(summary: str, report_text: str):
+    """
+    Routes every alarm to the single persistent NetworkAlarmWindow instance
+    instead of creating a brand-new dialog per call. See NetworkAlarmWindow
+    docstring for why this fixes the "two separate windows at once" bug.
+
+    Must only be invoked on the main GUI thread — reached exclusively via
+    AppSignals.network_alarm's self-connected QueuedConnection.
+    """
+    try:
+        window = NetworkAlarmWindow.get_instance()
+        window.add_report(summary, report_text)
+    except Exception as e:
+        logger.error(f"[Alarm] Failed to show network alarm window: {e}")
+
+
+_ALARM_LOCK = Lock()
+_LAST_ALARM_TIME = {}
+_ALARM_WINDOW_VISIBLE_LOCK = Lock()
+_ALARM_WINDOW_VISIBLE = False
+
+def _set_alarm_window_visible(is_visible: bool):
+    global _ALARM_WINDOW_VISIBLE
+    with _ALARM_WINDOW_VISIBLE_LOCK:
+        _ALARM_WINDOW_VISIBLE = is_visible
+
+def _is_alarm_window_visible() -> bool:
+    with _ALARM_WINDOW_VISIBLE_LOCK:
+        return _ALARM_WINDOW_VISIBLE
+
+def raise_network_alarm(issue_type: str, summary: str, context: dict = None, error: str = None):
+    """
+    Raises a popup alarm (with sound + full diagnostics) for network/server
+    problems: can't reach Google Chat, can't reach the NAS/server, server
+    responding very slowly, or any other unexpected reporting failure.
+
+    Rate-limited per issue_type (ALARM_COOLDOWN_SEC) so a persistent problem
+    doesn't spam popups every few seconds — the underlying issue still gets
+    logged every time, just not re-popped-up.
+
+    Safe to call from any thread.
+    """
+    now = time.time()
+    with _ALARM_LOCK:
+        last = _LAST_ALARM_TIME.get(issue_type, 0)
+        if _is_alarm_window_visible() and (now - last < ALARM_COOLDOWN_SEC):
+            logger.debug(f"[Alarm] Suppressed duplicate '{issue_type}' alarm (cooldown active)")
+            return
+        _LAST_ALARM_TIME[issue_type] = now
+
+    logger.error(f"[Alarm] {issue_type}: {summary}")
+    try:
+        app_signals.append_log.emit(f"[Alarm] {issue_type}: {summary}")
+    except Exception:
+        pass
+
+    # ── NEW: surface the problem directly on the transfer card/window ──
+    # Previously a network alarm only opened the separate NetworkAlarmWindow.
+    # The download/upload card had no idea anything was wrong and just kept
+    # showing whatever progress % it last received — looking "frozen" or
+    # "stuck" to the user instead of clearly indicating the network dropped.
+    if issue_type in ("ServerUnreachable", "ServerSlow", "ServerLatencyAbnormal", "TransferSlow"):
+        try:
+            ctx = context or {}
+            file_name = ctx.get("File")
+            if file_name and file_name != "-":
+                is_upload = ctx.get("Action", "").lower() == "upload"
+                status_text = f"⚠ {summary}"
+                if is_upload:
+                    FileWatcherWorker.get_instance().upload_status_detail.emit(
+                        file_name, status_text, "upload", 0, True
+                    )
+                else:
+                    FileWatcherWorker.get_instance().download_status_detail.emit(
+                        file_name, status_text, "download", 0, True
+                    )
+        except Exception as ui_err:
+            logger.debug(f"[Alarm] Could not surface alarm on transfer UI: {ui_err}")
+
+    try:
+        report_text = build_network_diagnostics_report(issue_type, summary, context, error)
+    except Exception as e:
+        report_text = f"Failed to build full diagnostics report: {e}\n\nOriginal issue: {issue_type} - {summary}"
+
+    # Hand off to the main thread — Qt widgets can only be built there.
+    app_signals.network_alarm.emit(summary, report_text)
+
+
+def report_api_failure(api_name: str, url: str, status_code=None, response_text=None, error: str = None):
+    """
+    Notifies Google Chat whenever a POST/GET API call fails — either a
+    non-2xx status code or a request exception (timeout, connection error,
+    JSON decode error, etc). All API failures share one thread_key so they
+    group into a single Google Chat thread instead of scattering as
+    separate top-level messages. Also raises the existing local
+    popup/diagnostics alarm (raise_network_alarm) so it shows up the same
+    way NAS/server alarms do.
+
+    Safe to call from any thread. Never blocks the caller — the actual
+    Google Chat POST + local alarm happen on a background daemon thread.
+    """
+    if status_code is not None:
+        summary = f"API call failed: {api_name} — HTTP {status_code}"
+    else:
+        summary = f"API call failed: {api_name} — {error or 'Unknown error'}"
+
+    logger.error(f"[APIFailure] {summary} | url={url} | response={str(response_text)[:300]}")
+    try:
+        app_signals.append_log.emit(f"[APIFailure] {summary}")
+    except Exception:
+        pass
+
+    lines = [
+        f"*🔴 API Call Failed — {api_name}*",
+        f"URL: {url}",
+    ]
+    if status_code is not None:
+        lines.append(f"Status Code: {status_code}")
+    if response_text:
+        lines.append(f"Response: {str(response_text)[:500]}")
+    if error:
+        lines.append(f"Error: {error}")
+    lines.append(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    text = "\n".join(lines)
+    thread_key = "premedia-api-failures"
+
+    def _worker():
+        try:
+            ok, result = send_google_chat_message(text, thread_key=thread_key)
+            if not ok:
+                logger.warning(f"[APIFailure] Could not deliver failure report to Google Chat: {result}")
+
+            raise_network_alarm(
+                "APICallFailed",
+                summary,
+                context={
+                    "API": api_name,
+                    "URL": url,
+                    "Status Code": status_code if status_code is not None else "-",
+                    "Response": str(response_text)[:300] if response_text else "-",
+                },
+                error=error,
+            )
+        except Exception as e:
+            logger.warning(f"[APIFailure] Failed while reporting API failure for {api_name}: {e}")
+
+    threading.Thread(target=_worker, daemon=True, name=f"APIFailureReport-{api_name}").start()
+
+
+def _gchat_webhook_url_with_threading():
+    """
+    Ensure the webhook URL has messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD,
+    which is required for Google Chat to group messages sharing the same
+    threadKey into a single thread instead of posting separate top-level messages.
+    """
+    if not GOOGLE_CHAT_WEBHOOK_URL:
+        return ""
+    if "messageReplyOption=" in GOOGLE_CHAT_WEBHOOK_URL:
+        return GOOGLE_CHAT_WEBHOOK_URL
+    separator = "&" if "?" in GOOGLE_CHAT_WEBHOOK_URL else "?"
+    return f"{GOOGLE_CHAT_WEBHOOK_URL}{separator}messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+
+
+def send_google_chat_message(text: str, thread_key: str = None):
+    """
+    Post a message to the configured Google Chat webhook.
+
+    Returns (True, response_json_or_None) on success, or
+            (False, error_message_str) on failure — the caller uses this to
+    decide whether to raise a network alarm.
+
+    NOTE ON "UPDATING" MESSAGES:
+    Google Chat's message-edit endpoint (PUT/PATCH .../spaces/*/messages/*)
+    requires full OAuth app authentication (a registered Chat app + service
+    account with the chat.bot scope) — a plain incoming webhook's key/token
+    can only ever CREATE messages, it cannot edit one after the fact. So true
+    "keep editing message #1" is not possible with just a webhook URL.
+
+    The practical equivalent used here: every event for the same file+
+    operation is posted with the SAME thread_key. Google Chat groups all
+    messages sharing a thread_key into a single collapsible thread, so the
+    conversation for that file+operation stays together instead of scattering
+    across the space, and the first message is never replaced.
+    """
+    if not GOOGLE_CHAT_WEBHOOK_URL:
+        return False, "GOOGLE_CHAT_WEBHOOK_URL is not configured"
+    try:
+        url = _gchat_webhook_url_with_threading()
+        payload = {"text": text}
+        if thread_key:
+            payload["thread"] = {"threadKey": thread_key}
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code not in (200, 204):
+            err = f"HTTP {resp.status_code}: {resp.text[:300]}"
+            logger.warning(f"[GChat] Failed to send message: {err}")
+            return False, err
+        try:
+            return True, resp.json()
+        except ValueError:
+            # 204 No Content (or an empty body on 200) — still a success
+            return True, None
+    except requests.exceptions.Timeout:
+        err = "Request to Google Chat timed out (slow or unreachable network)"
+        logger.warning(f"[GChat] {err}")
+        return False, err
+    except requests.exceptions.ConnectionError as e:
+        err = f"Could not connect to Google Chat: {e}"
+        logger.warning(f"[GChat] {err}")
+        return False, err
+    except Exception as e:
+        err = f"Unexpected error sending to Google Chat: {e}"
+        logger.warning(f"[GChat] {err}")
+        return False, err
+
+
+def _thread_key_for(action: str, file_name: str) -> str:
+    """Stable thread key so every event for this (action, file_name) lands in one thread."""
+    raw = f"{action}:{file_name}"
+    return "premedia-" + hashlib.md5(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _pad_cell(value, width):
+    value = str(value)
+    return value + " " * max(0, width - len(value))
+
+
+def _build_transfer_table_text(header_info: dict, rows: list) -> str:
+    """
+    Builds one Google Chat message: a header block (User/System/IP/File/Type/Size,
+    shown once) followed by a monospaced table (inside a code block, so columns
+    stay aligned) with one row per event (Started / periodic Progress / Completed
+    or Failed).
+    """
+    header_lines = [
+        f"*PremediaApp Transfer — {header_info.get('action', '')}*",
+        f"User: {header_info.get('user', '-')}",
+        f"System: {header_info.get('system', '-')}",
+        f"IP: {header_info.get('ip', '-')}",
+        f"File: {header_info.get('file', '-')}",
+        f"Type: {header_info.get('type', '-')}",
+        f"Size: {header_info.get('size', '-')}",
+    ]
+
+    columns = ["Event", "Time", "Progress", "Speed", "Time Taken", "ETA", "Latency"]
+    keys = ["event", "time", "progress", "speed", "time_taken", "eta", "latency"]
+
+    widths = [len(c) for c in columns]
+    for row in rows:
+        for i, k in enumerate(keys):
+            widths[i] = max(widths[i], len(str(row.get(k, "-"))))
+
+    def _fmt_row(values):
+        return " | ".join(_pad_cell(v, widths[i]) for i, v in enumerate(values))
+
+    separator = "-+-".join("-" * w for w in widths)
+
+    table_lines = [_fmt_row(columns), separator]
+    for row in rows:
+        table_lines.append(_fmt_row([row.get(k, "-") for k in keys]))
+
+    table_block = "```\n" + "\n".join(table_lines) + "\n```"
+
+    return "\n".join(header_lines) + "\n\n" + table_block
+
+
+# One Google Chat message per (action, file_name) currently in flight.
+# key: (action, file_name) -> {"message_name": str|None, "rows": [...], "header_info": {...}}
+_MESSAGE_REGISTRY_LOCK = Lock()
+_ACTIVE_MESSAGE_REGISTRY = {}
+
+
+class TransferMonitorReporter:
+    """
+    Background daemon-thread reporter. Every TRANSFER_REPORT_INTERVAL_SEC
+    seconds, if an upload/download is currently active, it appends a
+    "Progress" row (latency/speed/ETA/etc.) to that file's existing Google
+    Chat table message — it does NOT post a brand-new message.
+
+    Runs on its own thread — never touches Qt widgets — so it's safe to
+    start once and leave running for the lifetime of the app.
+    """
+
+    def __init__(self, interval_sec: int = 10):
+        self.interval_sec = interval_sec
+        self._stop_flag = threading.Event()
+        self._thread = None
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_flag.clear()
+        self._thread = threading.Thread(target=self._run_loop, name="TransferMonitorReporter", daemon=True)
+        self._thread.start()
+        logger.info(f"[TransferMonitorReporter] Started (interval={self.interval_sec}s)")
+
+    def stop(self):
+        self._stop_flag.set()
+
+    def _run_loop(self):
+        while not self._stop_flag.is_set():
+            # Sleep in small chunks so stop() is responsive
+            for _ in range(self.interval_sec):
+                if self._stop_flag.is_set():
+                    return
+                time.sleep(1)
+
+            with _TRANSFER_MONITOR_LOCK:
+                stats = dict(_CURRENT_TRANSFER_STATS)
+
+            if not stats.get("active"):
+                continue
+
+            try:
+                report_transfer_event(
+                    "Progress",
+                    stats.get("action") or "",
+                    stats.get("file_name") or "",
+                    percent=stats.get("percent", 0),
+                    speed_mbps=stats.get("speed_mbps", 0.0),
+                    file_size_mb=stats.get("file_size_mb", 0.0),
+                    elapsed_sec=stats.get("elapsed_sec", 0.0),
+                    eta_text=stats.get("eta_text", "-"),
+                )
+            except Exception as e:
+                logger.warning(f"[TransferMonitorReporter] Failed to build/send report: {e}")
+
+
+# Single shared instance — .start() is called once near app startup below.
+TRANSFER_REPORTER = TransferMonitorReporter(interval_sec=TRANSFER_REPORT_INTERVAL_SEC)
+
+
+def report_transfer_event(
+    event: str,
+    action: str,
+    file_name: str,
+    percent: int = 0,
+    speed_mbps: float = 0.0,
+    file_size_mb: float = 0.0,
+    elapsed_sec: float = 0.0,
+    eta_text: str = "-",
+):
+    """
+    Post one Google Chat message per event ("Started", "Progress",
+    "Completed", "Failed") for a given (action, file_name) — but every one of
+    them is posted with the SAME thread_key, so Google Chat groups them into
+    a single thread instead of scattering separate top-level messages across
+    the space. The first message ("Started") is never overwritten; each later
+    post is a reply in that same thread and carries the FULL cumulative table
+    (all rows so far), so the most recent message always shows the complete
+    history for that file+operation.
+
+    (True in-place message editing would need a full Chat app with OAuth app
+    authentication — not possible with a plain incoming webhook's key/token —
+    see send_google_chat_message() for details.)
+
+    On "Completed"/"Failed" the row history for that file+operation is
+    cleared, so a later transfer of the same file starts a fresh thread/table.
+
+    Runs on its own daemon thread so it never blocks the actual transfer.
+    """
+    def _worker():
+        try:
+            cache = load_cache()
+            username = cache.get("user", "Unknown")
+
+            identifiers = {}
+            if isinstance(USER_SYSTEM_INFO, dict):
+                identifiers = USER_SYSTEM_INFO.get("details", {}).get("identifiers", {}) or {}
+
+            hostname = identifiers.get("hostname") or socket.gethostname()
+            ip_address = identifiers.get("ip_address") or USER_SYSTEM_INFO.get("ip_address", "") or ""
+
+            latency_ms = measure_latency_ms()
+            latency_text = f"{latency_ms} ms" if latency_ms is not None else "N/A"
+
+            alarm_context = {
+                "Action": action.capitalize(),
+                "File": file_name or "-",
+                "Event": event,
+                "Progress": f"{percent}%",
+                "Speed": f"{speed_mbps:.2f} MB/s",
+            }
+
+            # ---- Alarm: NAS/server unreachable ("not able to ping server") ----
+            # Treat both a None reading (connection failed / timed out) and an
+            # exact 0ms reading (measure_latency_ms() couldn't produce a real
+            # timing — e.g. socket error swallowed upstream) as "unreachable",
+            # since a legitimate TCP-connect latency of exactly 0ms is not
+            # realistically possible.
+            if latency_ms is None or latency_ms == 0:
+                target_host = LATENCY_TARGET_HOST or NAS_IP
+                target_port = LATENCY_TARGET_PORT or NAS_PORT
+                raise_network_alarm(
+                    "ServerUnreachable",
+                    f"Cannot reach the server ({target_host}:{target_port}) — it may be down "
+                    f"or your network connection may be lost.",
+                    context=alarm_context,
+                )
+            # ---- Alarm: server responding, but very slow (high latency) ----
+            elif latency_ms > LATENCY_WARNING_MS:
+                raise_network_alarm(
+                    "ServerSlow",
+                    f"Server latency is very high ({latency_ms} ms) — the connection to the "
+                    f"server appears unstable or overloaded.",
+                    context={**alarm_context, "Latency": f"{latency_ms} ms"},
+                )
+            # ---- Alarm: server latency is abnormally/suspiciously low ----
+            # A very low but non-zero reading (below LATENCY_MIN_MS) can indicate
+            # an unreliable/flaky connection or a bad measurement rather than a
+            # genuinely healthy server, so flag it too instead of silently
+            # treating it as "all good".
+            elif latency_ms < LATENCY_MIN_MS:
+                raise_network_alarm(
+                    "ServerLatencyAbnormal",
+                    f"Server latency reading is abnormally low ({latency_ms} ms) — this may "
+                    f"indicate an unstable connection or an unreliable measurement.",
+                    context={**alarm_context, "Latency": f"{latency_ms} ms"},
+                )
+
+            # ---- Alarm: transfer speed is critically slow mid-transfer ----
+            if event == "Progress" and 0 < percent < 100 and 0 < speed_mbps < SPEED_WARNING_MBPS:
+                raise_network_alarm(
+                    "TransferSlow",
+                    f"Transfer speed is very slow ({speed_mbps:.2f} MB/s) for '{file_name}' — "
+                    f"the server or network may be degraded.",
+                    context=alarm_context,
+                )
+
+            row = {
+                "event": event,
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "progress": f"{percent}%",
+                "speed": f"{speed_mbps:.2f} MB/s",
+                "time_taken": _format_elapsed(elapsed_sec),
+                "eta": eta_text,
+                "latency": latency_text,
+            }
+
+            header_info = {
+                "action": action.capitalize(),
+                "user": username,
+                "system": hostname,
+                "ip": ip_address,
+                "file": file_name or "-",
+                "type": _file_type_of(file_name),
+                "size": f"{file_size_mb:.2f} MB" if file_size_mb else "-",
+            }
+
+            reg_key = (action, file_name)
+            is_final = event in ("Completed", "Failed")
+            thread_key = _thread_key_for(action, file_name)
+
+            with _MESSAGE_REGISTRY_LOCK:
+                entry = _ACTIVE_MESSAGE_REGISTRY.get(reg_key)
+                if entry is None:
+                    entry = {"rows": [], "header_info": header_info}
+                    _ACTIVE_MESSAGE_REGISTRY[reg_key] = entry
+
+                entry["header_info"] = header_info  # keep size/type current
+                entry["rows"].append(row)
+                text = _build_transfer_table_text(entry["header_info"], entry["rows"])
+
+                ok, result = send_google_chat_message(text, thread_key=thread_key)
+
+                if is_final:
+                    _ACTIVE_MESSAGE_REGISTRY.pop(reg_key, None)
+
+            # ---- Alarm: could not deliver the report to Google Chat at all ----
+            if not ok:
+                raise_network_alarm(
+                    "GoogleChatUnreachable",
+                    f"Unable to send the transfer report to Google Chat for '{file_name}'.",
+                    context=alarm_context,
+                    error=result,
+                )
+
+        except Exception as e:
+            logger.warning(f"[TransferReport:{event}] Failed to send report: {e}")
+            raise_network_alarm(
+                "ReportingError",
+                f"Unexpected error while building/sending the transfer report for '{file_name}'.",
+                context={"Action": action, "File": file_name, "Event": event},
+                error=str(e),
+            )
+
+    threading.Thread(target=_worker, daemon=True, name=f"TransferReport-{event}").start()
+
+
+def show_alert(title: str, message: str, icon=QMessageBox.Warning, parent=None):
+    """
+    Shows a QMessageBox that always raises to the front and steals focus.
+    Safe to call from the main thread only (use Qt.QueuedConnection from workers).
+    """
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(message)
+    msg.setIcon(icon)
+
+    # ── FIX: WindowType and WindowState cannot be OR'd together in PySide6 ──
+    # Set window flags (WindowType flags only)
+    msg.setWindowFlags(
+        msg.windowFlags()
+        | Qt.WindowType.Window
+        | Qt.WindowType.WindowStaysOnTopHint
+    )
+    # Set window state separately (WindowState flags only)
+    msg.setWindowState(Qt.WindowState.WindowActive)
+
+    msg.setAttribute(Qt.WA_ShowWithoutActivating, False)
+
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            msg.show()
+            hwnd = int(msg.winId())
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+
+    msg.raise_()
+    msg.activateWindow()
+    msg.show()
+    msg.raise_()
+    msg.activateWindow()
+    return msg.exec()
 
 # === Custom Log Handler ===
 class LogWindowHandler(logging.Handler):
@@ -523,8 +2472,8 @@ def get_system_info():
             "max_frequency_mhz": psutil.cpu_freq().max if psutil.cpu_freq() else None,
             "min_frequency_mhz": psutil.cpu_freq().min if psutil.cpu_freq() else None,
             "current_frequency_mhz": psutil.cpu_freq().current if psutil.cpu_freq() else None,
-            "cpu_usage_percent": psutil.cpu_percent(interval=1),
-            "per_core_usage_percent": psutil.cpu_percent(interval=1, percpu=True)
+            "cpu_usage_percent": psutil.cpu_percent(interval=None),
+            "per_core_usage_percent": psutil.cpu_percent(interval=None, percpu=True)
         }
     except Exception as e:
         info["cpu"] = {"error": str(e)}
@@ -550,7 +2499,12 @@ def get_system_info():
                                                     for line in serial.splitlines()
                                                     if "Serial Number" in line), None)
         elif system == "windows":
-            serial = subprocess.check_output(["wmic", "bios", "get", "serialnumber"], text=True)
+            serial = subprocess.check_output(
+                ["wmic", "bios", "get", "serialnumber"],
+                text=True,
+                timeout=5,          # ADD timeout — wmic hangs on some machines
+                creationflags=subprocess.CREATE_NO_WINDOW  # don't flash a console
+            )
             lines = [line.strip() for line in serial.split("\n") if line.strip()]
             if len(lines) >= 2:
                 # First line is usually "SerialNumber", second is actual value
@@ -575,9 +2529,12 @@ def get_system_info():
         elif platform.system().lower() == "darwin":
             # safer way to get local IP address
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))  # connect to Google DNS (no data sent)
-            ip_address = s.getsockname()[0]
-            s.close()
+            s.settimeout(3)          # ADD 3 second timeout
+            try:
+                s.connect(("8.8.8.8", 80))
+                ip_address = s.getsockname()[0]
+            finally:
+                s.close()
 
             info["identifiers"] = {
                 "hostname": socket.gethostname(),
@@ -650,8 +2607,20 @@ def get_default_cache():
         "created_at": int(time.time())  # only when initialized
     }
 
+# def initialize_cache():
+#     """Create a new cache file safely."""
+#     cache = get_default_cache()
+#     try:
+#         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+#         with open(CACHE_FILE, "w") as f:
+#             json.dump(cache, f, indent=2)
+#     except OSError as e:
+#         print(f"[WARN] Could not initialize cache file: {e}")
+#     return cache
+
 def initialize_cache():
-    """Create a new cache file safely."""
+    """Create a new cache file safely and reset in-memory cache."""
+    global _MEMORY_CACHE, _MEMORY_CACHE_DIRTY
     cache = get_default_cache()
     try:
         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
@@ -659,32 +2628,86 @@ def initialize_cache():
             json.dump(cache, f, indent=2)
     except OSError as e:
         print(f"[WARN] Could not initialize cache file: {e}")
+    _MEMORY_CACHE = cache
+    _MEMORY_CACHE_DIRTY = False
     return cache
 
+# def load_cache():
+#     """Load cache safely. If missing/corrupted, reinitialize."""
+#     if os.path.exists(CACHE_FILE):
+#         try:
+#             with open(CACHE_FILE, "r") as f:
+#                 cache = json.load(f)
+#             # Ensure required keys exist (avoid KeyError later)
+#             for key, default_value in get_default_cache().items():
+#                 if key not in cache:
+#                     cache[key] = default_value
+#             return cache
+#         except (json.JSONDecodeError, OSError) as e:
+#             print(f"[WARN] Cache load failed ({e}), recreating...")
+#             return initialize_cache()
+#     else:
+#         return initialize_cache()
+
+
 def load_cache():
-    """Load cache safely. If missing/corrupted, reinitialize."""
+    """
+    Return in-memory cache if available.
+    Only reads disk on first call or after cache is invalidated.
+    Eliminates the disk I/O that was happening every 3-second poll cycle.
+    """
+    global _MEMORY_CACHE
+    if _MEMORY_CACHE is not None:
+        return _MEMORY_CACHE
+
+    # Cold start — read from disk once
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r") as f:
                 cache = json.load(f)
-            # Ensure required keys exist (avoid KeyError later)
             for key, default_value in get_default_cache().items():
                 if key not in cache:
                     cache[key] = default_value
-            return cache
+            _MEMORY_CACHE = cache
+            return _MEMORY_CACHE
         except (json.JSONDecodeError, OSError) as e:
             print(f"[WARN] Cache load failed ({e}), recreating...")
-            return initialize_cache()
+            _MEMORY_CACHE = initialize_cache()
+            return _MEMORY_CACHE
     else:
-        return initialize_cache()
+        _MEMORY_CACHE = initialize_cache()
+        return _MEMORY_CACHE
+
+
+# def save_cache(cache, significant_change=True):
+#     """Save cache safely without crashing app."""
+#     try:
+#         with open(CACHE_FILE, "w") as f:
+#             json.dump(cache, f, indent=2)
+#     except OSError as e:
+#         print(f"[WARN] Could not save cache file: {e}")
 
 def save_cache(cache, significant_change=True):
-    """Save cache safely without crashing app."""
-    try:
-        with open(CACHE_FILE, "w") as f:
-            json.dump(cache, f, indent=2)
-    except OSError as e:
-        print(f"[WARN] Could not save cache file: {e}")
+    """
+    Update in-memory cache immediately.
+    Write to disk only when significant_change=True (default).
+    Polling cycles that just read state can pass significant_change=False
+    to skip the disk write entirely.
+    """
+    global _MEMORY_CACHE, _MEMORY_CACHE_DIRTY
+    _MEMORY_CACHE = cache
+
+    if significant_change:
+        try:
+            with CACHE_WRITE_LOCK:
+                with open(CACHE_FILE, "w") as f:
+                    json.dump(cache, f, indent=2)
+            _MEMORY_CACHE_DIRTY = False
+        except OSError as e:
+            print(f"[WARN] Could not save cache file: {e}")
+            _MEMORY_CACHE_DIRTY = True
+    else:
+        _MEMORY_CACHE_DIRTY = True
 
 def get_cache_age(cache):
     """Get cache age in seconds."""
@@ -852,55 +2875,55 @@ def end_timer_api(file_path, timer_response, token):
 #         print(f"Connection failed after {(time.perf_counter() - start)*1000:.1f}ms: {str(e)}")
 #         raise Exception(f"NAS connection failed: {str(e)}")
 
-def check_nas_write_permission(sftp, nas_path):
-    """Verify and set write permission for NAS directory and file."""
-    try:
-        nas_parent = str(Path(nas_path).parent)
-        logger.debug(f"Checking NAS directory permissions: {nas_parent}")
-        app_signals.append_log.emit(f"[Transfer] Checking NAS directory permissions: {nas_parent}")
-        try:
-            stat = sftp.stat(nas_parent)
-            mode = stat.st_mode & 0o777
-            logger.debug(f"Directory {nas_parent} permissions: {oct(mode)}")
-            app_signals.append_log.emit(f"[Transfer] Directory {nas_parent} permissions: {oct(mode)}")
-            if mode != 0o770:
-                sftp.chmod(nas_parent, 0o770)
-                logger.info(f"Set permissions to 770 for {nas_parent}")
-                app_signals.append_log.emit(f"[Transfer] Set permissions to 770 for {nas_parent}")
-        except FileNotFoundError:
-            sftp.makedirs(nas_parent, mode=0o770)
-            logger.info(f"Created directory {nas_parent} with permissions 770")
-            app_signals.append_log.emit(f"[Transfer] Created directory {nas_parent} with permissions 770")
+# def check_nas_write_permission(sftp, nas_path):
+#     """Verify and set write permission for NAS directory and file."""
+#     try:
+#         nas_parent = str(Path(nas_path).parent)
+#         logger.debug(f"Checking NAS directory permissions: {nas_parent}")
+#         app_signals.append_log.emit(f"[Transfer] Checking NAS directory permissions: {nas_parent}")
+#         try:
+#             stat = sftp.stat(nas_parent)
+#             mode = stat.st_mode & 0o777
+#             logger.debug(f"Directory {nas_parent} permissions: {oct(mode)}")
+#             app_signals.append_log.emit(f"[Transfer] Directory {nas_parent} permissions: {oct(mode)}")
+#             if mode != 0o770:
+#                 sftp.chmod(nas_parent, 0o770)
+#                 logger.info(f"Set permissions to 770 for {nas_parent}")
+#                 app_signals.append_log.emit(f"[Transfer] Set permissions to 770 for {nas_parent}")
+#         except FileNotFoundError:
+#             sftp.makedirs(nas_parent, mode=0o770)
+#             logger.info(f"Created directory {nas_parent} with permissions 770")
+#             app_signals.append_log.emit(f"[Transfer] Created directory {nas_parent} with permissions 770")
         
-        # Test write access
-        temp_file = f"{nas_parent}/.test_write_{int(time.time())}.tmp"
-        sftp.open(temp_file, 'w').close()
-        sftp.remove(temp_file)
+#         # Test write access
+#         temp_file = f"{nas_parent}/.test_write_{int(time.time())}.tmp"
+#         sftp.open(temp_file, 'w').close()
+#         sftp.remove(temp_file)
         
-        # Handle existing file
-        try:
-            stat = sftp.stat(nas_path)
-            mode = stat.st_mode & 0o777
-            logger.debug(f"File {nas_path} exists with permissions: {oct(mode)}")
-            app_signals.append_log.emit(f"[Transfer] File {nas_path} exists with permissions: {oct(mode)}")
-            try:
-                sftp.chmod(nas_path, 0o660)
-                logger.info(f"Set permissions to 660 for existing file {nas_path}")
-                app_signals.append_log.emit(f"[Transfer] Set permissions to 660 for existing file {nas_path}")
-            except Exception:
-                sftp.remove(nas_path)
-                logger.info(f"Removed existing file {nas_path} due to permission issue")
-                app_signals.append_log.emit(f"[Transfer] Removed existing file {nas_path} due to permission issue")
-        except FileNotFoundError:
-            pass  # File doesn't exist, which is fine
+#         # Handle existing file
+#         try:
+#             stat = sftp.stat(nas_path)
+#             mode = stat.st_mode & 0o777
+#             logger.debug(f"File {nas_path} exists with permissions: {oct(mode)}")
+#             app_signals.append_log.emit(f"[Transfer] File {nas_path} exists with permissions: {oct(mode)}")
+#             try:
+#                 sftp.chmod(nas_path, 0o660)
+#                 logger.info(f"Set permissions to 660 for existing file {nas_path}")
+#                 app_signals.append_log.emit(f"[Transfer] Set permissions to 660 for existing file {nas_path}")
+#             except Exception:
+#                 sftp.remove(nas_path)
+#                 logger.info(f"Removed existing file {nas_path} due to permission issue")
+#                 app_signals.append_log.emit(f"[Transfer] Removed existing file {nas_path} due to permission issue")
+#         except FileNotFoundError:
+#             pass  # File doesn't exist, which is fine
         
-        logger.info(f"Write permission confirmed for {nas_parent}")
-        app_signals.append_log.emit(f"[Transfer] Write permission confirmed for {nas_parent}")
-        return True
-    except Exception as e:
-        logger.error(f"Write permission check failed for {nas_path}: {e}")
-        app_signals.append_log.emit(f"[Transfer] Write permission check failed for {nas_path}: {e}")
-        return False
+#         logger.info(f"Write permission confirmed for {nas_parent}")
+#         app_signals.append_log.emit(f"[Transfer] Write permission confirmed for {nas_parent}")
+#         return True
+#     except Exception as e:
+#         logger.error(f"Write permission check failed for {nas_path}: {e}")
+#         app_signals.append_log.emit(f"[Transfer] Write permission check failed for {nas_path}: {e}")
+#         return False
 
 MAX_RETRIES = 10
 RETRY_BACKOFF = 2  # seconds
@@ -930,6 +2953,11 @@ def call_api(api_url, payload, local_file_path=None):
                 response = client.post(api_url, files=files, data=payload)
             logger.debug(f"Response Status Code: {response.status_code}")
             logger.debug(f"Response Text: {response.text[:500]}...")
+            if response.status_code >= 400:
+                report_api_failure(
+                    "operator_upload", api_url,
+                    status_code=response.status_code, response_text=response.text
+                )
             response.raise_for_status()
             return response.json()
         except httpx.RequestError as req_err:
@@ -940,9 +2968,11 @@ def call_api(api_url, payload, local_file_path=None):
                 logger.debug(f"Retrying after {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
             else:
+                report_api_failure("operator_upload", api_url, error=str(req_err))
                 return {"error": "Request failed", "details": str(req_err)}
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
+            report_api_failure("operator_upload", api_url, error=str(e))
             return {"error": "Unexpected error", "details": str(e)}
         finally:
             if files:
@@ -972,6 +3002,11 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
                 response = client.post(api_url, files=files, data=payload)
             logger.debug(f"Response Status Code: {response.status_code}")
             logger.debug(f"Response Text: {response.text[:500]}...")
+            if response.status_code >= 400:
+                report_api_failure(
+                    "qc_qa_replace", api_url,
+                    status_code=response.status_code, response_text=response.text
+                )
             response.raise_for_status()
             return response.json()
         except httpx.RequestError as req_err:
@@ -982,9 +3017,11 @@ def call_api_qc_qa(api_url, payload, local_file_path=None):
                 logger.debug(f"Retrying after {sleep_time:.1f}s...")
                 time.sleep(sleep_time)
             else:
+                report_api_failure("qc_qa_replace", api_url, error=str(req_err))
                 return {"error": "Request failed", "details": str(req_err)}
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
+            report_api_failure("qc_qa_replace", api_url, error=str(e))
             return {"error": "Unexpected error", "details": str(e)}
         finally:
             if files:
@@ -1007,8 +3044,13 @@ def post_metadata_to_api_upload(spec_id, user_id):
             logger.info(f"Successfully posted metadata to API (Upload).")
         else:
             logger.error(f"Failed to post metadata to API (Upload): {response.status_code} {response.text}")
+            report_api_failure(
+                "post_metadata_upload", API_URL_UPLOAD,
+                status_code=response.status_code, response_text=response.text
+            )
     except Exception as e:
         logger.error(f"Error posting metadata to API (Upload): {e}")
+        report_api_failure("post_metadata_upload", API_URL_UPLOAD, error=str(e))
 
 
 def post_api(api_url,payload):
@@ -1020,8 +3062,13 @@ def post_api(api_url,payload):
             logger.info(f"Successfully posted metadata to API (Upload).")
         else:
             logger.error(f"Failed to post metadata to API (Upload): {response.status_code} {response.text}")
+            report_api_failure(
+                "post_api", api_url,
+                status_code=response.status_code, response_text=response.text
+            )
     except Exception as e:
         logger.error(f"Error posting metadata to API (Upload): {e}")
+        report_api_failure("post_api", api_url, error=str(e))
 
 
 def update_download_upload_metadata(task_id, request_status, retries=3, timeout=10.0, base_retry_delay=2):
@@ -1045,17 +3092,47 @@ def update_download_upload_metadata(task_id, request_status, retries=3, timeout=
             logger.error(
                 f"Attempt {attempt}: Failed with status {response.status_code}"
             )
+            if attempt == retries:
+                report_api_failure(
+                    "update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE,
+                    status_code=response.status_code, response_text=response.text
+                )
 
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             logger.error(f"Attempt {attempt}: Request error -> {e}")
+            if attempt == retries:
+                report_api_failure("update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE, error=str(e))
         except Exception as e:
             logger.error(f"Attempt {attempt}: Unexpected error -> {e}")
+            if attempt == retries:
+                report_api_failure("update_download_upload_metadata", API_URL_UPLOAD_DOWNLOAD_UPDATE, error=str(e))
 
         if attempt < retries:
             delay = base_retry_delay * (2 ** (attempt - 1))  # exponential backoff
             time.sleep(delay)
 
     return {"error": "Failed after retries"}
+
+def get_file_types_from_api(job_id):
+    api_url = f"{FILE_FORMAT_API}?job_id={job_id}"
+    try:
+        cache = load_cache()
+        token = cache.get('token', '')
+        headers = {"Authorization": f"Bearer {token}"}
+        format_response = HTTP_SESSION.get(api_url, headers=headers, verify=False, timeout=60)
+        try:
+            response_data = format_response.json()
+            print(response_data)
+            # print(f"=============Priority extension=============={response_data}========")
+
+            if response_data:
+                return response_data
+            else: False
+        except:
+            False
+    except:
+        print(f"=============API GET FORMAT FAILS=============={response_data}========")
+        return False
 
 # ===================== image convertion logic =====================
 
@@ -1074,60 +3151,337 @@ def get_file_hash(file_path):
         logger.error(f"Failed to compute hash for {file_path}: {e}")
         return None
 
+# def check_nas_write_permission(sftp, nas_path):
+#     """Verify and set write permission for NAS directory and file."""
+#     try:
+#         nas_parent = str(Path(nas_path).parent)
+#         logger.debug(f"Checking NAS directory permissions: {nas_parent}")
+#         app_signals.append_log.emit(f"[Transfer] Checking NAS directory permissions: {nas_parent}")
+#         try:
+#             stat = sftp.stat(nas_parent)
+#             mode = stat.st_mode & 0o777
+#             logger.debug(f"Directory {nas_parent} permissions: {oct(mode)}")
+#             app_signals.append_log.emit(f"[Transfer] Directory {nas_parent} permissions: {oct(mode)}")
+#             if mode != 0o777:
+#                 sftp.chmod(nas_parent, 0o777)
+#                 logger.info(f"Set permissions to 777 for {nas_parent}")
+#                 app_signals.append_log.emit(f"[Transfer] Set permissions to 777 for {nas_parent}")
+#         except FileNotFoundError:
+#             sftp.makedirs(nas_parent, mode=0o777)
+#             logger.info(f"Created directory {nas_parent} with permissions 777")
+#             app_signals.append_log.emit(f"[Transfer] Created directory {nas_parent} with permissions 777")
+        
+#         # Test write access
+#         temp_file = f"{nas_parent}/.test_write_{int(time.time())}.tmp"
+#         sftp.open(temp_file, 'w').close()
+#         sftp.remove(temp_file)
+        
+#         # Handle existing file
+#         try:
+#             stat = sftp.stat(nas_path)
+#             mode = stat.st_mode & 0o777
+#             logger.debug(f"File {nas_path} exists with permissions: {oct(mode)}")
+#             app_signals.append_log.emit(f"[Transfer] File {nas_path} exists with permissions: {oct(mode)}")
+#             try:
+#                 sftp.chmod(nas_path, 0o777)
+#                 logger.info(f"Set permissions to 777 for existing file {nas_path}")
+#                 app_signals.append_log.emit(f"[Transfer] Set permissions to 777 for existing file {nas_path}")
+#             except Exception:
+#                 sftp.remove(nas_path)
+#                 logger.info(f"Removed existing file {nas_path} due to permission issue")
+#                 app_signals.append_log.emit(f"[Transfer] Removed existing file {nas_path} due to permission issue")
+#         except FileNotFoundError:
+#             pass  # File doesn't exist, which is fine
+        
+#         logger.info(f"Write permission confirmed for {nas_parent}")
+#         app_signals.append_log.emit(f"[Transfer] Write permission confirmed for {nas_parent}")
+#         return True
+#     except Exception as e:
+#         logger.error(f"Write permission check failed for {nas_path}: {e}")
+#         app_signals.append_log.emit(f"[Transfer-lang=python] Write permission check failed for {nas_path}: {e}")
+#         return False
+
+
+def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
+    """
+    Module-level helper — open a file in Adobe Photoshop across platforms.
+    Used by FileWatcherWorker, FileDownloadListWindow, and FileUploadListWindow.
+
+    Args:
+        file_path: Absolute path to the file to open.
+        log_callback: Optional callable(str) for log messages (e.g. self.log_update.emit).
+
+    Returns:
+        True on success, raises on failure.
+    """
+    def _log(msg):
+        if log_callback:
+            log_callback(msg)
+        print(msg)
+
+    import platform as _platform
+    system = _platform.system()
+    file_path = str(Path(file_path).resolve())
+
+    if not Path(file_path).exists():
+        raise FileNotFoundError(f"File does not exist: {file_path}")
+
+    _log(f"[Photoshop] Opening {Path(file_path).name} on {system}")
+    photoshop_path = None
+
+    if system == "Windows":
+        try:
+            import win32gui, win32con, win32com.client, win32api, win32process, ctypes
+        except ImportError as e:
+            raise ImportError("Required pywin32 modules not found. Run: pip install pywin32") from e
+
+        photoshop_path = os.getenv("PHOTOSHOP_PATH")
+        if photoshop_path and Path(photoshop_path).exists():
+            _log(f"[Photoshop] Using PHOTOSHOP_PATH: {photoshop_path}")
+        else:
+            for base_dir in [Path("C:/Program Files/Adobe"), Path("C:/Program Files (x86)/Adobe")]:
+                if not base_dir.exists():
+                    continue
+                exes = sorted(base_dir.glob("Adobe Photoshop */Photoshop.exe"),
+                              key=lambda x: x.parent.name, reverse=True)
+                if exes:
+                    photoshop_path = str(exes[0])
+                    break
+            if not photoshop_path:
+                raise FileNotFoundError("Adobe Photoshop executable not found in Program Files")
+
+        if not os.access(photoshop_path, os.X_OK):
+            raise PermissionError(f"Photoshop executable not accessible: {photoshop_path}")
+
+        # Try COM first
+        try:
+            ps_app = win32com.client.Dispatch("Photoshop.Application")
+            ps_app.Visible = True
+            ps_app.Open(file_path)
+
+            def _bring_to_front():
+                def _enum(hwnd, _):
+                    if win32gui.IsWindowVisible(hwnd) and \
+                            "adobe photoshop" in win32gui.GetWindowText(hwnd).lower():
+                        try:
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                            this = win32api.GetCurrentThreadId()
+                            target = win32process.GetWindowThreadProcessId(hwnd)[0]
+                            if ctypes.windll.user32.AttachThreadInput(this, target, True):
+                                win32gui.SetForegroundWindow(hwnd)
+                                ctypes.windll.user32.AttachThreadInput(this, target, False)
+                        except Exception:
+                            pass
+                win32gui.EnumWindows(_enum, None)
+
+            time.sleep(1.5)
+            _bring_to_front()
+            _log(f"[Photoshop] Opened {Path(file_path).name} via COM")
+            return True
+        except Exception as com_err:
+            _log(f"[Photoshop] COM failed ({com_err}), trying subprocess...")
+
+        # Fallback: subprocess
+        for attempt in range(3):
+            try:
+                subprocess.Popen([photoshop_path, file_path], stderr=subprocess.PIPE, text=True)
+                time.sleep(2)
+                hwnds = []
+                win32gui.EnumWindows(
+                    lambda h, l: l.append(h)
+                    if win32gui.IsWindowVisible(h) and
+                       "adobe photoshop" in win32gui.GetWindowText(h).lower()
+                    else None,
+                    hwnds
+                )
+                if hwnds:
+                    win32gui.ShowWindow(hwnds[0], win32con.SW_RESTORE)
+                    win32gui.SetForegroundWindow(hwnds[0])
+                _log(f"[Photoshop] Opened {Path(file_path).name} via subprocess")
+                return True
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(2)
+                else:
+                    raise RuntimeError(f"Failed to open after 3 attempts: {e}")
+
+    elif system == "Darwin":
+        photoshop_path = os.getenv("PHOTOSHOP_PATH")
+        if photoshop_path and not Path(photoshop_path).exists():
+            photoshop_path = None
+
+        if not photoshop_path:
+            try:
+                result = subprocess.run(
+                    ["mdfind", "kMDItemKind == 'Application' && "
+                     "(kMDItemFSName == 'Adobe Photoshop*.app' || "
+                     "kMDItemFSName == 'Photoshop*.app')"],
+                    capture_output=True, text=True, check=True
+                )
+                if result.stdout.strip():
+                    photoshop_path = result.stdout.strip().split("\n")[0]
+            except Exception:
+                pass
+
+        if not photoshop_path:
+            search_dirs = [
+                Path("/Applications"), Path("~/Applications").expanduser(),
+                Path("/Applications/Adobe"), Path("~/Applications/Adobe").expanduser(),
+            ]
+            for d in search_dirs:
+                if not d.exists():
+                    continue
+                apps = (list(d.glob("Adobe*Photoshop*.app")) +
+                        list(d.glob("Photoshop*.app")) +
+                        list(d.glob("*/Adobe*Photoshop*.app")))
+                if apps:
+                    photoshop_path = str(sorted(apps, key=lambda x: x.name, reverse=True)[0])
+                    break
+
+        if not photoshop_path:
+            versioned = [
+                Path(f"/Applications/Adobe Photoshop {yr}/Adobe Photoshop {yr}.app")
+                for yr in (2025, 2024, 2023)
+            ]
+            for p in versioned:
+                if p.exists():
+                    photoshop_path = str(p)
+                    break
+
+        if not photoshop_path:
+            raise FileNotFoundError(
+                "Adobe Photoshop not found. Set the PHOTOSHOP_PATH environment variable."
+            )
+
+        for attempt in range(3):
+            try:
+                subprocess.run(["open", "-a", photoshop_path, file_path], check=True)
+                app_name = Path(photoshop_path).stem
+                subprocess.run(
+                    ["osascript", "-e", f'tell application "{app_name}" to activate'],
+                    capture_output=True
+                )
+                _log(f"[Photoshop] Opened {Path(file_path).name} via open -a")
+                return True
+            except subprocess.CalledProcessError as e:
+                if attempt < 2:
+                    time.sleep(2)
+                else:
+                    raise RuntimeError(f"Failed to open after 3 attempts: {e}")
+
+    elif system == "Linux":
+        try:
+            subprocess.run(["wine", "--version"], capture_output=True, check=True)
+        except subprocess.CalledProcessError:
+            raise FileNotFoundError("Wine is not installed or not functioning")
+
+        for base_dir in [
+            Path.home() / ".wine/drive_c/Program Files/Adobe",
+            Path.home() / ".wine/drive_c/Program Files (x86)/Adobe",
+        ]:
+            if not base_dir.exists():
+                continue
+            exes = sorted(base_dir.glob("Adobe Photoshop */Photoshop.exe"),
+                          key=lambda x: x.parent.name, reverse=True)
+            if exes:
+                photoshop_path = str(exes[0])
+                break
+
+        if not photoshop_path:
+            raise FileNotFoundError("Photoshop.exe not found in Wine directories")
+
+        for attempt in range(3):
+            try:
+                subprocess.run(["wine", photoshop_path, file_path], check=True)
+                subprocess.run(["wmctrl", "-a", "Adobe Photoshop"], check=False)
+                _log(f"[Photoshop] Opened {Path(file_path).name} via wine")
+                return True
+            except subprocess.CalledProcessError as e:
+                if attempt < 2:
+                    time.sleep(2)
+                else:
+                    raise RuntimeError(f"Failed to open after 3 attempts: {e}")
+
+    else:
+        raise ValueError(f"Unsupported platform: {system}")
+
 def check_nas_write_permission(sftp, nas_path):
-    """Verify and set write permission for NAS directory and file."""
+    """
+    Verify write permission for NAS directory and file.
+    Sets permissions to 0o777 on directory and existing file.
+    Returns True if write access confirmed, False otherwise.
+    """
     try:
         nas_parent = str(Path(nas_path).parent)
         logger.debug(f"Checking NAS directory permissions: {nas_parent}")
-        app_signals.append_log.emit(f"[Transfer] Checking NAS directory permissions: {nas_parent}")
+        app_signals.append_log.emit(
+            f"[Transfer] Checking NAS directory permissions: {nas_parent}"
+        )
+
+        # --- Check / create the parent directory ---
         try:
             stat = sftp.stat(nas_parent)
             mode = stat.st_mode & 0o777
             logger.debug(f"Directory {nas_parent} permissions: {oct(mode)}")
-            app_signals.append_log.emit(f"[Transfer] Directory {nas_parent} permissions: {oct(mode)}")
+            app_signals.append_log.emit(
+                f"[Transfer] Directory {nas_parent} permissions: {oct(mode)}"
+            )
             if mode != 0o777:
                 sftp.chmod(nas_parent, 0o777)
                 logger.info(f"Set permissions to 777 for {nas_parent}")
-                app_signals.append_log.emit(f"[Transfer] Set permissions to 777 for {nas_parent}")
+                app_signals.append_log.emit(
+                    f"[Transfer] Set permissions to 777 for {nas_parent}"
+                )
         except FileNotFoundError:
             sftp.makedirs(nas_parent, mode=0o777)
             logger.info(f"Created directory {nas_parent} with permissions 777")
-            app_signals.append_log.emit(f"[Transfer] Created directory {nas_parent} with permissions 777")
-        
-        # Test write access
+            app_signals.append_log.emit(
+                f"[Transfer] Created directory {nas_parent} with permissions 777"
+            )
+
+        # --- Confirm write access with a temp file ---
         temp_file = f"{nas_parent}/.test_write_{int(time.time())}.tmp"
         sftp.open(temp_file, 'w').close()
         sftp.remove(temp_file)
-        
-        # Handle existing file
+
+        # --- Handle existing destination file ---
         try:
             stat = sftp.stat(nas_path)
             mode = stat.st_mode & 0o777
             logger.debug(f"File {nas_path} exists with permissions: {oct(mode)}")
-            app_signals.append_log.emit(f"[Transfer] File {nas_path} exists with permissions: {oct(mode)}")
+            app_signals.append_log.emit(
+                f"[Transfer] File {nas_path} exists with permissions: {oct(mode)}"
+            )
             try:
                 sftp.chmod(nas_path, 0o777)
                 logger.info(f"Set permissions to 777 for existing file {nas_path}")
-                app_signals.append_log.emit(f"[Transfer] Set permissions to 777 for existing file {nas_path}")
+                app_signals.append_log.emit(
+                    f"[Transfer] Set permissions to 777 for existing file {nas_path}"
+                )
             except Exception:
                 sftp.remove(nas_path)
-                logger.info(f"Removed existing file {nas_path} due to permission issue")
-                app_signals.append_log.emit(f"[Transfer] Removed existing file {nas_path} due to permission issue")
+                logger.info(
+                    f"Removed existing file {nas_path} due to permission issue"
+                )
+                app_signals.append_log.emit(
+                    f"[Transfer] Removed existing file {nas_path} due to permission issue"
+                )
         except FileNotFoundError:
-            pass  # File doesn't exist, which is fine
-        
+            pass  # File doesn't exist yet — that's fine
+
         logger.info(f"Write permission confirmed for {nas_parent}")
-        app_signals.append_log.emit(f"[Transfer] Write permission confirmed for {nas_parent}")
+        app_signals.append_log.emit(
+            f"[Transfer] Write permission confirmed for {nas_parent}"
+        )
         return True
+
     except Exception as e:
         logger.error(f"Write permission check failed for {nas_path}: {e}")
-        app_signals.append_log.emit(f"[Transfer-lang=python] Write permission check failed for {nas_path}: {e}")
+        app_signals.append_log.emit(
+            # NOTE: fixed stray 'lang=python' that was in the original log line
+            f"[Transfer] Write permission check failed for {nas_path}: {e}"
+        )
         return False
-
-
-
-
-
 
 
 def process_image_in_memory(image_data, ext, full_file_path):
@@ -1283,19 +3637,6 @@ def process_single_file(full_file_path):
 # ===================== image covertion logic =====================
 
 
-def show_alert_notification(title, message):
-    
-    system = platform.system()
-    if system == "Windows":
-        import ctypes
-        # fallback: simple message box
-        ctypes.windll.user32.MessageBoxW(0, message, title, 0)
-    elif system == "Darwin":
-        subprocess.run(["osascript", "-e", f'display notification "{message}" with title "{title}"'])
-    else:
-        print(f"{title}: {message}")
-
-
 
 class FileConversionWorker(QObject):
     finished = Signal(str, str, str)
@@ -1356,6 +3697,7 @@ class FileWatcherWorker(QObject):
     task_list_update = Signal(list)
     cleanup_signal = Signal()
     user_in_other_system = Signal(str)
+    alert_notification = Signal(str, str)
   
     download_progress = Signal(str, str, str, int)
     # (spec_id, file_path, filename, percent)
@@ -1433,9 +3775,15 @@ class FileWatcherWorker(QObject):
         print(file_path)
         print(".....................................................................")
         if not file_path:
-            show_alert_notification("ERROR (MD2)", "Please check Nas Connection.")
-            # QMessageBox.warning(None, "ERROR (MD2)", "Please check Nas Connection.")
+            self.alert_notification.emit("ERROR (MD2)", "File does not exist on NAS")
+            self.alert_notification.emit(
+                "Download Error",
+                "The file path is missing or empty.\n\nThis file does not exist on the NAS server. Please contact your administrator."
+            )
             raise ValueError("Empty file_path in item")
+            # show_alert_notification("ERROR (MD2)", "Please check Nas Connection.")
+            # # QMessageBox.warning(None, "ERROR (MD2)", "Please check Nas Connection.")
+            # raise ValueError("Empty file_path in item")
         dest_path = BASE_TARGET_DIR / file_path
         logger.debug(f"Preparing download path: file_path={file_path}, dest_path={dest_path}")
         try:
@@ -1446,8 +3794,10 @@ class FileWatcherWorker(QObject):
         except Exception as e:
             logger.error(f"Failed to create directory {dest_path.parent}: {str(e)}")
             self.log_update.emit(f"[Transfer] Failed to create directory {dest_path.parent}: {str(e)}")
-            show_alert_notification("ERROR (MD2)", "Please check Nas Connection.")
-            # QMessageBox.warning(None, "ERROR (MD2)", "Please check Nas Connection.")
+            # show_alert_notification("ERROR (MD2)", "Please check Nas Connection.")
+            # # QMessageBox.warning(None, "ERROR (MD2)", "Please check Nas Connection.")
+            # raise
+            self.alert_notification.emit("ERROR (MD2)", f"[Transfer] Failed to create directory {dest_path.parent}: {str(e)}")
             raise
         resolved_dest_path = str(dest_path.resolve())
         logger.debug(f"Prepared local path: {resolved_dest_path}")
@@ -1468,7 +3818,7 @@ class FileWatcherWorker(QObject):
         filename = Path(dest_path).name
 
         transport = None
-
+        transfer_start_time = time.time()
         try:
             transport = paramiko.Transport((NAS_IP, NAS_PORT))
             transport.default_window_size = 2147483647
@@ -1486,9 +3836,21 @@ class FileWatcherWorker(QObject):
             sftp = transport.open_sftp_client()
             total_size = sftp.stat(nas_path).st_size
             sftp.close()
+            total_size_mb = total_size / 1024 / 1024
+
+            report_transfer_event("Started", "download", filename, file_size_mb=total_size_mb, eta_text="Calculating...")
 
             start_time = time.time()
             last_emit = 0.0
+            # ── Stall watchdog state ──────────────────────────────────────
+            # A dropped network connection doesn't raise immediately — the
+            # OS can sit on a dead TCP socket for a long time (60s+) before
+            # surfacing an error. Track "no new bytes received" ourselves so
+            # we fail fast and let the retry loop kick in promptly instead
+            # of appearing to hang at whatever % it was at when the network died.
+            STALL_TIMEOUT_SEC = 15
+            last_byte_time = [start_time]
+            last_sent_bytes = [0]
 
             def format_time(seconds: float) -> str:
                 if seconds <= 0 or seconds == float("inf"):
@@ -1506,6 +3868,22 @@ class FileWatcherWorker(QObject):
                 elapsed = now - start_time
                 if elapsed <= 0:
                     return
+
+                # ── Stall detection ──────────────────────────────────────
+                if sent != last_sent_bytes[0]:
+                    last_sent_bytes[0] = sent
+                    last_byte_time[0] = now
+                elif now - last_byte_time[0] > STALL_TIMEOUT_SEC and sent < total_size:
+                    stall_msg = (
+                        f"Download stalled — no data received for "
+                        f"{STALL_TIMEOUT_SEC}s (network likely disconnected)"
+                    )
+                    logger.warning(f"[Transfer] {stall_msg}: {filename}")
+                    file_watcher.download_status_detail.emit(
+                        dest_path, f"⚠ {stall_msg}", "download",
+                        int((sent / total_size) * 100) if total_size else 0, True
+                    )
+                    raise RuntimeError(stall_msg)
 
                 # Throttle UI updates
                 if now - last_emit < 0.5 and sent < total_size:
@@ -1527,6 +3905,14 @@ class FileWatcherWorker(QObject):
                     dest_path,
                     filename,
                     percent
+                )
+
+                # ---- Feed the Google Chat transfer reporter (latency/speed/size/ETA) ----
+                _update_transfer_stats(
+                    "download", filename, speed_mbps, percent,
+                    file_size_mb=total_size / 1024 / 1024,
+                    elapsed_sec=elapsed,
+                    eta_text=format_time(eta),
                 )
 
                 # ---- Status text (human readable) ----
@@ -1567,6 +3953,25 @@ class FileWatcherWorker(QObject):
                 True
             )
 
+            duration_seconds = time.time() - transfer_start_time   # ← ADD THIS
+            
+            # Save duration to cache
+            cache = load_cache()
+            meta = cache.get("downloaded_files_with_metadata", {}).get(spec_id)
+            if meta:
+                meta["api_response"]["transfer_duration"] = round(duration_seconds, 1)
+                save_cache(cache, significant_change=False)           # ← ADD THIS
+
+            self.download_progress.emit(spec_id, dest_path, filename, 100)
+            self.download_status_detail.emit(dest_path, "Download Completed", "download", 100, True)
+            _clear_transfer_stats()
+
+            _avg_speed_mbps = (total_size / 1024 / 1024) / duration_seconds if duration_seconds > 0 else 0.0
+            report_transfer_event(
+                "Completed", "download", filename, percent=100, speed_mbps=_avg_speed_mbps,
+                file_size_mb=total_size / 1024 / 1024, elapsed_sec=duration_seconds, eta_text="Done",
+            )
+
         except Exception:
             self.download_progress.emit(
                 spec_id,
@@ -1581,17 +3986,29 @@ class FileWatcherWorker(QObject):
                 0,
                 True
             )
+            _clear_transfer_stats()
+            _elapsed_at_failure = time.time() - transfer_start_time
+            _size_mb_at_failure = (total_size / 1024 / 1024) if 'total_size' in locals() else 0.0
+            report_transfer_event(
+                "Failed", "download", filename,
+                file_size_mb=_size_mb_at_failure, elapsed_sec=_elapsed_at_failure, eta_text="-",
+            )
             raise
 
         finally:
-            if transport and transport.is_active():
-                transport.close()
+            if transport is not None:
+                try:
+                    if transport.is_active():
+                        transport.close()
+                except Exception as t_err:
+                    logger.warning(f"Could not close download transport: {t_err}")
 
 
 
     def _upload_to_nas(self, src_path, dest_path, item):
         task_id = item.get("id", "")
         spec_id = str(item.get("spec_id"))
+        # client_id = str(item.get("client_id"))
 
         metadata_key = "uploaded_files_with_metadata"
         cache = load_cache()
@@ -1601,32 +4018,81 @@ class FileWatcherWorker(QObject):
 
         src_path = Path(src_path)
         filename = src_path.name
+        # allowed_types = get_file_types_from_api(client_id)
+        # matched_file = None
+        # matched_ext = None
+        # first_prior = False
+        
+        # #for ext in allowed_types:
+        # for ind, ext in enumerate(allowed_types):
+        #     alt_path = src_path.with_suffix(f".{ext}")
 
-        if not src_path.exists():
+        #     if alt_path.exists():
+        #         first_prior = ind == 0
+        #         matched_file = alt_path
+        #         matched_ext = ext
+        #         break
+
+        # print("=============matched_file======================")
+        # print(matched_file)
+        # print(first_prior)
+        # print("=============matched_file======================")
+
+
+        # if matched_file:
+        #     print("========INTO Matched File=====matched_file======================")
+        #     src_path = matched_file
+        #     filename = src_path.name
+        #     if not first_prior:
+        #         #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
+        #         self.alert_notification.emit("File Format Alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}")            
+        # else:
+        if not src_path.exists(): 
+            print("========INTO File Not Found=====matched_file======================")
             cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
             save_cache(cache, significant_change=True)
             update_download_upload_metadata(task_id, "failed")
-            show_alert_notification("Error (U1)", "Upload failed try again.")
-
+            self.alert_notification.emit("Error (U1)", "Upload failed try again.")
+            self.alert_notification.emit(
+                "Upload Error",
+                f"File not found on disk:\n{src_path}\n\nPlease ensure the file exists before uploading."
+            )
             file_watcher.upload_progress.emit(spec_id, dest_path, filename, 0)
             file_watcher.upload_status_detail.emit(
                 dest_path, "Upload Failed", "upload", 0, True
             )
-
+            report_transfer_event("Failed", "upload", filename)
             raise FileNotFoundError(f"Source file does not exist: {src_path}")
-
-        dest_path = item.get("file_path", dest_path)
-        dest_dir = os.path.dirname(dest_path)
+        
+        print("========Continue upload=====matched_file======================")
+        # dest_path = item.get("file_path", dest_path)
+        # if matched_ext:
+        #     dest_path = str(Path(dest_path).with_suffix(f".{matched_ext}"))
+        #dest_dir = os.path.dirname(dest_path)
+        dest_path = dest_path.replace("\\", "/")
+        dest_dir = os.path.dirname(dest_path).replace("\\", "/")
+        print("=============dest_dir======================")
+        print(dest_dir)
+        print(dest_path)
+        print("=============dest_dir======================")
 
         sock = None
         session = None
         sftp = None
+        remote_file = None      # FIX: track remote file handle explicitly
 
         try:
             # ---------- CONNECTION ----------
             start_conn = time.time()
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            # FIX: this socket previously had NO timeout at all. If the
+            # network dropped mid-write, remote_file.write() could block
+            # indefinitely (potentially far longer than the download path's
+            # ~60s OS-level stall) with no way for the retry logic to kick
+            # in. Bound every blocking socket op to 30s so a dead connection
+            # surfaces as an exception promptly.
+            sock.settimeout(30)
             sock.connect((NAS_IP, NAS_PORT))
 
             session = Session()
@@ -1648,6 +4114,40 @@ class FileWatcherWorker(QObject):
             # ---------- UPLOAD ----------
             upload_start = time.time()
 
+            # ────────────────────────────────────────────────────────────────
+            # FIX (CRITICAL — data integrity): upload to a hidden temp file,
+            # NOT directly to dest_path.
+            #
+            # The previous code did:
+            #   sftp.open(dest_path, CREAT|WRITE|TRUNC, 0o644)
+            # LIBSSH2_FXF_TRUNC truncates the file the INSTANT it's opened —
+            # before a single byte of the new upload has been written. That
+            # means the existing good file on the NAS was destroyed the
+            # moment the upload started. If the network dropped mid-transfer
+            # (e.g. after 250MB of a 1GB file), dest_path was left containing
+            # only those 250MB — and anyone downloading that file in the
+            # meantime got the truncated/corrupt version, with no way to
+            # tell it wasn't the real file.
+            #
+            # Fix: write the new content to a temp sibling file
+            # (".<name>.uploading_<random>.tmp") in the SAME directory as
+            # dest_path. The real dest_path is never opened/truncated during
+            # the transfer, so it keeps serving the last-known-good file to
+            # anyone downloading it throughout the entire upload. Only once
+            # the full byte count has been written and verified do we
+            # atomically rename the temp file over dest_path — a rename is
+            # effectively instantaneous, so there's no window where a
+            # partial file is visible under the real filename. If anything
+            # fails at any point, we just delete the temp file; dest_path is
+            # untouched and the previous good file remains available.
+            # ────────────────────────────────────────────────────────────────
+            temp_suffix = f".uploading_{uuid.uuid4().hex[:12]}.tmp"
+            if "/" in dest_path:
+                _dest_dir_part, _dest_name_part = dest_path.rsplit("/", 1)
+                temp_dest_path = f"{_dest_dir_part}/.{_dest_name_part}{temp_suffix}"
+            else:
+                temp_dest_path = f".{dest_path}{temp_suffix}"
+
             flags = LIBSSH2_FXF_CREAT | LIBSSH2_FXF_WRITE | LIBSSH2_FXF_TRUNC
             chunk_size = 4 * 1024 * 1024  # 4 MB
 
@@ -1663,69 +4163,163 @@ class FileWatcherWorker(QObject):
             chunk_start_time = time.time()
 
             print(f"Uploading: {filename} ({total_mb:.2f} MB)")
-            print(f"Destination: {dest_path}")
+            print(f"Destination (final): {dest_path}")
+            print(f"Destination (temp, in-progress): {temp_dest_path}")
 
-            with open(src_path, "rb") as local_file, \
-                sftp.open(dest_path, flags, 0o644) as remote_file:
+            report_transfer_event("Started", "upload", filename, file_size_mb=total_mb, eta_text="Calculating...")
 
-                while True:
-                    data = local_file.read(chunk_size)
-                    if not data:
-                        break
+            # FIX: open both file handles explicitly so both are closed in finally
+            local_file = open(src_path, "rb")
+            try:
+                # ── Write to the TEMP path, never to dest_path directly ──
+                remote_file = sftp.open(temp_dest_path, flags, 0o644)
+                try:
+                    while True:
+                        data = local_file.read(chunk_size)
+                        if not data:
+                            break
 
-                    remote_file.write(data)
-                    transferred += len(data)
+                        remote_file.write(data)
+                        transferred += len(data)
 
-                    # ---- Throttling ----
-                    if bytes_per_second:
+                        # ---- Throttling ----
+                        if bytes_per_second:
+                            now = time.time()
+                            elapsed = now - chunk_start_time
+                            expected = len(data) / bytes_per_second
+                            if elapsed < expected:
+                                time.sleep(expected - elapsed)
+                            chunk_start_time = time.time()
+
+                        # ---- UI Progress Emit (throttled) ----
                         now = time.time()
-                        elapsed = now - chunk_start_time
-                        expected = len(data) / bytes_per_second
-                        if elapsed < expected:
-                            time.sleep(expected - elapsed)
-                        chunk_start_time = time.time()
+                        if now - last_emit >= 0.5 or transferred == file_size:
+                            elapsed_total = now - upload_start
+                            percent = int((transferred / file_size) * 100) if file_size else 100
 
-                    # ---- UI Progress Emit (throttled) ----
-                    now = time.time()
-                    if now - last_emit >= 0.5 or transferred == file_size:
-                        elapsed_total = now - upload_start
-                        percent = int((transferred / file_size) * 100) if file_size else 100
+                            speed_mbps = (
+                                (transferred / 1024 / 1024) / elapsed_total
+                                if elapsed_total > 0 else 0.0
+                            )
 
-                        speed_mbps = (
-                            (transferred / 1024 / 1024) / elapsed_total
-                            if elapsed_total > 0 else 0.0
+                            remaining = file_size - transferred
+                            eta = (
+                                (remaining / 1024 / 1024) / speed_mbps
+                                if speed_mbps > 0 else float("inf")
+                            )
+
+                            status_text = (
+                                f"Uploading {percent}% • "
+                                f"{speed_mbps:.1f} MB/s • "
+                                f"ETA {int(eta)}s"
+                                if eta != float("inf") else
+                                f"Uploading {percent}% • {speed_mbps:.1f} MB/s • ETA —"
+                            )
+
+                            file_watcher.upload_progress.emit(
+                                spec_id, dest_path, filename, percent
+                            )
+                            file_watcher.upload_status_detail.emit(
+                                dest_path, status_text, "upload", percent, True
+                            )
+                            # ---- Feed the Google Chat transfer reporter (latency/speed/size/ETA) ----
+                            _eta_text = (
+                                f"{int(eta)}s" if eta != float("inf") else "—"
+                            )
+                            _update_transfer_stats(
+                                "upload", filename, speed_mbps, percent,
+                                file_size_mb=total_mb,
+                                elapsed_sec=elapsed_total,
+                                eta_text=_eta_text,
+                            )
+                            last_emit = now
+
+                finally:
+                    # FIX: always close remote file handle — was leaking before
+                    try:
+                        remote_file.close()
+                    except Exception as rf_err:
+                        logger.warning(f"Could not close remote file handle: {rf_err}")
+                    remote_file = None
+
+                # ────────────────────────────────────────────────────────
+                # VERIFY + ATOMIC SWAP
+                # Only now — after the temp file has been fully written and
+                # closed — do we touch dest_path. If the transfer was
+                # interrupted (network drop, exception, etc.) we never
+                # reach this point, so dest_path still holds the
+                # last-known-good file, completely untouched, for the
+                # entire duration of the upload.
+                # ────────────────────────────────────────────────────────
+                if transferred != file_size:
+                    raise IOError(
+                        f"Incomplete upload: transferred {transferred} of "
+                        f"{file_size} bytes — aborting swap, existing file "
+                        f"on NAS left untouched"
+                    )
+
+                try:
+                    # Prefer an atomic overwrite-rename if the server/library
+                    # supports the flag — POSIX rename semantics replace
+                    # dest_path in a single step with no window where the
+                    # file is missing or partial.
+                    try:
+                        from ssh2.sftp import (
+                            LIBSSH2_SFTP_RENAME_OVERWRITE,
+                            LIBSSH2_SFTP_RENAME_ATOMIC,
+                            LIBSSH2_SFTP_RENAME_NATIVE,
                         )
-
-                        remaining = file_size - transferred
-                        eta = (
-                            (remaining / 1024 / 1024) / speed_mbps
-                            if speed_mbps > 0 else float("inf")
+                        rename_flags = (
+                            LIBSSH2_SFTP_RENAME_OVERWRITE
+                            | LIBSSH2_SFTP_RENAME_ATOMIC
+                            | LIBSSH2_SFTP_RENAME_NATIVE
                         )
+                        sftp.rename(temp_dest_path, dest_path, rename_flags)
+                    except ImportError:
+                        sftp.rename(temp_dest_path, dest_path)
+                except Exception as rename_err:
+                    # Some SFTP servers refuse to rename onto an existing
+                    # file even with the overwrite flag. Fall back to
+                    # remove-then-rename. This has a brief non-atomic
+                    # window, but it only happens AFTER the new file is
+                    # fully uploaded and verified — worst case a
+                    # downloader briefly sees "file not found" instead of
+                    # ever seeing a truncated/partial file, which is the
+                    # failure mode this fixes.
+                    logger.debug(
+                        f"[Transfer] Direct rename failed ({rename_err}), "
+                        f"retrying with unlink+rename"
+                    )
+                    try:
+                        sftp.unlink(dest_path)
+                    except Exception:
+                        pass  # dest_path may not exist yet (first-time upload)
+                    sftp.rename(temp_dest_path, dest_path)
 
-                        status_text = (
-                            f"Uploading {percent}% • "
-                            f"{speed_mbps:.1f} MB/s • "
-                            f"ETA {int(eta)}s"
-                            if eta != float("inf") else
-                            f"Uploading {percent}% • {speed_mbps:.1f} MB/s • ETA —"
-                        )
+                logger.info(f"[Transfer] Upload verified, swapped into place: {dest_path}")
+                app_signals.append_log.emit(
+                    f"[Transfer] Upload verified and swapped into place: {dest_path}"
+                )
 
-                        file_watcher.upload_progress.emit(
-                            spec_id,
-                            dest_path,
-                            filename,
-                            percent
-                        )
+                # ---------- FINAL SUCCESS ----------
+                duration = time.time() - upload_start
+                final_speed = total_mb / duration if duration > 0 else 0.0
 
-                        file_watcher.upload_status_detail.emit(
-                            dest_path,
-                            status_text,
-                            "upload",
-                            percent,
-                            True
-                        )
+                # Save duration to cache
+                cache = load_cache()
+                meta = cache.get("uploaded_files_with_metadata", {}).get(spec_id)
+                if meta:
+                    meta["api_response"]["transfer_duration"] = round(duration, 1)
+                    save_cache(cache, significant_change=False)           # ← ADD THIS
 
-                        last_emit = now
+                file_watcher.upload_progress.emit(spec_id, dest_path, filename, 100)
+                file_watcher.upload_status_detail.emit(dest_path, "Upload Completed", "upload", 100, True)
+            finally:
+                # FIX: always close local file handle
+                try:
+                    local_file.close()
+                except Exception as lf_err:
+                    logger.warning(f"Could not close local file handle: {lf_err}")
 
             # ---------- FINAL SUCCESS ----------
             duration = time.time() - upload_start
@@ -1736,19 +4330,9 @@ class FileWatcherWorker(QObject):
                 f"in {duration:.2f}s ({final_speed:.2f} MB/s)"
             )
 
-            file_watcher.upload_progress.emit(
-                spec_id,
-                dest_path,
-                filename,
-                100
-            )
-
+            file_watcher.upload_progress.emit(spec_id, dest_path, filename, 100)
             file_watcher.upload_status_detail.emit(
-                dest_path,
-                "Upload Completed",
-                "upload",
-                100,
-                True
+                dest_path, "Upload Completed", "upload", 100, True
             )
 
             if MIN_REQUIRED_MBPS:
@@ -1759,52 +4343,132 @@ class FileWatcherWorker(QObject):
                         f"is below required {MIN_REQUIRED_MBPS} Mbps"
                     )
 
+            _clear_transfer_stats()
+            report_transfer_event(
+                "Completed", "upload", filename, percent=100, speed_mbps=final_speed,
+                file_size_mb=total_mb, elapsed_sec=duration, eta_text="Done",
+            )
+
         except Exception as e:
+            _clear_transfer_stats()
             error_details = str(e)
 
             if sftp:
-                err = sftp.last_error()
-                if err:
-                    error_details += f" | SFTP error code: {err}"
+                try:
+                    err = sftp.last_error()
+                    if err:
+                        error_details += f" | SFTP error code: {err}"
+                except Exception:
+                    pass
 
             if session:
-                err = session.last_errno()
-                if err:
-                    error_details += f" | Session error code: {err}"
+                try:
+                    err = session.last_errno()
+                    if err:
+                        error_details += f" | Session error code: {err}"
+                except Exception:
+                    pass
 
             print(f"Upload failed: {error_details}")
             traceback.print_exc()
 
-            cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
-            save_cache(cache, significant_change=True)
+            # ── FIX: clean up the orphaned temp file, if any ──
+            # dest_path was never opened/truncated during the transfer (see
+            # temp-file upload strategy above), so the existing good file on
+            # the NAS is still intact and safe. Just remove the partial
+            # temp file so it doesn't linger.
+            try:
+                if sftp is not None and 'temp_dest_path' in locals():
+                    sftp.unlink(temp_dest_path)
+                    logger.debug(f"[Transfer] Cleaned up incomplete temp file: {temp_dest_path}")
+                    app_signals.append_log.emit(
+                        f"[Transfer] Cleaned up incomplete temp upload; "
+                        f"existing file at {dest_path} was not modified"
+                    )
+            except Exception:
+                pass  # temp file may not exist if failure occurred before sftp.open
 
-            file_watcher.upload_progress.emit(
-                spec_id,
-                dest_path,
-                filename,
-                0
-            )
+            try:
+                cache[metadata_key][spec_id]["api_response"]["request_status"] = "Upload Failed"
+                save_cache(cache, significant_change=True)
+            except Exception:
+                pass
 
+            file_watcher.upload_progress.emit(spec_id, dest_path, filename, 0)
             file_watcher.upload_status_detail.emit(
-                dest_path,
-                "Upload Failed",
-                "upload",
-                0,
-                True
+                dest_path, "Upload Failed", "upload", 0, True
             )
 
-            show_alert_notification("Error (U3)", "Upload failed – check destination path.")
+            self.alert_notification.emit(
+                "Error (U3)",
+                "Upload failed — the existing file on the NAS was NOT modified. "
+                "Please retry the upload."
+            )
+            _elapsed_at_failure = (time.time() - upload_start) if 'upload_start' in locals() else 0.0
+            _size_mb_at_failure = total_mb if 'total_mb' in locals() else 0.0
+            report_transfer_event(
+                "Failed", "upload", filename,
+                file_size_mb=_size_mb_at_failure, elapsed_sec=_elapsed_at_failure, eta_text="-",
+            )
             raise
 
         finally:
-            if session:
-                session.disconnect()
-            if sock:
-                sock.close()
+            # FIX: structured cleanup order — sftp first, then session, then socket
+            # Each step is individually guarded so one failure never skips the rest
 
+            if sftp is not None:
+                try:
+                    sftp.close()        # FIX: was never closed before
+                except Exception as sftp_err:
+                    logger.warning(f"Could not close SFTP handle: {sftp_err}")
 
+            if session is not None:
+                try:
+                    session.disconnect()
+                except Exception as sess_err:
+                    logger.warning(f"Could not disconnect SSH session: {sess_err}")
+
+            if sock is not None:
+                try:
+                    sock.close()        # FIX: now always reached even if session.disconnect() throws
+                except Exception as sock_err:
+                    logger.warning(f"Could not close socket: {sock_err}")
 
         
+    def _validate_and_confirm_psd_upload(self, file_path):
+        """
+        For .psd/.psb uploads only: runs the production-readiness checklist
+        and shows the report + Upload/Cancel confirmation dialog to the
+        user — for BOTH pass and fail outcomes — before the file is sent
+        to the NAS.
+
+        Blocks THIS worker thread (never the GUI thread) until the user
+        responds. Returns True to proceed with the upload, False to cancel.
+        """
+        try:
+            config = getattr(self, "psd_validation_config", {}) or {}
+            result = validate_psd_document(file_path, config)
+
+            status_word = "PASS" if result.overall_pass else "FAIL"
+            logger.info(f"[PSD Validation] {file_path}: {status_word}")
+            self.log_update.emit(f"[PSD Validation] {Path(file_path).name}: {status_word}")
+            app_signals.append_log.emit(f"[PSD Validation] {Path(file_path).name}: {status_word}")
+
+            proceed = request_psd_upload_confirmation(file_path, result)
+            self.log_update.emit(
+                f"[PSD Validation] User {'confirmed upload' if proceed else 'cancelled upload'} "
+                f"for {Path(file_path).name}"
+            )
+            return proceed
+        except Exception as e:
+            logger.error(f"[PSD Validation] Error validating {file_path}: {e}")
+            self.log_update.emit(f"[PSD Validation] Error validating {Path(file_path).name}: {str(e)}")
+            # Validation itself crashed — still let the user decide, with a
+            # synthetic result explaining that validation could not complete.
+            fallback_result = PSDValidationResult()
+            fallback_result.add("Validation Execution", False, f"Validation could not be completed: {e}")
+            return request_psd_upload_confirmation(file_path, fallback_result)
+
     def _update_cache_and_signals(self, action_type, src_path, dest_path, item, task_id, is_nas, file_type="original"):
         cache = load_cache()
         cache.setdefault("downloaded_files", {})
@@ -1839,350 +4503,31 @@ class FileWatcherWorker(QObject):
             logger.error(f"Failed to update cache and signals for {action_type} ({file_type}, Task {task_id}): {str(e)}")
             self.log_update.emit(f"[Transfer] Failed to update cache and signals for {action_type} ({file_type}, Task {task_id}): {str(e)}")
             raise
-
+    
     def open_with_photoshop(self, file_path, key_val):
-        """Open a file in Adobe Photoshop across platforms and bring it to the front if minimized."""
+        """Open file in Photoshop — delegates to module-level helper."""
         try:
-            import platform
-            import subprocess
-            import time
-            import logging
-            import os
-            from pathlib import Path
+            key_val_int = int(key_val) if key_val is not None else 0
+        except (TypeError, ValueError):
+            key_val_int = 0
 
-            logger = logging.getLogger(__name__)
-            system = platform.system()
-            file_path = str(Path(file_path).resolve())
-            try:
-                key_val_int = int(key_val)
-            except (TypeError, ValueError):
-                key_val_int = 0  # fallback if conversion fails
+        if key_val_int >= 1:
+            self.log_update.emit("[Photoshop] Skipping — key_val >= 1")
+            return True
 
-            if key_val_int >= 1:
-                self.log_update.emit("[Photoshop] Skipping photoshop file open")
-                logger.info("Skipping photoshop file open")
-                return True
-            if not Path(file_path).exists():
-                raise FileNotFoundError(f"File does not exist: {file_path}")
-
-            logger.debug(f"System: {system}, File path: {file_path}")
-            photoshop_path = None
-
-            if system == "Windows":
-                try:
-                    import win32gui
-                    import win32con
-                    import win32com.client
-                    import win32api
-                    import win32process
-                    import ctypes
-                except ImportError as e:
-                    raise ImportError("Required pywin32 modules not found. Run: pip install pywin32") from e
-
-                # Check environment variable for Photoshop path
-                photoshop_path = os.getenv("PHOTOSHOP_PATH")
-                if photoshop_path and Path(photoshop_path).exists():
-                    logger.debug(f"Using Photoshop path from PHOTOSHOP_PATH: {photoshop_path}")
-                else:
-                    search_dirs = [
-                        Path("C:/Program Files/Adobe"),
-                        Path("C:/Program Files (x86)/Adobe")
-                    ]
-                    for base_dir in search_dirs:
-                        if not base_dir.exists():
-                            logger.debug(f"Search directory does not exist: {base_dir}")
-                            continue
-                        photoshop_exes = list(base_dir.glob("Adobe Photoshop */Photoshop.exe"))
-                        if photoshop_exes:
-                            photoshop_exes.sort(key=lambda x: x.parent.name, reverse=True)
-                            photoshop_path = str(photoshop_exes[0])
-                            logger.debug(f"Found Photoshop at: {photoshop_path}")
-                            break
-                    if not photoshop_path:
-                        raise FileNotFoundError("Adobe Photoshop executable not found in Program Files")
-
-                # Verify Photoshop executable accessibility
-                if not os.access(photoshop_path, os.X_OK):
-                    raise PermissionError(f"Photoshop executable is not accessible: {photoshop_path}")
-
-                # Try opening via COM first
-                try:
-                    logger.debug("Attempting to open via COM")
-                    ps_app = win32com.client.Dispatch("Photoshop.Application")
-                    ps_app.Visible = True
-                    ps_app.Open(file_path)
-
-                    # Wait for Photoshop window and bring to front
-                    def wait_for_window(title_contains="Adobe Photoshop", max_wait=10, interval=0.5):
-                        start_time = time.time()
-                        while time.time() - start_time < max_wait:
-                            windows = []
-                            def enum_handler(hwnd, lst):
-                                if win32gui.IsWindowVisible(hwnd):
-                                    title = win32gui.GetWindowText(hwnd)
-                                    if title_contains.lower() in title.lower():
-                                        lst.append(hwnd)
-                            win32gui.EnumWindows(enum_handler, windows)
-                            if windows:
-                                logger.debug(f"Found Photoshop window: {win32gui.GetWindowText(windows[0])}")
-                                return windows[0]
-                            time.sleep(interval)
-                        logger.warning("Photoshop window not found")
-                        return None
-
-                    hwnd = wait_for_window()
-                    if hwnd:
-                        try:
-                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                            win32gui.SetForegroundWindow(hwnd)
-                            logger.debug(f"Activated Photoshop window: {win32gui.GetWindowText(hwnd)}")
-                        except Exception as e:
-                            logger.debug(f"Window activation failed: {e}")
-                    else:
-                        logger.warning("Failed to activate Photoshop window: not found")
-                    logger.info(f"Opened {Path(file_path).name} via COM")
-                    self.log_update.emit(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                    return  # Exit after successful COM opening
-                except Exception as e:
-                    logger.debug(f"COM attempt failed: {e}. Falling back to subprocess.")
-
-                # Try subprocess only if COM fails
-                cmd = [photoshop_path, file_path]
-                logger.debug(f"Executing subprocess command: {cmd}")
-                try:
-                    process = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True)
-                    # Wait for Photoshop window and bring to front
-                    def wait_for_window(title_contains="Adobe Photoshop", max_wait=10, interval=0.5):
-                        start_time = time.time()
-                        while time.time() - start_time < max_wait:
-                            windows = []
-                            def enum_handler(hwnd, lst):
-                                if win32gui.IsWindowVisible(hwnd):
-                                    title = win32gui.GetWindowText(hwnd)
-                                    if title_contains.lower() in title.lower():
-                                        lst.append(hwnd)
-                            win32gui.EnumWindows(enum_handler, windows)
-                            if windows:
-                                logger.debug(f"Found Photoshop window: {win32gui.GetWindowText(windows[0])}")
-                                return windows[0]
-                            time.sleep(interval)
-                        logger.warning("Photoshop window not found")
-                        return None
-
-                    hwnd = wait_for_window()
-                    if hwnd:
-                        try:
-                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                            win32gui.SetForegroundWindow(hwnd)
-                            logger.debug(f"Activated Photoshop window: {win32gui.GetWindowText(hwnd)}")
-                        except Exception as e:
-                            logger.debug(f"Subprocess window activation failed: {e}")
-                    else:
-                        logger.warning("Failed to activate Photoshop window: not found")
-                    logger.info(f"Opened {Path(file_path).name} via subprocess")
-                    self.log_update.emit(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                except subprocess.CalledProcessError as e:
-                    logger.debug(f"Subprocess failed: {e}, stderr: {e.stderr}")
-                    raise RuntimeError(f"Failed to open file: {e}")
-
-            elif system == "Darwin":
-                # Check environment variable for custom Photoshop path
-                custom_path = os.getenv("PHOTOSHOP_PATH")
-                if custom_path and Path(custom_path).exists():
-                    photoshop_path = str(Path(custom_path).resolve())
-                    logger.debug(f"Found Photoshop via environment variable: {photoshop_path}")
-
-                # Try Spotlight search with broader query
-                if not photoshop_path:
-                    try:
-                        result = subprocess.run(
-                            ["mdfind", "kMDItemKind == 'Application' && (kMDItemFSName == 'Adobe Photoshop*.app' || kMDItemFSName == 'Photoshop*.app' || kMDItemFSName == 'Adobe*Photoshop*.app')"],
-                            capture_output=True, text=True, check=True
-                        )
-                        if result.stdout.strip():
-                            photoshop_path = result.stdout.strip().split("\n")[0]
-                            logger.debug(f"Found Photoshop via mdfind: {photoshop_path}")
-                    except subprocess.CalledProcessError as e:
-                        logger.debug(f"mdfind failed with error: {e}, stderr: {e.stderr}")
-
-                # Expanded search locations with deeper glob patterns
-                if not photoshop_path:
-                    search_locations = [
-                        Path("/Applications"),
-                        Path("~/Applications").expanduser(),
-                        Path("/Applications/Adobe Creative Cloud"),
-                        Path("~/Applications/Adobe Creative Cloud").expanduser(),
-                        Path("/Applications/Adobe"),
-                        Path("~/Applications/Adobe").expanduser(),
-                        Path("/Applications/Adobe Photoshop*"),
-                        Path("~/Applications/Adobe Photoshop*").expanduser(),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop*"),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop*").expanduser(),
-                    ]
-                    for search_dir in search_locations:
-                        if not search_dir.exists():
-                            logger.debug(f"Search directory does not exist: {search_dir}")
-                            continue
-                        logger.debug(f"Searching for Photoshop in: {search_dir}")
-                        photoshop_apps = (
-                            list(search_dir.glob("Adobe*Photoshop*.app")) +
-                            list(search_dir.glob("Photoshop*.app")) +
-                            list(search_dir.glob("*/Adobe*Photoshop*.app"))
-                        )
-                        if photoshop_apps:
-                            logger.debug(f"Found potential Photoshop apps: {[str(app) for app in photoshop_apps]}")
-                            photoshop_apps.sort(key=lambda x: x.name, reverse=True)
-                            photoshop_path = str(photoshop_apps[0])
-                            logger.debug(f"Selected Photoshop via glob in {search_dir}: {photoshop_path}")
-                            break
-
-                # Check versioned paths, including exact match for 2025
-                if not photoshop_path:
-                    versioned_paths = [
-                        Path("/Applications/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-                        Path("/Applications/Adobe Photoshop 2025/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-                        Path("/Applications/Adobe Photoshop 2024/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-                        Path("/Applications/Adobe Photoshop 2023/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2025/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2024/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2023/Adobe Photoshop.app"),
-                        Path("~/Applications/Adobe Photoshop 2025/Adobe Photoshop 2025.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2025/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2024/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2023/Adobe Photoshop 2023.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2023/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop 2025.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop 2024.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop 2023.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop.app").expanduser(),
-                    ]
-                    for path in versioned_paths:
-                        if path.exists():
-                            photoshop_path = str(path)
-                            logger.debug(f"Found Photoshop in versioned path: {photoshop_path}")
-                            break
-
-                # Fallback to user selection via file dialog (if GUI is available)
-                if not photoshop_path and hasattr(self, 'window'):
-                    from PySide6.QtWidgets import QFileDialog
-                    logger.debug("Prompting user to select Photoshop application")
-                    photoshop_path, _ = QFileDialog.getOpenFileName(
-                        self.window(), "Locate Adobe Photoshop", "/Applications", "Applications (*.app)"
-                    )
-                    if photoshop_path:
-                        logger.debug(f"User-selected Photoshop path: {photoshop_path}")
-                    else:
-                        logger.debug("User cancelled Photoshop path selection")
-
-                if not photoshop_path:
-                    error_msg = (
-                        "Adobe Photoshop application not found in /Applications, ~/Applications, "
-                        "Adobe Creative Cloud, or Adobe directories. Please set PHOTOSHOP_PATH environment variable."
-                    )
-                    logger.error(error_msg)
-                    raise FileNotFoundError(error_msg)
-
-                # Open file and bring Photoshop to front
-                for attempt in range(3):
-                    try:
-                        subprocess.run(["open", "-a", photoshop_path, file_path], check=True)
-                        app_name = Path(photoshop_path).name.replace('.app', '')
-                        applescript = f'''
-                            tell application "{app_name}"
-                                activate
-                            end tell
-                            delay 0.5
-                            tell application "System Events"
-                                set frontmost of process "{app_name}" to true
-                            end tell
-                        '''
-                        result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, check=True)
-                        logger.debug(f"AppleScript output: {result.stdout}")
-                        logger.info(f"Opened {Path(file_path).name} via open -a at {photoshop_path}")
-                        self.log_update.emit(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                        break
-                    except subprocess.CalledProcessError as e:
-                        if attempt < 2:
-                            logger.debug(f"Attempt {attempt+1} failed: {e}. Retrying...")
-                            time.sleep(2)
-                        else:
-                            raise RuntimeError(f"Failed to open file after 3 attempts: {e}")
-
-            elif system == "Linux":
-                try:
-                    subprocess.run(["wine", "--version"], capture_output=True, check=True)
-                    wine_dirs = [
-                        Path.home() / ".wine/drive_c/Program Files/Adobe",
-                        Path.home() / ".wine/drive_c/Program Files (x86)/Adobe"
-                    ]
-                    for base_dir in wine_dirs:
-                        if not base_dir.exists():
-                            continue
-                        photoshop_exes = list(base_dir.glob("Adobe Photoshop */Photoshop.exe"))
-                        if photoshop_exes:
-                            photoshop_exes.sort(key=lambda x: x.parent.name, reverse=True)
-                            photoshop_path = str(photoshop_exes[0])
-                            break
-                    if not photoshop_path:
-                        raise FileNotFoundError("Photoshop.exe not found in Wine directories")
-
-                    for attempt in range(3):
-                        try:
-                            subprocess.run(["wine", photoshop_path, file_path], check=True)
-                            time.sleep(1)  # Initial wait for process to start
-                            # Try multiple window title patterns
-                            title_patterns = ["Adobe Photoshop", "Photoshop"]
-                            for pattern in title_patterns:
-                                try:
-                                    result = subprocess.run(["wmctrl", "-l"], capture_output=True, text=True, check=True)
-                                    for line in result.stdout.splitlines():
-                                        if pattern in line:
-                                            window_id = line.split()[0]
-                                            subprocess.run(["wmctrl", "-i", "-a", window_id], check=True)
-                                            logger.debug(f"Activated window with ID {window_id}: {line}")
-                                            break
-                                except Exception as e:
-                                    logger.debug(f"Failed to activate window with pattern {pattern}: {e}")
-                            logger.info(f"Opened {Path(file_path).name} via wine")
-                            self.log_update.emit(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                            break
-                        except subprocess.CalledProcessError as e:
-                            if attempt < 2:
-                                logger.debug(f"Attempt {attempt+1} failed: {e}. Retrying...")
-                                time.sleep(2)
-                            else:
-                                raise RuntimeError(f"Failed to open file after 3 attempts: {e}")
-                except subprocess.CalledProcessError:
-                    raise FileNotFoundError("Wine is not installed or not functioning")
-
-            else:
-                error_message = f"Unsupported platform for Photoshop: {system}"
-                logger.warning(error_message)
-                self.log_update.emit(f"[Photoshop] {error_message}")
-                raise ValueError(error_message)
-
+        try:
+            return open_file_with_photoshop(file_path, log_callback=self.log_update.emit)
         except Exception as e:
-            error_message = f"Failed to open {Path(file_path).name} in Photoshop: {str(e)}"
-            logger.error(error_message)
-            self.log_update.emit(f"[Photoshop] {error_message}")
+            error_msg = f"Failed to open {Path(file_path).name} in Photoshop: {e}"
+            logger.error(error_msg)
+            self.log_update.emit(f"[Photoshop] {error_msg}")
             raise
     
+    
+    
     @Slot(str, str, str, str, bool, bool)
-    def perform_file_transfer(self,src_path: str,dest_path: str,action_type: str,item,is_nas_src: bool,is_nas_dest: bool):
+    # def perform_file_transfer(self,src_path: str,dest_path: str,action_type: str,item,is_nas_src: bool,is_nas_dest: bool):
+    def perform_file_transfer(self, src_path: str, dest_path: str, action_type: str, item, is_nas_src: bool, is_nas_dest: bool, is_final_attempt: bool = True):
     # def perform_file_transfer(self, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
 
         # ============================================================
@@ -2289,6 +4634,11 @@ class FileWatcherWorker(QObject):
                 if not os.path.exists(dest_path):
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Failed"
                     save_cache(cache, significant_change=True)
+                    if is_final_attempt:
+                        self.alert_notification.emit(
+                            "Download Error",
+                            f"Downloaded file was not found on disk:\n{dest_path}\n\nThe transfer may have been incomplete."
+                        )
                     raise FileNotFoundError(f"{status_prefix} file not found: {dest_path}")
 
                 cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
@@ -2326,9 +4676,107 @@ class FileWatcherWorker(QObject):
             # Handle Upload / Replace
             # ------------------------------
             elif action_type.lower() in ("upload", "replace"):
+                # Upload to NAS or HTTP
+                # print(f"======into Upload-replace==========={src_path}====")
+                if is_nas_dest:
+                    job_id = str(item.get("job_id"))
+                    allowed_types = get_file_types_from_api(job_id)
+                    matched_file = None
+                    matched_ext = None
+                    first_prior = False
+                    try:
+                        #for ext in allowed_types:
+                        for ind, ext in enumerate(allowed_types):
+                            # alt_path = src_path.with_suffix(f".{ext}")
+                            alt_path = Path(src_path).with_suffix(f".{ext}")
+
+                            if alt_path.exists():
+                                first_prior = ind == 0
+                                matched_file = alt_path
+                                matched_ext = ext
+                                break
+                        # print(f"=====matched_file================{matched_file}======")
+                        if matched_file:
+                            src_path = matched_file
+                            # filename = src_path.name
+                            if not first_prior:
+                                #show_alert("File Format alert", f"Uploading {matched_ext} file. Expected format: {allowed_types[0]}", QMessageBox.Information)
+                                self.alert_notification.emit("File Format Alert", f"Prefered format: {allowed_types[0].upper()}, Currently uploading {matched_ext.upper()} file.")            
+                        else:
+                            if is_final_attempt:
+                                self.alert_notification.emit("ERROR", f"No completed file found in target folder. upload the file manually.")            
+                            cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
+                            save_cache(cache, significant_change=True)
+                            raise NotImplementedError("HTTP upload not implemented")
+
+                        dest_path = item.get("file_path", dest_path)
+                        if matched_ext:
+                            dest_path = str(Path(dest_path).with_suffix(f".{matched_ext}"))
+                        #dest_dir = os.path.dirname(dest_path)
+                        dest_path = dest_path.replace("\\", "/")
+
+                        # ── TEMPORARY: max upload file size limit ──────────
+                        # Applies to every upload/replace, any file type.
+                        # To disable: set ENABLE_MAX_UPLOAD_SIZE_LIMIT = False
+                        # near the top of this file — no other changes needed.
+                        too_big, size_mb = exceeds_max_upload_size(src_path)
+                        if too_big:
+                            cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Blocked (Too Large)"
+                            save_cache(cache, significant_change=True)
+                            self.alert_notification.emit(
+                                "Upload Blocked — File Too Large",
+                                f"'{Path(src_path).name}' is {size_mb:.1f} MB, which exceeds the "
+                                f"current {MAX_UPLOAD_SIZE_MB} MB upload limit.\n\n"
+                                "Please contact your administrator if this file needs to be uploaded."
+                            )
+                            raise UploadSizeLimitExceeded(
+                                f"{Path(src_path).name} ({size_mb:.1f} MB) exceeds the {MAX_UPLOAD_SIZE_MB} MB upload limit"
+                            )
+
+                        # ── PSD/PSB pre-upload production-readiness validation ──
+                        # For .psd/.psb files only: run the checklist and show
+                        # the report + Upload/Cancel confirmation dialog to the
+                        # user BEFORE the file is sent to the NAS — regardless
+                        # of whether validation passed or failed.
+                        src_ext = Path(src_path).suffix.lower().lstrip(".")
+                        if src_ext in ("psd", "psb"):
+                            proceed_with_upload = self._validate_and_confirm_psd_upload(str(src_path))
+                            if not proceed_with_upload:
+                                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Cancelled"
+                                save_cache(cache, significant_change=True)
+                                self.alert_notification.emit(
+                                    "Upload Cancelled",
+                                    f"Upload of '{Path(src_path).name}' was cancelled after PSD validation review."
+                                )
+                                raise PSDUploadCancelled(
+                                    f"Upload cancelled by user after PSD validation for {Path(src_path).name}"
+                                )
+
+                        self._upload_to_nas(src_path, dest_path, item)
+                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
+                    except (PSDUploadCancelled, UploadSizeLimitExceeded):
+                        # Do NOT mask these as "HTTP Not Implemented" — re-raise
+                        # as-is so the outer handler reports them accurately.
+                        raise
+                    except Exception as e:
+                        # self.alert_notification.emit("ERROR", f"2No completed file found in target folder. upload the file manually.")            
+                        cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
+                        save_cache(cache, significant_change=True)
+                        raise NotImplementedError("HTTP upload not implemented")
+
+                else:
+                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
+                    save_cache(cache, significant_change=True)
+                    raise NotImplementedError("HTTP upload not implemented")
+                
                 if not os.path.exists(src_path):
                     cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Source Missing"
                     save_cache(cache, significant_change=True)
+                    if is_final_attempt:
+                        self.alert_notification.emit(
+                            "Upload Error",
+                            "Completed files are not available. Please upload them manually."
+                        )
                     raise FileNotFoundError(f"Source file does not exist: {src_path}")
 
                 # Check if file is accessible
@@ -2340,14 +4788,7 @@ class FileWatcherWorker(QObject):
                     save_cache(cache, significant_change=True)
                     raise RuntimeError(f"File {src_path} is currently in use by another application.")
 
-                # Upload to NAS or HTTP
-                if is_nas_dest:
-                    self._upload_to_nas(src_path, dest_path, item)
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Completed"
-                else:
-                    cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} HTTP Not Implemented"
-                    save_cache(cache, significant_change=True)
-                    raise NotImplementedError("HTTP upload not implemented")
+                
 
                 save_cache(cache, significant_change=True)
                 update_download_upload_metadata(task_id, "completed")
@@ -2388,6 +4829,46 @@ class FileWatcherWorker(QObject):
             else:
                 raise ValueError(f"Invalid action_type: {action_type}")
             IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
+
+        except PSDUploadCancelled as e:
+            # User explicitly cancelled the upload from the PSD validation
+            # dialog — this is not a transfer failure, so keep the status
+            # and logging distinct from a genuine "Failed" transfer.
+            cache.setdefault(metadata_key, {})
+            if spec_id not in cache[metadata_key]:
+                cache[metadata_key][spec_id] = {"local_path": dest_path, "status": f"{status_prefix} Cancelled"}
+            else:
+                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Cancelled"
+
+            save_cache(cache, significant_change=True)
+            update_download_upload_metadata(task_id, "cancelled")
+            IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
+            logger.info(f"{status_prefix} cancelled by user after PSD validation (Task {task_id}): {str(e)}")
+            self.log_update.emit(f"[Transfer] Cancelled by user (Task {task_id}): {str(e)}")
+            self.progress_update.emit(f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}", dest_path, 0)
+            self.download_status_detail.emit(dest_path, f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}", action_type, 0, True)
+
+            raise
+
+        except UploadSizeLimitExceeded as e:
+            # File exceeds the temporary MAX_UPLOAD_SIZE_MB limit — this is
+            # a policy block, not a transfer failure, so keep the status
+            # and logging distinct from a genuine "Failed" transfer.
+            cache.setdefault(metadata_key, {})
+            if spec_id not in cache[metadata_key]:
+                cache[metadata_key][spec_id] = {"local_path": dest_path, "status": f"{status_prefix} Blocked (Too Large)"}
+            else:
+                cache[metadata_key][spec_id]["api_response"]["request_status"] = f"{status_prefix} Blocked (Too Large)"
+
+            save_cache(cache, significant_change=True)
+            update_download_upload_metadata(task_id, "blocked")
+            IS_APP_ACTIVE_UPLOAD_DOWNLOAD = False
+            logger.info(f"{status_prefix} blocked by size limit (Task {task_id}): {str(e)}")
+            self.log_update.emit(f"[Transfer] Blocked — exceeds size limit (Task {task_id}): {str(e)}")
+            self.progress_update.emit(f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}", dest_path, 0)
+            self.download_status_detail.emit(dest_path, f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}", action_type, 0, True)
+
+            raise
 
         except Exception as e:
             # Update cache with failure
@@ -2450,7 +4931,7 @@ class FileWatcherWorker(QObject):
             user_id = cache.get('user_id', '')
             token = cache.get('token', '')
             cache.setdefault('user_type', 'operator')
-            save_cache(cache)
+            save_cache(cache, significant_change=False)
 
             if not user_id or not token:
                 logger.error("No user_id or token found in cache")
@@ -2630,7 +5111,7 @@ class FileWatcherWorker(QObject):
                         continue
                     # self.processed_tasks.add(task_key)
                     self.processed_tasks[task_key] = time.time()
-                    update_download_upload_metadata(task_id, "in progress")
+                    
 
                 logger.debug(f"Submitting task: {task_key}, file_path={file_path}")
                 self.log_update.emit(f"[API Scan] Submitting: {task_key}, action={action_type}")
@@ -2651,11 +5132,14 @@ class FileWatcherWorker(QObject):
                     try:
                         result = future.result()
                         updates.append(result['update'])
+                        # ── Mark as processed regardless of success/failure ──
+                        # Without this, failed tasks are never added to processed_tasks
+                        # and the poll loop keeps re-picking them up every 3 seconds,
+                        # causing infinite retry loops and repeated popups.
+                        with self._lock:
+                            self.processed_tasks[result['task_key']] = time.time()
                         if result['success']:
                             completed_tasks += 1
-                            with self._lock:
-                                # self.processed_tasks.add(result['task_key'])
-                                self.processed_tasks[result['task_key']] = time.time()
                         else:
                             failed_tasks += 1
                     except Exception as e:
@@ -2697,6 +5181,7 @@ class FileWatcherWorker(QObject):
                 app_signals.append_log.emit(f"[API Scan] Initiating download: {file_name}")
                 app_signals.update_file_list.emit(local_path, f"{action_type} Queued", action_type, 0, not is_online)
                 for attempt in range(max_download_retries):
+                    is_final_attempt = (attempt == max_download_retries - 1)
                     try:
                         if not is_online:
                             with sftp_semaphore:  # Limit concurrent SFTP connections
@@ -2724,6 +5209,18 @@ class FileWatcherWorker(QObject):
                             delay = 2 ** attempt
                             logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Retrying download after {delay}s, instance: {id(self)}")
                             self.log_update.emit(f"[API Scan] Retrying download after {delay}s")
+                            # ── NEW: tell the UI a retry is happening ──
+                            # Without this the card/window keeps showing the last
+                            # progress % it received before the drop, which looks
+                            # "stuck" — even though the app is about to restart
+                            # the transfer from scratch (SCP has no resume).
+                            retry_msg = (
+                                f"⚠ Network lost — retrying download "
+                                f"(attempt {attempt + 2}/{max_download_retries}) in {delay}s"
+                            )
+                            self.download_status_detail.emit(
+                                local_path, retry_msg, action_type, 0, not is_online
+                            )
                             time.sleep(delay)
                         else:
                             raise
@@ -2733,9 +5230,10 @@ class FileWatcherWorker(QObject):
                 app_signals.append_log.emit(f"[API Scan] Initiating upload: {file_name}")
                 app_signals.update_file_list.emit(local_path, f"{action_type} Queued", action_type, 0, not is_online)
                 for attempt in range(max_download_retries):
+                    is_final_attempt = (attempt == max_download_retries - 1)
                     try:
                         if not is_online:
-                            with sftp_semaphore:  # Limit concurrent SFTP connections
+                            with sftp_semaphore:
                                 client_name = item.get("client_name", "").strip().replace(" ", "_") or None
                                 project_name = item.get("project_name", item.get("name", "")).strip().replace(" ", "_") or None
                                 if not client_name or not project_name:
@@ -2752,7 +5250,8 @@ class FileWatcherWorker(QObject):
                                         client_name = client_name or "default_client"
                                         project_name = project_name or "default_project"
                                 original_nas_path = item.get('file_path', file_path)
-                                self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online)
+                                # self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online)
+                                self.show_progress(f"Uploading {file_name}", local_path, original_nas_path, action_type, item, False, not is_online, is_final_attempt)
                                 self.log_update.emit(f"[API Scan] Upload successful: {local_path} to {original_nas_path}, task_id: {task_id}")
                                 return {
                                     'update': (local_path, "Upload Completed (Original)", action_type, 100, not is_online),
@@ -2760,13 +5259,36 @@ class FileWatcherWorker(QObject):
                                     'success': True
                                 }
                         else:
-                            self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online)
+                            # self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online)
+                            self.show_progress(f"Uploading {file_name}", local_path, file_path, action_type, item, False, not is_online, is_final_attempt)
                             self.log_update.emit(f"[API Scan] Upload successful: {local_path} to {file_path}, task_id: {task_id}")
                             return {
                                 'update': (local_path, "Upload Completed (Original)", action_type, 100, not is_online),
                                 'task_key': task_key,
                                 'success': True
                             }
+                    except PSDUploadCancelled as e:
+                        # User explicitly declined the upload from the PSD
+                        # validation dialog — stop immediately instead of
+                        # re-prompting them again on every retry attempt.
+                        logger.info(f"Upload cancelled by user for {local_path} (Task {task_id}): {str(e)}")
+                        self.log_update.emit(f"[API Scan] Upload cancelled by user (Task {task_id}): {str(e)}")
+                        return {
+                            'update': (local_path, "Upload Cancelled", action_type, 0, not is_online),
+                            'task_key': task_key,
+                            'success': False
+                        }
+                    except UploadSizeLimitExceeded as e:
+                        # File exceeds the configured size limit — retrying
+                        # won't change the file size, so stop immediately
+                        # instead of burning 3 retry attempts and re-alerting.
+                        logger.info(f"Upload blocked by size limit for {local_path} (Task {task_id}): {str(e)}")
+                        self.log_update.emit(f"[API Scan] Upload blocked — exceeds size limit (Task {task_id}): {str(e)}")
+                        return {
+                            'update': (local_path, "Upload Blocked (Too Large)", action_type, 0, not is_online),
+                            'task_key': task_key,
+                            'success': False
+                        }
                     except Exception as e:
                         logger.error(f"[{datetime.now(timezone.utc).isoformat()}] Upload failed for {local_path} (Task {task_id}): {str(e)}, attempt {attempt + 1}, instance: {id(self)}")
                         self.log_update.emit(f"[API Scan] Upload failed for {local_path} (Task {task_id}): {str(e)}")
@@ -2775,6 +5297,14 @@ class FileWatcherWorker(QObject):
                             delay = 2 ** attempt
                             logger.debug(f"[{datetime.now(timezone.utc).isoformat()}] Retrying upload after {delay}s, instance: {id(self)}")
                             self.log_update.emit(f"[API Scan] Retrying upload after {delay}s")
+                            # ── NEW: tell the UI a retry is happening ──
+                            retry_msg = (
+                                f"⚠ Network lost — retrying upload "
+                                f"(attempt {attempt + 2}/{max_download_retries}) in {delay}s"
+                            )
+                            self.upload_status_detail.emit(
+                                local_path, retry_msg, action_type, 0, not is_online
+                            )
                             time.sleep(delay)
                         else:
                             raise
@@ -2803,11 +5333,30 @@ class FileWatcherWorker(QObject):
             self.log_update.emit(f"[API Scan] Connectivity check failed: {str(e)}")
             return False
 
-    def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
+    # def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest):
+    # def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=True):
+    #     task_id = str(item.get('id', ''))
+    #     original_filename = Path(src_path).name
+    #     update_download_upload_metadata(task_id, "in progress")
+    #     try:
+    #         self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest)
+    #         self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {original_filename}", dest_path, 100)
+    #         self.download_status_detail.emit(dest_path, f"{action_type} Completed (Task {task_id}): {original_filename}", action_type, 10, True)
+    #     except Exception as e:
+    #         logger.error(f"Progress error for {action_type} (Task {task_id}): {str(e)}")
+    #         self.log_update.emit(f"[App] Progress update: {action_type} Failed (Task {task_id}): {original_filename}")
+    #         raise
+
+    def show_progress(self, message, src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=True):
+        print("================item===================================")
+        print(item)
+        print("=================item=========================================")
+
         task_id = str(item.get('id', ''))
         original_filename = Path(src_path).name
+        update_download_upload_metadata(task_id, "in progress")
         try:
-            self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest)
+            self.perform_file_transfer(src_path, dest_path, action_type, item, is_nas_src, is_nas_dest, is_final_attempt=is_final_attempt)
             self.progress_update.emit(f"{action_type} Completed (Task {task_id}): {original_filename}", dest_path, 100)
             self.download_status_detail.emit(dest_path, f"{action_type} Completed (Task {task_id}): {original_filename}", action_type, 10, True)
         except Exception as e:
@@ -2998,47 +5547,64 @@ class LogWindow(QDialog):
             app_signals.append_log.emit(f"[Log] Failed to load logs: {str(e)}")
 
     def append_log(self, message):
-        """Append a log message to the text edit."""
+        """
+        Append a log message to the text edit.
+        Connected via Qt.QueuedConnection — always runs on main thread.
+        No processEvents() needed or safe here.
+        """
         try:
-            # Format API scan messages in bold
             if "[API Scan]" in message:
                 self.text_edit.append(f"<b>{message}</b>")
             else:
                 self.text_edit.append(message)
 
-            # Keep only the last 200 lines
+            # Trim to last 200 lines to prevent unbounded memory growth
             lines = self.text_edit.toPlainText().splitlines()
             if len(lines) > 200:
+                # Block signals during bulk replace to avoid recursive append_log
+                self.text_edit.blockSignals(True)
                 self.text_edit.setPlainText("\n".join(lines[-200:]))
+                self.text_edit.blockSignals(False)
 
             self.text_edit.moveCursor(QTextCursor.End)
             self.text_edit.ensureCursorVisible()
-            QApplication.processEvents()
+            # NOTE: QApplication.processEvents() removed — re-entrant crash risk.
+            # Qt repaints the widget automatically via its own event loop.
             logger.debug(f"Appended log: {message}")
         except Exception as e:
             logger.error(f"Failed to append log: {e}")
-            app_signals.append_log.emit(f"[Log] Failed to append log: {str(e)}")
-
+            # NOTE: Do NOT emit append_log here — would cause infinite recursion
+            
     def append_api_status(self, endpoint, status, status_code):
-        """Append API status to the log."""
+        """
+        Append API call status to the log.
+        Connected via Qt.QueuedConnection — always runs on main thread.
+        No processEvents() needed or safe here.
+        """
         try:
-            log_msg = f"[API Scan] API Call: {endpoint} | Status: {status} | Code: {status_code}"
+            log_msg = (
+                f"[API Scan] API Call: {endpoint} "
+                f"| Status: {status} "
+                f"| Code: {status_code}"
+            )
             self.text_edit.append(f"<b>{log_msg}</b>")
 
-            # Keep only the last 200 lines
+            # Trim to last 200 lines
             lines = self.text_edit.toPlainText().splitlines()
             if len(lines) > 200:
+                self.text_edit.blockSignals(True)
                 self.text_edit.setPlainText("\n".join(lines[-200:]))
+                self.text_edit.blockSignals(False)
 
             self.text_edit.moveCursor(QTextCursor.End)
             self.text_edit.ensureCursorVisible()
-            QApplication.processEvents()
-            app_signals.append_log.emit(log_msg)
+            # NOTE: QApplication.processEvents() removed — re-entrant crash risk.
             logger.debug(f"Appended API status: {log_msg}")
         except Exception as e:
             logger.error(f"Failed to append API status: {e}")
-            app_signals.append_log.emit(f"[Log] Failed to append API status: {str(e)}")
-
+            # NOTE: Do NOT emit append_log here — would cause recursive append_api_status
+            
+            
     def closeEvent(self, event):
         logger.debug("LogWindow is closing. Disconnecting signals.")
         self.disconnect_signals()
@@ -3054,10 +5620,10 @@ class ThumbnailWorker(QRunnable):
         self.target_label = target_label
 
     def run(self):
+        if not self.url:
+            return
         try:
-            if not self.url:
-                return
-            r = requests.get(self.url, timeout=10)
+            r = requests.get(self.url, timeout=5)  # reduced from 10s — thumbnails should be fast
             if r.status_code != 200:
                 return
             pix = QPixmap()
@@ -3067,8 +5633,294 @@ class ThumbnailWorker(QRunnable):
             QMetaObject.invokeMethod(
                 self.target_label, "setPixmap", Qt.QueuedConnection, Q_ARG(QPixmap, pix)
             )
-        except Exception:
-            pass
+        except requests.exceptions.Timeout:
+            logger.debug(f"[Thumbnail] Timed out fetching: {self.url}")
+        except requests.exceptions.ConnectionError:
+            logger.debug(f"[Thumbnail] Connection error fetching: {self.url}")
+        except requests.exceptions.RequestException as e:
+            logger.debug(f"[Thumbnail] Request failed: {e}")
+        except Exception as e:
+            logger.debug(f"[Thumbnail] Unexpected error: {e}")
+
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REPLACE the entire TransferNotificationPopup + TransferNotificationManager
+# classes with the following. Also update start_file_watcher() to use
+# the new NotificationOverlay.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TransferNotificationPopup(QFrame):
+    """Single notification card for one transfer."""
+
+    def __init__(self, spec_id: str, filename: str, action: str, parent=None):
+        super().__init__(parent)
+        self.spec_id = spec_id
+        self.action = action
+        self._done = False
+
+        self.setFixedWidth(320)
+        self.setObjectName("NotifCard")
+
+        is_upload = action == "upload"
+        accent = "#3b82f6" if is_upload else "#2ecc71"
+        icon  = "⬆️" if is_upload else "⬇️"
+        label = "Upload" if is_upload else "Download"
+
+        self.setStyleSheet(f"""
+            QFrame#NotifCard {{
+                background: #1e1e2e;
+                border: 1px solid #2a2a3e;
+                border-left: 4px solid {accent};
+                border-radius: 10px;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+
+        # ── Header ───────────────────────────────────────────────────────────
+        header = QHBoxLayout()
+        self.icon_lbl = QLabel(f"{icon} {label}")
+        self.icon_lbl.setStyleSheet(
+            f"color:{accent}; font-weight:bold; font-size:12px; background:transparent;"
+        )
+        self.status_lbl = QLabel("Starting...")
+        self.status_lbl.setStyleSheet(
+            "color:#888; font-size:11px; background:transparent;"
+        )
+        self.status_lbl.setAlignment(Qt.AlignRight)
+
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setFixedSize(18, 18)
+        self.close_btn.setStyleSheet("""
+            QPushButton { background:transparent; color:#555; border:none; font-size:11px; }
+            QPushButton:hover { color:#fff; }
+        """)
+        self.close_btn.clicked.connect(self._dismiss)
+
+        header.addWidget(self.icon_lbl)
+        header.addWidget(self.status_lbl, 1)
+        header.addWidget(self.close_btn)
+        layout.addLayout(header)
+
+        # ── Filename ──────────────────────────────────────────────────────────
+        self.file_lbl = QLabel(filename)
+        self.file_lbl.setStyleSheet(
+            "color:#ccc; font-size:11px; background:transparent;"
+        )
+        self.file_lbl.setWordWrap(True)
+        self.file_lbl.setMaximumWidth(290)
+        layout.addWidget(self.file_lbl)
+
+        # ── Progress bar ──────────────────────────────────────────────────────
+        self.bar = QProgressBar()
+        self.bar.setFixedHeight(5)
+        self.bar.setTextVisible(False)
+        self.bar.setRange(0, 100)
+        self.bar.setValue(0)
+        self.bar.setStyleSheet(f"""
+            QProgressBar {{ background:#2a2a3e; border-radius:2px; border:none; }}
+            QProgressBar::chunk {{ background:{accent}; border-radius:2px; }}
+        """)
+        layout.addWidget(self.bar)
+
+        # ── Percent label ─────────────────────────────────────────────────────
+        self.pct_lbl = QLabel("0%")
+        self.pct_lbl.setStyleSheet(
+            "color:#666; font-size:10px; background:transparent;"
+        )
+        self.pct_lbl.setAlignment(Qt.AlignRight)
+        layout.addWidget(self.pct_lbl)
+
+        # ── Auto-dismiss timer ────────────────────────────────────────────────
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setSingleShot(True)
+        self._auto_timer.timeout.connect(self._dismiss)
+
+        # ── Fade-in ───────────────────────────────────────────────────────────
+        self._opacity = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity)
+        self._anim = QPropertyAnimation(self._opacity, b"opacity")
+        self._anim.setDuration(300)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    def update_progress(self, percent: int, status_text: str = ""):
+        self.bar.setValue(percent)
+        self.pct_lbl.setText(f"{percent}%")
+        if status_text:
+            short = status_text.split(" • ")[0] if " • " in status_text else status_text
+            self.status_lbl.setText(short)
+
+    def mark_done(self, success: bool):
+        if self._done:
+            return
+        self._done = True
+        self.bar.setValue(100)
+        self.pct_lbl.setText("100%")
+        if success:
+            self.status_lbl.setText("✅ Completed")
+            self.status_lbl.setStyleSheet(
+                "color:#2ecc71; font-size:11px; background:transparent;"
+            )
+        else:
+            self.status_lbl.setText("❌ Failed")
+            self.status_lbl.setStyleSheet(
+                "color:#e74c3c; font-size:11px; background:transparent;"
+            )
+        self._auto_timer.start(4000)
+
+    # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _dismiss(self):
+        self._anim2 = QPropertyAnimation(self._opacity, b"opacity")
+        self._anim2.setDuration(250)
+        self._anim2.setStartValue(1.0)
+        self._anim2.setEndValue(0.0)
+        self._anim2.finished.connect(self._remove_self)
+        self._anim2.start()
+
+    def _remove_self(self):
+        manager = self.parent()
+        if manager and hasattr(manager, "_remove_popup"):
+            manager._remove_popup(self)
+        self.deleteLater()
+
+
+class TransferNotificationManager(QWidget):
+    """
+    Floating top-level overlay — always on top, bottom-right of the screen.
+
+    Key fixes vs the original:
+    • Uses Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint so the
+      overlay is always visible regardless of which window is focused.
+    • Does NOT depend on an anchor widget — anchors to the screen instead.
+    • setWindowOpacity(0.95) gives a slight transparency so it feels non-intrusive.
+    • A single _reposition() call on construction is all that's needed.
+    """
+
+    def __init__(self, parent=None):
+        # ── CRITICAL: pass None so this becomes a real top-level window ───────
+        super().__init__(None)
+
+        self._popups: dict = {}   # spec_id → TransferNotificationPopup
+
+        # ── Window flags: frameless, always-on-top tool window ────────────────
+        self.setWindowFlags(
+            Qt.Tool
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.X11BypassWindowManagerHint   # needed on some Linux WMs
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)  # never steal focus
+        self.setWindowOpacity(0.95)
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(8, 8, 8, 8)
+        self._layout.setSpacing(8)
+        self._layout.setAlignment(Qt.AlignBottom | Qt.AlignRight)
+
+        self._reposition()
+        self.show()
+        self.raise_()
+
+    # ── Geometry ──────────────────────────────────────────────────────────────
+
+    def _reposition(self):
+        """Anchor to the bottom-right corner of the primary screen."""
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()   # excludes taskbar
+
+        popup_w   = 340
+        margin    = 16
+        max_h     = min(600, available.height() - margin * 2)
+
+        x = available.right()  - popup_w - margin
+        y = available.bottom() - max_h   - margin
+
+        self.setGeometry(x, y, popup_w, max_h)
+
+    # ── Popup management ──────────────────────────────────────────────────────
+
+    def _get_or_create(self, spec_id: str, filename: str, action: str):
+        if spec_id not in self._popups:
+            popup = TransferNotificationPopup(spec_id, filename, action, parent=self)
+            self._popups[spec_id] = popup
+            self._layout.addWidget(popup)
+            popup.show()
+            self.raise_()           # keep overlay on top whenever a new card arrives
+        return self._popups[spec_id]
+
+    def _remove_popup(self, popup: TransferNotificationPopup):
+        spec_id = popup.spec_id
+        if spec_id in self._popups:
+            self._layout.removeWidget(popup)
+            del self._popups[spec_id]
+
+    # ── Slots ─────────────────────────────────────────────────────────────────
+
+    @Slot(str, str, str, int)
+    def on_download_progress(self, spec_id: str, file_path: str, filename: str, percent: int):
+        popup = self._get_or_create(spec_id, filename, "download")
+        popup.update_progress(percent)
+        if percent >= 100:
+            popup.mark_done(True)
+
+    @Slot(str, str, str, int, bool)
+    def on_download_status_detail(
+        self, file_path: str, text: str, action_type: str, percent: int, is_nas: bool
+    ):
+        if action_type != "download":
+            return
+        fname = Path(file_path).name
+        for popup in self._popups.values():
+            if popup.action == "download" and (
+                popup.file_lbl.text() == fname or file_path in popup.file_lbl.text()
+            ):
+                popup.update_progress(percent, text)
+                if "Failed" in text:
+                    popup.mark_done(False)
+                elif "Completed" in text:
+                    popup.mark_done(True)
+                break
+
+    @Slot(str, str, str, int)
+    def on_upload_progress(self, spec_id: str, file_path: str, filename: str, percent: int):
+        popup = self._get_or_create(spec_id, filename, "upload")
+        popup.update_progress(percent)
+        if percent >= 100:
+            popup.mark_done(True)
+
+    @Slot(str, str, str, int, bool)
+    def on_upload_status_detail(
+        self, file_path: str, text: str, action_type: str, percent: int, is_nas: bool
+    ):
+        if action_type != "upload":
+            return
+        fname = Path(file_path).name
+        for popup in self._popups.values():
+            if popup.action == "upload" and (
+                popup.file_lbl.text() == fname or file_path in popup.file_lbl.text()
+            ):
+                popup.update_progress(percent, text)
+                if "Failed" in text:
+                    popup.mark_done(False)
+                elif "Completed" in text:
+                    popup.mark_done(True)
+                break
+
+
 
 
 class CardWidget(QFrame):
@@ -3109,17 +5961,32 @@ class CardWidget(QFrame):
         # Info
         info = QVBoxLayout()
         info.setSpacing(6)
-        self.project_lbl = QLabel(f"<b>Project:</b> {row_data.get('project_name', 'Loading...')}")
-        self.job_lbl = QLabel(f"<b>Job:</b> {row_data.get('job_name', 'Loading...')}")
-        self.file_lbl = QLabel(f"<b>File:</b> {row_data.get('file_name', 'Unknown')}")
-        self.date_lbl = QLabel(row_data.get("created_at", ""))
+        # self.project_lbl = QLabel(f"<b>Project:</b> {row_data.get('project_name', 'Loading...')}")
+        # self.job_lbl = QLabel(f"<b>Job:</b> {row_data.get('job_name', 'Loading...')}")
+        # self.file_lbl = QLabel(f"<b>File:</b> {row_data.get('file_name', 'Unknown')}")
+        # self.date_lbl = QLabel(self._format_date(row_data.get("created_at", "")))
+        # self.user_type_lbl = QLabel(f"<b>User Type:</b> {row_data.get('user_type', '')}")
+        # self.duration_lbl = QLabel(self._format_duration(row_data.get("transfer_duration")))
+        self.project_lbl = QLabel(f"🗂️  {row_data.get('project_name', 'Loading...')}")
+        self.job_lbl     = QLabel(f"💼  {row_data.get('job_name', 'Loading...')}")
+        self.file_lbl    = QLabel(f"📄  {row_data.get('file_name', 'Unknown')}")
+        self.user_type_lbl = QLabel(f"🎭  {row_data.get('user_type', '').upper()}")
+        self.date_lbl    = QLabel(f"🕐  {self._format_date(row_data.get('created_at', ''))}")
+        self.duration_lbl  = QLabel(self._format_duration(row_data.get("transfer_duration")))
+
+        self.duration_lbl.setWordWrap(True)
+        self.duration_lbl.setStyleSheet("color: #444;")
+        
         for lbl in (self.project_lbl, self.job_lbl, self.file_lbl, self.date_lbl):
             lbl.setWordWrap(True)
             lbl.setStyleSheet("color: #444;")
         info.addWidget(self.project_lbl)
         info.addWidget(self.job_lbl)
         info.addWidget(self.file_lbl)
+        info.addWidget(self.user_type_lbl)
         info.addWidget(self.date_lbl)
+        
+        info.addWidget(self.duration_lbl)
         main.addLayout(info, 1)
 
         # Right side
@@ -3216,10 +6083,22 @@ class CardWidget(QFrame):
     def update_row(self, new_row):
         self.row_data.update(new_row)
 
-        self.project_lbl.setText(f"<b>Project:</b> {new_row.get('project_name', 'Unknown')}")
-        self.job_lbl.setText(f"<b>Job:</b> {new_row.get('job_name', 'Unknown')}")
-        self.file_lbl.setText(f"<b>File:</b> {new_row.get('file_name', 'Unknown')}")
-        self.date_lbl.setText(new_row.get("created_at", ""))
+        # self.project_lbl.setText(f"<b>Project:</b> {new_row.get('project_name', 'Unknown')}")
+        # self.job_lbl.setText(f"<b>Job:</b> {new_row.get('job_name', 'Unknown')}")
+        # self.file_lbl.setText(f"<b>File:</b> {new_row.get('file_name', 'Unknown')}")
+        # self.date_lbl.setText(self._format_date(new_row.get("created_at", "")))
+        # self.user_type_lbl.setText(f"ROLE: {new_row.get('user_type', '')}")
+        # self.duration_lbl.setText(self._format_duration(new_row.get("transfer_duration")))
+
+
+
+        self.project_lbl.setText(f"🗂️  {new_row.get('project_name', 'Unknown')}")
+        self.job_lbl.setText(f"💼  {new_row.get('job_name', 'Unknown')}")
+        self.file_lbl.setText(f"📄  {new_row.get('file_name', 'Unknown')}")
+        self.date_lbl.setText(f"🕐  {self._format_date(new_row.get('created_at', ''))}")
+        self.user_type_lbl.setText(f"🎭  {new_row.get('user_type', '').upper()}")
+        self.duration_lbl.setText(self._format_duration(new_row.get("transfer_duration")))
+
 
         status = new_row.get("status", "Download Completed")
         self.status_lbl.setText(status)
@@ -3233,6 +6112,32 @@ class CardWidget(QFrame):
             self._load_thumbnail(new_row.get("thumbnail"))
 
         self._update_action_buttons(status)
+
+    @staticmethod
+    def _format_date(value) -> str:
+        try:
+            from datetime import datetime
+            return datetime.fromtimestamp(int(value)).strftime("%B %d %Y  %I:%M:%S %p")
+        except (ValueError, TypeError, OSError):
+            return str(value) if value else ""
+
+   
+    @staticmethod
+    def _format_duration(seconds) -> str:
+        try:
+            s = float(seconds)
+            if s <= 0:
+                return ""
+            h = int(s // 3600)
+            m = int((s % 3600) // 60)
+            sec = int(s % 60)
+            if h:
+                return f"⏱️  {h}h {m}m {sec}s"
+            if m:
+                return f"⏱️  {m}m {sec}s"
+            return f"⏱️  {sec}s"
+        except (TypeError, ValueError):
+            return ""
  
     
 
@@ -3285,11 +6190,36 @@ class FileDownloadListWindow(QDialog):
         self.load_files()
 
         # Connect signals
-        watcher = FileWatcherWorker.get_instance(parent=self)
-        watcher.download_progress.connect(self.on_download_progress, Qt.QueuedConnection)
-        watcher.download_status_detail.connect(self.on_download_status_detail, Qt.QueuedConnection)
+        self._connected_watcher = None
+        self._ensure_watcher_connected()
         # Keep your existing update_file_list if needed
         # app_signals.update_file_list.connect(self.on_file_update, Qt.QueuedConnection)
+
+    def _ensure_watcher_connected(self):
+        """
+        (Re)connect to the CURRENT FileWatcherWorker singleton.
+
+        FIX: Every logout/login (and every start_file_watcher() call) does
+        `FileWatcherWorker._instance = None` and creates a brand-new worker
+        with its own fresh download_progress/download_status_detail signals.
+        This window used to connect only once in __init__, so after a single
+        logout/login cycle it stayed wired to the dead old worker and the
+        card UI silently stopped updating even though transfers were
+        actually happening. Called from showEvent so it's always current.
+        """
+        watcher = FileWatcherWorker.get_instance()
+        if watcher is self._connected_watcher:
+            return
+        if self._connected_watcher is not None:
+            try:
+                self._connected_watcher.download_progress.disconnect(self.on_download_progress)
+                self._connected_watcher.download_status_detail.disconnect(self.on_download_status_detail)
+            except Exception:
+                pass
+        watcher.download_progress.connect(self.on_download_progress, Qt.QueuedConnection)
+        watcher.download_status_detail.connect(self.on_download_status_detail, Qt.QueuedConnection)
+        self._connected_watcher = watcher
+        logger.debug("[FileDownloadListWindow] (Re)connected to current FileWatcherWorker instance")
 
     @staticmethod
     def normalize_path(path: str) -> str:
@@ -3325,9 +6255,11 @@ class FileDownloadListWindow(QDialog):
                 "file_name": Path(local_path).name,
                 "created_at": api.get("created_on", ""),
                 "local_path": local_path,
+                "user_type": api.get("user_type", ""),
+                "transfer_duration": api.get("transfer_duration"),
                 "status": status,
             })
-
+        rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         self._sync_cards(rows)
 
 
@@ -3373,6 +6305,8 @@ class FileDownloadListWindow(QDialog):
             if c.progress_bar.isVisible() and 0 < c.progress_bar.value() < 100
         ]
         completed = [c for c in all_cards if c not in active]
+
+        completed.sort(key=lambda c: c.row_data.get("created_at", ""), reverse=True)
 
         for card in active:
             self.cards_layout.addWidget(card)
@@ -3430,6 +6364,9 @@ class FileDownloadListWindow(QDialog):
                     card.job_lbl.setText(f"<b>Job:</b> {api['job_name']}")
                 if api.get("thumbnail"):
                     card._load_thumbnail(api["thumbnail"])
+                if api.get("user_type"):
+                    card.user_type_lbl.setText(f"🎭 {api['user_type']}")
+                card.row_data["user_type"] = api.get("user_type", "")
 
             card.row_data["_meta_loaded"] = True
 
@@ -3441,15 +6378,49 @@ class FileDownloadListWindow(QDialog):
 
 
 
+
     def on_download_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
         if action_type != "download":
             return
 
-        # Find card by local_path or filename
         for card in self.card_index.values():
             if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
                 card.update_status(text)
+
+                # ── NEW: refresh metadata from cache when transfer completes ──
+                if "Completed" in text or "Failed" in text:
+                    spec_id = card.row_data.get("spec_id")
+                    if spec_id:
+                        cache = load_cache()
+                        meta = cache.get("downloaded_files_with_metadata", {}).get(spec_id)
+                        if meta:
+                            api = meta.get("api_response", {})
+                            fresh_row = {
+                                "spec_id": str(spec_id),
+                                "thumbnail": api.get("thumbnail"),
+                                "project_name": api.get("project_name", card.row_data.get("project_name", "Unknown")),
+                                "job_name": api.get("job_name", card.row_data.get("job_name", "Unknown")),
+                                "file_name": Path(file_path).name,
+                                "created_at": api.get("created_on", card.row_data.get("created_at", "")),
+                                "local_path": file_path,
+                                "user_type": api.get("user_type", card.row_data.get("user_type", "")),
+                                "transfer_duration": api.get("transfer_duration"),
+                                "status": "Download Completed" if "Completed" in text else "Download Failed",
+                            }
+                            card.update_row(fresh_row)
                 break
+
+
+
+    # def on_download_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
+    #     if action_type != "download":
+    #         return
+
+    #     # Find card by local_path or filename
+    #     for card in self.card_index.values():
+    #         if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
+    #             card.update_status(text)
+    #             break
 
     def filter_cards(self, text: str = None):
         if text is None:
@@ -3471,305 +6442,22 @@ class FileDownloadListWindow(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._ensure_watcher_connected()  # FIX: reconnect if worker was recreated
         self.load_files()  # Refresh when shown
 
+
+
     def open_with_photoshop(self, file_path):
-        """Dynamically find Adobe Photoshop path and open the specified file."""
+        """Open file in Photoshop — delegates to module-level helper."""
         try:
-            import platform
-            import subprocess
-            import time
-            import logging
-            import os
-            from pathlib import Path
-
-            logger = logging.getLogger(__name__)
-            system = platform.system()
-            file_path = str(Path(file_path).resolve())
-
-            if not Path(file_path).exists():
-                raise FileNotFoundError(f"File does not exist: {file_path}")
-
-            logger.debug(f"System: {system}, File path: {file_path}")
-            photoshop_path = None
-
-            if system == "Windows":
-                try:
-                    import win32gui
-                    import win32con
-                    import win32com.client
-                    import win32api
-                    import win32process
-                    import ctypes
-                except ImportError as e:
-                    raise ImportError("Required pywin32 modules not found. Run: pip install pywin32") from e
-
-                photoshop_path = os.getenv("PHOTOSHOP_PATH")
-                if photoshop_path and Path(photoshop_path).exists():
-                    logger.debug(f"Using Photoshop path from PHOTOSHOP_PATH: {photoshop_path}")
-                else:
-                    search_dirs = [
-                        Path("C:/Program Files/Adobe"),
-                        Path("C:/Program Files (x86)/Adobe")
-                    ]
-                    for base_dir in search_dirs:
-                        if not base_dir.exists():
-                            logger.debug(f"Search directory does not exist: {base_dir}")
-                            continue
-                        photoshop_exes = list(base_dir.glob("Adobe Photoshop */Photoshop.exe"))
-                        if photoshop_exes:
-                            photoshop_exes.sort(key=lambda x: x.parent.name, reverse=True)
-                            photoshop_path = str(photoshop_exes[0])
-                            logger.debug(f"Found Photoshop at: {photoshop_path}")
-                            break
-                    if not photoshop_path:
-                        raise FileNotFoundError("Adobe Photoshop executable not found in Program Files")
-
-                if not os.access(photoshop_path, os.X_OK):
-                    raise PermissionError(f"Photoshop executable is not accessible: {photoshop_path}")
-
-                com_success = False
-                try:
-                    logger.debug("Attempting to open via COM")
-                    ps_app = win32com.client.Dispatch("Photoshop.Application")
-                    ps_app.Visible = True
-                    ps_app.Open(file_path)
-
-                    def bring_to_front(title_contains="Adobe Photoshop"):
-                        def enum_handler(hwnd, _):
-                            if win32gui.IsWindowVisible(hwnd):
-                                title = win32gui.GetWindowText(hwnd)
-                                if title_contains.lower() in title.lower():
-                                    try:
-                                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                                        fg_thread = win32process.GetWindowThreadProcessId(
-                                            win32gui.GetForegroundWindow())[0]
-                                        target_thread = win32process.GetWindowThreadProcessId(hwnd)[0]
-                                        this_thread = win32api.GetCurrentThreadId()
-                                        if ctypes.windll.user32.AttachThreadInput(this_thread, target_thread, True):
-                                            win32gui.SetForegroundWindow(hwnd)
-                                            ctypes.windll.user32.AttachThreadInput(this_thread, target_thread, False)
-                                    except Exception as e:
-                                        logger.debug(f"Window activation failed: {e}")
-                        win32gui.EnumWindows(enum_handler, None)
-
-                    time.sleep(1.5)
-                    bring_to_front()
-                    logger.info(f"Opened {Path(file_path).name} via COM")
-                    print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                    com_success = True
-                except Exception as e:
-                    logger.debug(f"COM attempt failed: {e}. Falling back to subprocess.")
-
-                if not com_success:
-                    for attempt in range(3):
-                        try:
-                            cmd = [photoshop_path, file_path]
-                            logger.debug(f"Executing subprocess command: {cmd}")
-                            result = subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True)
-                            time.sleep(2)
-                            def enum_windows_callback(hwnd, hwnds):
-                                if win32gui.IsWindowVisible(hwnd) and 'Adobe Photoshop' in win32gui.GetWindowText(hwnd):
-                                    hwnds.append(hwnd)
-                            hwnds = []
-                            win32gui.EnumWindows(enum_windows_callback, hwnds)
-                            if hwnds:
-                                win32gui.ShowWindow(hwnds[0], win32con.SW_RESTORE)
-                                win32gui.SetForegroundWindow(hwnds[0])
-                            logger.info(f"Opened {Path(file_path).name} via subprocess")
-                            print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                            break
-                        except subprocess.CalledProcessError as e:
-                            if attempt < 2:
-                                logger.debug(f"Subprocess attempt {attempt+1} failed: {e}, stderr: {e.stderr}. Retrying...")
-                                time.sleep(2)
-                            else:
-                                logger.debug(f"Subprocess failed after retries: {e}, stderr: {e.stderr}")
-                                try:
-                                    process = subprocess.Popen([photoshop_path, file_path], stderr=subprocess.PIPE, text=True)
-                                    time.sleep(2)
-                                    def enum_windows_callback(hwnd, hwnds):
-                                        if win32gui.IsWindowVisible(hwnd) and 'Adobe Photoshop' in win32gui.GetWindowText(hwnd):
-                                            hwnds.append(hwnd)
-                                    hwnds = []
-                                    win32gui.EnumWindows(enum_windows_callback, hwnds)
-                                    if hwnds:
-                                        win32gui.ShowWindow(hwnds[0], win32con.SW_RESTORE)
-                                        win32gui.SetForegroundWindow(hwnds[0])
-                                    logger.info(f"Opened {Path(file_path).name} via Popen fallback")
-                                    print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                                except Exception as e2:
-                                    raise RuntimeError(f"Failed to open file after 3 attempts: {e}, Popen fallback failed: {e2}")
-
-            elif system == "Darwin":
-                custom_path = os.getenv("PHOTOSHOP_PATH")
-                if custom_path and Path(custom_path).exists():
-                    photoshop_path = str(Path(custom_path).resolve())
-                    logger.debug(f"Found Photoshop via environment variable: {photoshop_path}")
-
-                if not photoshop_path:
-                    try:
-                        result = subprocess.run(
-                            ["mdfind", "kMDItemKind == 'Application' && (kMDItemFSName == 'Adobe Photoshop*.app' || kMDItemFSName == 'Photoshop*.app' || kMDItemFSName == 'Adobe*Photoshop*.app')"],
-                            capture_output=True, text=True, check=True
-                        )
-                        if result.stdout.strip():
-                            photoshop_path = result.stdout.strip().split("\n")[0]
-                            logger.debug(f"Found Photoshop via mdfind: {photoshop_path}")
-                    except subprocess.CalledProcessError as e:
-                        logger.debug(f"mdfind failed with error: {e}, stderr: {e.stderr}")
-
-                if not photoshop_path:
-                    search_locations = [
-                        Path("/Applications"),
-                        Path("~/Applications").expanduser(),
-                        Path("/Applications/Adobe Creative Cloud"),
-                        Path("~/Applications/Adobe Creative Cloud").expanduser(),
-                        Path("/Applications/Adobe"),
-                        Path("~/Applications/Adobe").expanduser(),
-                        Path("/Applications/Adobe Photoshop*"),
-                        Path("~/Applications/Adobe Photoshop*").expanduser(),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop*"),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop*").expanduser(),
-                    ]
-                    for search_dir in search_locations:
-                        if not search_dir.exists():
-                            logger.debug(f"Search directory does not exist: {search_dir}")
-                            continue
-                        logger.debug(f"Searching for Photoshop in: {search_dir}")
-                        photoshop_apps = (
-                            list(search_dir.glob("Adobe*Photoshop*.app")) +
-                            list(search_dir.glob("Photoshop*.app")) +
-                            list(search_dir.glob("*/Adobe*Photoshop*.app"))
-                        )
-                        if photoshop_apps:
-                            logger.debug(f"Found potential Photoshop apps: {[str(app) for app in photoshop_apps]}")
-                            photoshop_apps.sort(key=lambda x: x.name, reverse=True)
-                            photoshop_path = str(photoshop_apps[0])
-                            logger.debug(f"Selected Photoshop via glob in {search_dir}: {photoshop_path}")
-                            break
-
-                if not photoshop_path:
-                    versioned_paths = [
-                        Path("/Applications/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-                        Path("/Applications/Adobe Photoshop 2025/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-                        Path("/Applications/Adobe Photoshop 2024/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-                        Path("/Applications/Adobe Photoshop 2023/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2025/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2024/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2023/Adobe Photoshop.app"),
-                        Path("~/Applications/Adobe Photoshop 2025/Adobe Photoshop 2025.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2025/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2024/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2023/Adobe Photoshop 2023.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2023/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop 2025.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop 2024.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop 2023.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop.app").expanduser(),
-                    ]
-                    for path in versioned_paths:
-                        if path.exists():
-                            photoshop_path = str(path)
-                            logger.debug(f"Found Photoshop in versioned path: {photoshop_path}")
-                            break
-
-                if not photoshop_path and hasattr(self, 'window'):
-                    from PySide6.QtWidgets import QFileDialog
-                    logger.debug("Prompting user to select Photoshop application")
-                    photoshop_path, _ = QFileDialog.getOpenFileName(
-                        self.window(), "Locate Adobe Photoshop", "/Applications", "Applications (*.app)"
-                    )
-                    if photoshop_path:
-                        logger.debug(f"User-selected Photoshop path: {photoshop_path}")
-                    else:
-                        logger.debug("User cancelled Photoshop path selection")
-
-                if not photoshop_path:
-                    error_msg = (
-                        "Adobe Photoshop application not found in /Applications, ~/Applications, "
-                        "Adobe Creative Cloud, or Adobe directories. Please set PHOTOSHOP_PATH environment variable."
-                    )
-                    logger.error(error_msg)
-                    raise FileNotFoundError(error_msg)
-
-                for attempt in range(3):
-                    try:
-                        subprocess.run(["open", "-a", photoshop_path, file_path], check=True)
-                        applescript = f'tell application "{Path(photoshop_path).name}" to activate'
-                        subprocess.run(["osascript", "-e", applescript], check=True)
-                        logger.info(f"Opened {Path(file_path).name} via open -a at {photoshop_path}")
-                        print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                        break
-                    except subprocess.CalledProcessError as e:
-                        if attempt < 2:
-                            logger.debug(f"Attempt {attempt+1} failed: {e}. Retrying...")
-                            time.sleep(2)
-                        else:
-                            raise RuntimeError(f"Failed to open file after 3 attempts: {e}")
-
-            elif system == "Linux":
-                try:
-                    subprocess.run(["wine", "--version"], capture_output=True, check=True)
-                    wine_dirs = [
-                        Path.home() / ".wine/drive_c/Program Files/Adobe",
-                        Path.home() / ".wine/drive_c/Program Files (x86)/Adobe"
-                    ]
-                    for base_dir in wine_dirs:
-                        if not base_dir.exists():
-                            continue
-                        photoshop_exes = list(base_dir.glob("Adobe Photoshop */Photoshop.exe"))
-                        if photoshop_exes:
-                            photoshop_exes.sort(key=lambda x: x.parent.name, reverse=True)
-                            photoshop_path = str(photoshop_exes[0])
-                            break
-                    if not photoshop_path:
-                        raise FileNotFoundError("Photoshop.exe not found in Wine directories")
-
-                    for attempt in range(3):
-                        try:
-                            subprocess.run(["wine", photoshop_path, file_path], check=True)
-                            try:
-                                subprocess.run(["wmctrl", "-a", "Adobe Photoshop"], check=False)
-                            except Exception as e:
-                                logger.debug(f"Could not raise Photoshop window: {e}")
-                            logger.info(f"Opened {Path(file_path).name} via wine")
-                            print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                            break
-                        except subprocess.CalledProcessError as e:
-                            if attempt < 2:
-                                logger.debug(f"Attempt {attempt+1} failed: {e}. Retrying...")
-                                time.sleep(2)
-                            else:
-                                raise RuntimeError(f"Failed to open file after 3 attempts: {e}")
-                except subprocess.CalledProcessError:
-                    raise FileNotFoundError("Wine is not installed or not functioning")
-
-            else:
-                error_message = f"Unsupported platform for Photoshop: {system}"
-                logger.warning(error_message)
-                print(f"[Photoshop] {error_message}")
-                raise ValueError(error_message)
-
+            open_file_with_photoshop(file_path)
         except Exception as e:
-            error_message = f"Failed to open {Path(file_path).name} in Photoshop: {str(e)}"
-            logger.error(error_message)
-            print(f"[Photoshop] {error_message}")
-            raise
+            error_msg = f"Failed to open {Path(file_path).name} in Photoshop: {e}"
+            logger.error(error_msg)
+            # QMessageBox.critical(self, "Photoshop Error", error_msg)
+            show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
+
+
 
     def open_folder(self, file_path):
         """Open the folder containing the file."""
@@ -3777,7 +6465,8 @@ class FileDownloadListWindow(QDialog):
             folder_path = str(Path(file_path).parent)
             system = platform.system()
             if system == "Windows":
-                subprocess.run(["explorer", folder_path], check=True)
+                # subprocess.run(["explorer", folder_path], check=True)
+                subprocess.Popen(["explorer", folder_path])
             elif system == "Darwin":
                 subprocess.run(["open", folder_path], check=True)
             elif system == "Linux":
@@ -3805,12 +6494,13 @@ class FileDownloadListWindow(QDialog):
         mime.setUrls([QUrl.fromLocalFile(str(path))])
 
         clipboard.setMimeData(mime)
-
-        QMessageBox.information(
-            self,
-            "Copied",
-            f"File path copied to clipboard:\n{path}"
-        )
+        msg = f"File path copied to clipboard:\n{path}"
+        show_alert("Copied", msg, QMessageBox.Information)
+        # QMessageBox.information(
+        #     self,
+        #     "Copied",
+        #     f"File path copied to clipboard:\n{path}"
+        # )
 
 
 
@@ -3995,9 +6685,28 @@ class FileUploadListWindow(QDialog):
         self.load_files()
 
         # Connect signals
-        watcher = FileWatcherWorker.get_instance(parent=self)
+        self._connected_watcher = None
+        self._ensure_watcher_connected()
+
+    def _ensure_watcher_connected(self):
+        """
+        (Re)connect to the CURRENT FileWatcherWorker singleton.
+        See FileDownloadListWindow._ensure_watcher_connected for why this
+        is necessary — logout/login recreates the worker with fresh signals.
+        """
+        watcher = FileWatcherWorker.get_instance()
+        if watcher is self._connected_watcher:
+            return
+        if self._connected_watcher is not None:
+            try:
+                self._connected_watcher.upload_progress.disconnect(self.on_upload_progress)
+                self._connected_watcher.upload_status_detail.disconnect(self.on_upload_status_detail)
+            except Exception:
+                pass
         watcher.upload_progress.connect(self.on_upload_progress, Qt.QueuedConnection)
         watcher.upload_status_detail.connect(self.on_upload_status_detail, Qt.QueuedConnection)
+        self._connected_watcher = watcher
+        logger.debug("[FileUploadListWindow] (Re)connected to current FileWatcherWorker instance")
 
     @staticmethod
     def normalize_path(path: str) -> str:
@@ -4032,9 +6741,11 @@ class FileUploadListWindow(QDialog):
                 "file_name": Path(local_path).name,
                 "created_at": api.get("created_on", ""),
                 "local_path": local_path,
+                "user_type": api.get("user_type", ""),
+                "transfer_duration": api.get("transfer_duration"),
                 "status": status,
             })
-
+        rows.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         self._sync_cards(rows)
 
     def _sync_cards(self, rows):
@@ -4134,6 +6845,9 @@ class FileUploadListWindow(QDialog):
                     card.job_lbl.setText(f"<b>Job:</b> {api['job_name']}")
                 if api.get("thumbnail"):
                     card._load_thumbnail(api["thumbnail"])
+                if api.get("user_type"):                                        
+                    card.user_type_lbl.setText(f"🎭 {api['user_type']}")
+                card.row_data["user_type"] = api.get("user_type", "")
 
             card.row_data["_meta_loaded"] = True
 
@@ -4143,15 +6857,52 @@ class FileUploadListWindow(QDialog):
             self.cards_layout.insertWidget(0, card)
             card._promoted = True
 
+
+
+
+
     def on_upload_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
         if action_type != "upload":
             return
 
-        # Find card by local_path or filename
         for card in self.card_index.values():
             if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
                 card.update_status(text)
+
+                # ── NEW: refresh metadata from cache when transfer completes ──
+                if "Completed" in text or "Failed" in text:
+                    spec_id = card.row_data.get("spec_id")
+                    if spec_id:
+                        cache = load_cache()
+                        meta = cache.get("uploaded_files_with_metadata", {}).get(spec_id)
+                        if meta:
+                            api = meta.get("api_response", {})
+                            fresh_row = {
+                                "spec_id": str(spec_id),
+                                "thumbnail": api.get("thumbnail"),
+                                "project_name": api.get("project_name", card.row_data.get("project_name", "Unknown")),
+                                "job_name": api.get("job_name", card.row_data.get("job_name", "Unknown")),
+                                "file_name": Path(file_path).name,
+                                "created_at": api.get("created_on", card.row_data.get("created_at", "")),
+                                "local_path": file_path,
+                                "user_type": api.get("user_type", card.row_data.get("user_type", "")),
+                                "transfer_duration": api.get("transfer_duration"),
+                                "status": "Upload Completed" if "Completed" in text else "Upload Failed",
+                            }
+                            card.update_row(fresh_row)
                 break
+
+
+
+    # def on_upload_status_detail(self, file_path: str, text: str, action_type: str, percent: int, is_nas_src: bool):
+    #     if action_type != "upload":
+    #         return
+
+    #     # Find card by local_path or filename
+    #     for card in self.card_index.values():
+    #         if card.row_data.get("local_path") == file_path or card.row_data.get("file_name") == Path(file_path).name:
+    #             card.update_status(text)
+    #             break
 
     def filter_cards(self, text: str = None):
         if text is None:
@@ -4173,306 +6924,19 @@ class FileUploadListWindow(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._ensure_watcher_connected()  # FIX: reconnect if worker was recreated
         self.load_files()  # Refresh when shown
 
-    
+
     def open_with_photoshop(self, file_path):
-        """Dynamically find Adobe Photoshop path and open the specified file."""
+        """Open file in Photoshop — delegates to module-level helper."""
         try:
-            import platform
-            import subprocess
-            import time
-            import logging
-            import os
-            from pathlib import Path
-
-            logger = logging.getLogger(__name__)
-            system = platform.system()
-            file_path = str(Path(file_path).resolve())
-
-            if not Path(file_path).exists():
-                raise FileNotFoundError(f"File does not exist: {file_path}")
-
-            logger.debug(f"System: {system}, File path: {file_path}")
-            photoshop_path = None
-
-            if system == "Windows":
-                try:
-                    import win32gui
-                    import win32con
-                    import win32com.client
-                    import win32api
-                    import win32process
-                    import ctypes
-                except ImportError as e:
-                    raise ImportError("Required pywin32 modules not found. Run: pip install pywin32") from e
-
-                photoshop_path = os.getenv("PHOTOSHOP_PATH")
-                if photoshop_path and Path(photoshop_path).exists():
-                    logger.debug(f"Using Photoshop path from PHOTOSHOP_PATH: {photoshop_path}")
-                else:
-                    search_dirs = [
-                        Path("C:/Program Files/Adobe"),
-                        Path("C:/Program Files (x86)/Adobe")
-                    ]
-                    for base_dir in search_dirs:
-                        if not base_dir.exists():
-                            logger.debug(f"Search directory does not exist: {base_dir}")
-                            continue
-                        photoshop_exes = list(base_dir.glob("Adobe Photoshop */Photoshop.exe"))
-                        if photoshop_exes:
-                            photoshop_exes.sort(key=lambda x: x.parent.name, reverse=True)
-                            photoshop_path = str(photoshop_exes[0])
-                            logger.debug(f"Found Photoshop at: {photoshop_path}")
-                            break
-                    if not photoshop_path:
-                        raise FileNotFoundError("Adobe Photoshop executable not found in Program Files")
-
-                if not os.access(photoshop_path, os.X_OK):
-                    raise PermissionError(f"Photoshop executable is not accessible: {photoshop_path}")
-
-                com_success = False
-                try:
-                    logger.debug("Attempting to open via COM")
-                    ps_app = win32com.client.Dispatch("Photoshop.Application")
-                    ps_app.Visible = True
-                    ps_app.Open(file_path)
-
-                    def bring_to_front(title_contains="Adobe Photoshop"):
-                        def enum_handler(hwnd, _):
-                            if win32gui.IsWindowVisible(hwnd):
-                                title = win32gui.GetWindowText(hwnd)
-                                if title_contains.lower() in title.lower():
-                                    try:
-                                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                                        fg_thread = win32process.GetWindowThreadProcessId(
-                                            win32gui.GetForegroundWindow())[0]
-                                        target_thread = win32process.GetWindowThreadProcessId(hwnd)[0]
-                                        this_thread = win32api.GetCurrentThreadId()
-                                        if ctypes.windll.user32.AttachThreadInput(this_thread, target_thread, True):
-                                            win32gui.SetForegroundWindow(hwnd)
-                                            ctypes.windll.user32.AttachThreadInput(this_thread, target_thread, False)
-                                    except Exception as e:
-                                        logger.debug(f"Window activation failed: {e}")
-                        win32gui.EnumWindows(enum_handler, None)
-
-                    time.sleep(1.5)
-                    bring_to_front()
-                    logger.info(f"Opened {Path(file_path).name} via COM")
-                    print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                    com_success = True
-                except Exception as e:
-                    logger.debug(f"COM attempt failed: {e}. Falling back to subprocess.")
-
-                if not com_success:
-                    for attempt in range(3):
-                        try:
-                            cmd = [photoshop_path, file_path]
-                            logger.debug(f"Executing subprocess command: {cmd}")
-                            result = subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True)
-                            time.sleep(2)
-                            def enum_windows_callback(hwnd, hwnds):
-                                if win32gui.IsWindowVisible(hwnd) and 'Adobe Photoshop' in win32gui.GetWindowText(hwnd):
-                                    hwnds.append(hwnd)
-                            hwnds = []
-                            win32gui.EnumWindows(enum_windows_callback, hwnds)
-                            if hwnds:
-                                win32gui.ShowWindow(hwnds[0], win32con.SW_RESTORE)
-                                win32gui.SetForegroundWindow(hwnds[0])
-                            logger.info(f"Opened {Path(file_path).name} via subprocess")
-                            print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                            break
-                        except subprocess.CalledProcessError as e:
-                            if attempt < 2:
-                                logger.debug(f"Subprocess attempt {attempt+1} failed: {e}, stderr: {e.stderr}. Retrying...")
-                                time.sleep(2)
-                            else:
-                                logger.debug(f"Subprocess failed after retries: {e}, stderr: {e.stderr}")
-                                try:
-                                    process = subprocess.Popen([photoshop_path, file_path], stderr=subprocess.PIPE, text=True)
-                                    time.sleep(2)
-                                    def enum_windows_callback(hwnd, hwnds):
-                                        if win32gui.IsWindowVisible(hwnd) and 'Adobe Photoshop' in win32gui.GetWindowText(hwnd):
-                                            hwnds.append(hwnd)
-                                    hwnds = []
-                                    win32gui.EnumWindows(enum_windows_callback, hwnds)
-                                    if hwnds:
-                                        win32gui.ShowWindow(hwnds[0], win32con.SW_RESTORE)
-                                        win32gui.SetForegroundWindow(hwnds[0])
-                                    logger.info(f"Opened {Path(file_path).name} via Popen fallback")
-                                    print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                                except Exception as e2:
-                                    raise RuntimeError(f"Failed to open file after 3 attempts: {e}, Popen fallback failed: {e2}")
-
-            elif system == "Darwin":
-                custom_path = os.getenv("PHOTOSHOP_PATH")
-                if custom_path and Path(custom_path).exists():
-                    photoshop_path = str(Path(custom_path).resolve())
-                    logger.debug(f"Found Photoshop via environment variable: {photoshop_path}")
-
-                if not photoshop_path:
-                    try:
-                        result = subprocess.run(
-                            ["mdfind", "kMDItemKind == 'Application' && (kMDItemFSName == 'Adobe Photoshop*.app' || kMDItemFSName == 'Photoshop*.app' || kMDItemFSName == 'Adobe*Photoshop*.app')"],
-                            capture_output=True, text=True, check=True
-                        )
-                        if result.stdout.strip():
-                            photoshop_path = result.stdout.strip().split("\n")[0]
-                            logger.debug(f"Found Photoshop via mdfind: {photoshop_path}")
-                    except subprocess.CalledProcessError as e:
-                        logger.debug(f"mdfind failed with error: {e}, stderr: {e.stderr}")
-
-                if not photoshop_path:
-                    search_locations = [
-                        Path("/Applications"),
-                        Path("~/Applications").expanduser(),
-                        Path("/Applications/Adobe Creative Cloud"),
-                        Path("~/Applications/Adobe Creative Cloud").expanduser(),
-                        Path("/Applications/Adobe"),
-                        Path("~/Applications/Adobe").expanduser(),
-                        Path("/Applications/Adobe Photoshop*"),
-                        Path("~/Applications/Adobe Photoshop*").expanduser(),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop*"),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop*").expanduser(),
-                    ]
-                    for search_dir in search_locations:
-                        if not search_dir.exists():
-                            logger.debug(f"Search directory does not exist: {search_dir}")
-                            continue
-                        logger.debug(f"Searching for Photoshop in: {search_dir}")
-                        photoshop_apps = (
-                            list(search_dir.glob("Adobe*Photoshop*.app")) +
-                            list(search_dir.glob("Photoshop*.app")) +
-                            list(search_dir.glob("*/Adobe*Photoshop*.app"))
-                        )
-                        if photoshop_apps:
-                            logger.debug(f"Found potential Photoshop apps: {[str(app) for app in photoshop_apps]}")
-                            photoshop_apps.sort(key=lambda x: x.name, reverse=True)
-                            photoshop_path = str(photoshop_apps[0])
-                            logger.debug(f"Selected Photoshop via glob in {search_dir}: {photoshop_path}")
-                            break
-
-                if not photoshop_path:
-                    versioned_paths = [
-                        Path("/Applications/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-                        Path("/Applications/Adobe Photoshop 2025/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-                        Path("/Applications/Adobe Photoshop 2024/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-                        Path("/Applications/Adobe Photoshop 2023/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-                        Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2025/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2024/Adobe Photoshop.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-                        Path("/Applications/Adobe/Adobe Photoshop 2023/Adobe Photoshop.app"),
-                        Path("~/Applications/Adobe Photoshop 2025/Adobe Photoshop 2025.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2025/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2024/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2023/Adobe Photoshop 2023.app").expanduser(),
-                        Path("~/Applications/Adobe Photoshop 2023/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop 2025.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop 2024.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop 2023.app").expanduser(),
-                        Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop.app").expanduser(),
-                    ]
-                    for path in versioned_paths:
-                        if path.exists():
-                            photoshop_path = str(path)
-                            logger.debug(f"Found Photoshop in versioned path: {photoshop_path}")
-                            break
-
-                if not photoshop_path and hasattr(self, 'window'):
-                    from PySide6.QtWidgets import QFileDialog
-                    logger.debug("Prompting user to select Photoshop application")
-                    photoshop_path, _ = QFileDialog.getOpenFileName(
-                        self.window(), "Locate Adobe Photoshop", "/Applications", "Applications (*.app)"
-                    )
-                    if photoshop_path:
-                        logger.debug(f"User-selected Photoshop path: {photoshop_path}")
-                    else:
-                        logger.debug("User cancelled Photoshop path selection")
-
-                if not photoshop_path:
-                    error_msg = (
-                        "Adobe Photoshop application not found in /Applications, ~/Applications, "
-                        "Adobe Creative Cloud, or Adobe directories. Please set PHOTOSHOP_PATH environment variable."
-                    )
-                    logger.error(error_msg)
-                    raise FileNotFoundError(error_msg)
-
-                for attempt in range(3):
-                    try:
-                        subprocess.run(["open", "-a", photoshop_path, file_path], check=True)
-                        applescript = f'tell application "{Path(photoshop_path).name}" to activate'
-                        subprocess.run(["osascript", "-e", applescript], check=True)
-                        logger.info(f"Opened {Path(file_path).name} via open -a at {photoshop_path}")
-                        print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                        break
-                    except subprocess.CalledProcessError as e:
-                        if attempt < 2:
-                            logger.debug(f"Attempt {attempt+1} failed: {e}. Retrying...")
-                            time.sleep(2)
-                        else:
-                            raise RuntimeError(f"Failed to open file after 3 attempts: {e}")
-
-            elif system == "Linux":
-                try:
-                    subprocess.run(["wine", "--version"], capture_output=True, check=True)
-                    wine_dirs = [
-                        Path.home() / ".wine/drive_c/Program Files/Adobe",
-                        Path.home() / ".wine/drive_c/Program Files (x86)/Adobe"
-                    ]
-                    for base_dir in wine_dirs:
-                        if not base_dir.exists():
-                            continue
-                        photoshop_exes = list(base_dir.glob("Adobe Photoshop */Photoshop.exe"))
-                        if photoshop_exes:
-                            photoshop_exes.sort(key=lambda x: x.parent.name, reverse=True)
-                            photoshop_path = str(photoshop_exes[0])
-                            break
-                    if not photoshop_path:
-                        raise FileNotFoundError("Photoshop.exe not found in Wine directories")
-
-                    for attempt in range(3):
-                        try:
-                            subprocess.run(["wine", photoshop_path, file_path], check=True)
-                            try:
-                                subprocess.run(["wmctrl", "-a", "Adobe Photoshop"], check=False)
-                            except Exception as e:
-                                logger.debug(f"Could not raise Photoshop window: {e}")
-                            logger.info(f"Opened {Path(file_path).name} via wine")
-                            print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-                            break
-                        except subprocess.CalledProcessError as e:
-                            if attempt < 2:
-                                logger.debug(f"Attempt {attempt+1} failed: {e}. Retrying...")
-                                time.sleep(2)
-                            else:
-                                raise RuntimeError(f"Failed to open file after 3 attempts: {e}")
-                except subprocess.CalledProcessError:
-                    raise FileNotFoundError("Wine is not installed or not functioning")
-
-            else:
-                error_message = f"Unsupported platform for Photoshop: {system}"
-                logger.warning(error_message)
-                print(f"[Photoshop] {error_message}")
-                raise ValueError(error_message)
-
+            open_file_with_photoshop(file_path)
         except Exception as e:
-            error_message = f"Failed to open {Path(file_path).name} in Photoshop: {str(e)}"
-            logger.error(error_message)
-            print(f"[Photoshop] {error_message}")
-            raise
+            error_msg = f"Failed to open {Path(file_path).name} in Photoshop: {e}"
+            logger.error(error_msg)
+            # QMessageBox.critical(self, "Photoshop Error", error_msg)
+            show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
 
 
     def open_folder(self, file_path):
@@ -4481,7 +6945,8 @@ class FileUploadListWindow(QDialog):
             folder_path = str(Path(file_path).parent)
             system = platform.system()
             if system == "Windows":
-                subprocess.run(["explorer", folder_path], check=True)
+                # subprocess.run(["explorer", folder_path], check=True)
+                subprocess.Popen(["explorer", folder_path])
             elif system == "Darwin":
                 subprocess.run(["open", folder_path], check=True)
             elif system == "Linux":
@@ -4509,12 +6974,13 @@ class FileUploadListWindow(QDialog):
         mime.setUrls([QUrl.fromLocalFile(str(path))])
 
         clipboard.setMimeData(mime)
-
-        QMessageBox.information(
-            self,
-            "Copied",
-            f"File path copied to clipboard:\n{path}"
-        )
+        msg = f"File path copied to clipboard:\n{path}"
+        show_alert("Copied", msg, QMessageBox.Information)
+        # QMessageBox.information(
+        #     self,
+        #     "Copied",
+        #     f"File path copied to clipboard:\n{path}"
+        # )
 
     def retry_file_process(self, row_data: dict):
         logger.info("========== UPLOAD RETRY START ==========")
@@ -4602,876 +7068,6 @@ class FileUploadListWindow(QDialog):
             logger.exception(f"[Upload Retry] Failed to dispatch retry for spec_id={spec_id}: {e}")
 
         logger.info("========== UPLOAD RETRY END ==========")
-
-
-
-# class FileUploadListWindow(QDialog):
-#     def __init__(self, file_type, parent=None):
-#         super().__init__(parent)
-#         self.file_type = file_type.lower()
-#         self.setWindowTitle(f"{file_type.capitalize()} Files")
-#         self.setWindowIcon(load_icon(ICON_PATH, f"{file_type} files window"))
-#         self.setMinimumSize(800, 400)
-#         self.resize(800, 400)
-#         logger.debug(f"Initializing FileListWindow for file_type: {self.file_type}")
-#         app_signals.append_log.emit(f"[Files] Initializing FileListWindow for {self.file_type}")
-
-#         # Initialize search bar
-#         self.search_bar = QLineEdit(self)
-#         self.search_bar.setPlaceholderText("Search by Project Name, Job Name, or File Name")
-#         # --- QLineEdit Style ---
-#         self.search_bar.setStyleSheet("""
-#             QLineEdit {
-#                 background-color: #ffffff;
-#                 border: 1.5px solid #ccc;
-#                 border-radius: 8px;
-#                 padding: 6px 12px;
-#                 font-size: 14px;
-#                 color: #333;
-#                 selection-background-color: #0078d7;
-#             }
-
-#             QLineEdit:hover {
-#                 border: 1.5px solid #999;
-#                 background-color: #f9f9f9;
-#             }
-
-#             QLineEdit:focus {
-#                 border: 1.5px solid #0078d7;
-#                 background-color: #ffffff;
-#             }
-
-#             QLineEdit::placeholder {
-#                 color: #888;
-#                 font-style: italic;
-#             }
-#         """)
-
-
-#         # Initialize search button
-#         self.search_button = QPushButton("Search", self)
-#         # --- QPushButton (Search) Style ---
-#         self.search_button.setStyleSheet("""
-#             QPushButton {
-#                 background-color: #0078d7;
-#                 color: white;
-#                 border: none;
-#                 border-radius: 8px;
-#                 padding: 6px 20px;
-#                 font-weight: 500;
-#                 font-size: 14px;
-#             }
-#             QPushButton:hover {
-#                 background-color: #005fa3;
-#             }
-#             QPushButton:pressed {
-#                 background-color: #004b82;
-#             }
-#         """)
-#         self.search_button.clicked.connect(lambda: self.filter_table(self.search_bar.text()))
-
-#         # Initialize clear button
-#         self.clear_button = QPushButton("Clear", self)
-#         # --- QPushButton (Clear) Style ---
-#         self.clear_button.setStyleSheet("""
-#             QPushButton {
-#                 background-color: #f5f5f5;
-#                 color: #333;
-#                 border: 1.2px solid #ccc;
-#                 border-radius: 8px;
-#                 padding: 6px 20px;
-#                 font-size: 14px;
-#             }
-#             QPushButton:hover {
-#                 background-color: #eaeaea;
-#                 border-color: #999;
-#             }
-#             QPushButton:pressed {
-#                 background-color: #dcdcdc;
-#             }
-#         """)
-#         self.clear_button.clicked.connect(self.clear_search)
-
-#         # Initialize table
-#         self.table = QTableWidget(self)
-#         self.table.setColumnCount(8)
-#         headers = ["Thumbnail", "Project Name", "Job Name", "File Name", "Date", "Open Folder", "Open in Photoshop", "Status"]
-#         if platform.system() == "Windows":
-#             headers.append("Copy")
-#         self.table.setHorizontalHeaderLabels(headers)
-#         header = self.table.horizontalHeader()
-#         header.setSectionsMovable(True)
-#         header.setStretchLastSection(True)
-#         for i in range(self.table.columnCount()):
-#             header.setSectionResizeMode(i, QHeaderView.Interactive)
-#         self.table.setSelectionMode(QTableWidget.SingleSelection)
-#         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-
-#         # Layout
-#         search_layout = QHBoxLayout()
-#         search_layout.addWidget(self.search_bar)
-#         search_layout.addWidget(self.search_button)
-#         search_layout.addWidget(self.clear_button)
-
-#         layout = QVBoxLayout()
-#         layout.addLayout(search_layout)
-#         layout.addWidget(self.table)
-#         self.setLayout(layout)
-#         add_version_footer(self, APPVERSION)
-
-#         # Store original rows for filtering
-#         self.original_rows = []
-
-#         # Load files initially
-#         self._load_files_with_logging()
-
-#         # Connect signals
-#         self.app_signals_connection = app_signals.update_file_list.connect(self.refresh_files, Qt.QueuedConnection)
-#         self.file_watcher = FileWatcherWorker.get_instance(parent=self)
-#         self.progress_connection = self.file_watcher.progress_update.connect(self.update_progress, Qt.QueuedConnection)
-
-#     def keyPressEvent(self, event):
-#         """Handle Enter key press in the search bar."""
-#         super().keyPressEvent(event)
-#         if event.key() in (Qt.Key_Return, Qt.Key_Enter) and self.search_bar.hasFocus():
-#             self.filter_table(self.search_bar.text())
-
-#     def showEvent(self, event):
-#         """Reload files when the window is shown."""
-#         super().showEvent(event)
-#         logger.debug(f"Window shown, reloading files for {self.file_type}")
-#         self._load_files_with_logging()
-#         app_signals.append_log.emit(f"[Files] Reloaded {self.file_type} files on window show")
-
-#     def closeEvent(self, event):
-#         """Disconnect signals when the window is closed."""
-#         try:
-#             app_signals.update_file_list.disconnect(self.app_signals_connection)
-#             self.file_watcher.progress_update.disconnect(self.progress_connection)
-#             logger.debug(f"Disconnected signals for {self.file_type} FileListWindow")
-#         except Exception as e:
-#             logger.debug(f"Error disconnecting signals: {e}")
-#         super().closeEvent(event)
-
-#     def _load_files_with_logging(self):
-#         """Wrapper for load_files with additional logging for debugging."""
-#         try:
-#             self.load_files()
-#         except Exception as e:
-#             logger.error(f"Error loading files in FileListWindow: {e}")
-#             app_signals.append_log.emit(f"[Files] Failed to load files for {self.file_type}: {str(e)}")
-
-#     def load_files(self):
-#         """Load files into the table based on file_type."""
-#         try:
-#             cache = load_cache()
-#             logger.debug(f"Cache contents: {cache}")
-#             metadata_key = f"{self.file_type}_files_with_metadata"
-#             logger.debug(f"Metadata for {metadata_key}: {cache.get(metadata_key, {})}")
-
-#             metadata = cache.get(metadata_key, {})
-#             files = {task_id: data.get("local_path", "") for task_id, data in metadata.items() if data.get("local_path")}
-#             logger.debug(f"Files for {self.file_type}: {files}")
-
-#             # Clear table
-#             self.table.clearContents()
-#             self.table.setRowCount(0)
-
-#             # Set headers
-#             headers = [
-#                 "Thumbnail",
-#                 "Project Name",
-#                 "Job Name",
-#                 "File Name",
-#                 "Date",
-#                 "Open Folder",
-#                 "Open in Photoshop",
-#                 "Status",
-#             ]
-#             if platform.system() == "Windows":
-#                 headers.append("Copy")
-
-#             self.table.setColumnCount(len(headers))
-#             self.table.setHorizontalHeaderLabels(headers)
-
-#             # Collect rows
-#             self.original_rows = []
-#             file_list = files.items()
-#             logger.debug(f"File list: {list(file_list)}")
-
-#             for task_id, file_path in file_list:
-#                 logger.debug(f"Processing task_id: {task_id}, file_path: {file_path}")
-#                 if not file_path:
-#                     logger.warning(f"Skipping task_id {task_id} due to empty file_path")
-#                     continue
-
-#                 filename = Path(file_path).name
-#                 normalized_file_path = str(Path(file_path)).replace('\\', '/')
-#                 relative_file_path = normalized_file_path.split('premedia.irtest/')[-1] if 'premedia.irtest/' in normalized_file_path else normalized_file_path
-
-#                 meta = metadata.get(str(task_id), {})
-#                 if not meta:
-#                     logger.warning(f"No metadata found for task_id: {task_id}, file_path: {file_path}")
-#                     continue
-#                 thumbnail = meta.get("api_response", {}).get("thumbnail", "Unknown") or "Unknown"
-#                 project_name = meta.get("api_response", {}).get("project_name", "Unknown") or "Unknown"
-#                 job_name = meta.get("api_response", {}).get("job_name", "Unknown") or "Unknown"
-
-#                 if project_name == "Unknown" or job_name == "Unknown":
-#                     logger.debug(f"Skipping file {filename} due to project_name: {project_name}, job_name: {job_name}, meta: {meta}")
-#                     continue
-
-#                 created_at_raw = meta.get("api_response", {}).get("created_on", "") or meta.get("created_at") or meta.get("date", "")
-
-#                 dt = None
-#                 display_date = ""
-#                 if created_at_raw:
-#                     try:
-#                         ts = int(created_at_raw)
-#                         if 0 < ts < 4102444800:
-#                             dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone()
-#                             display_date = dt.strftime("%d-%b-%Y %I:%M %p")
-#                     except Exception:
-#                         pass
-
-#                     if not dt and isinstance(created_at_raw, str):
-#                         s = created_at_raw.strip()
-#                         try:
-#                             dt = datetime.fromisoformat(s)
-#                             display_date = dt.strftime("%d-%b-%Y %I:%M %p")
-#                         except Exception:
-#                             fmts = [
-#                                 "%d-%b-%Y %I:%M %p",
-#                                 "%Y-%m-%d %H:%M:%S",
-#                                 "%Y-%m-%dT%H:%M:%S%z",
-#                                 "%Y-%m-%dT%H:%M:%S",
-#                             ]
-#                             for f in fmts:
-#                                 try:
-#                                     dt = datetime.strptime(s, f)
-#                                     display_date = dt.strftime("%d-%b-%Y %I:%M %p")
-#                                     break
-#                                 except Exception:
-#                                     continue
-
-#                 status = meta.get("api_response", {}).get("request_status", "Unknown")
-#                 if status == "Unknown" and file_path:
-#                     status = "Completed" if Path(file_path).exists() else "Failed"
-
-#                 meta_data_response = meta.get("api_response", {})
-
-#                 row_data = {
-#                     "thumbnail": thumbnail,
-#                     "project_name": project_name,
-#                     "job_name": job_name,
-#                     "file_name": filename,
-#                     "created_at": display_date or created_at_raw,
-#                     "folder_path": file_path,
-#                     "photoshop_path": file_path,
-#                     "Copy_path": file_path,
-#                     "status": status,
-#                     "dt": dt,
-#                     "meta_data_response": meta_data_response
-#                 }
-#                 self.original_rows.append(row_data)
-
-#             # Sort rows by date (latest first)
-#             self.original_rows.sort(key=lambda r: (1 if r["dt"] is None else 0, -r["dt"].timestamp() if r["dt"] else 0))
-
-#             # Populate table with all rows initially
-#             self._populate_table(self.original_rows)
-
-#             app_signals.append_log.emit(f"[Files] Loaded {len(self.original_rows)} {self.file_type} files")
-
-#         except Exception as e:
-#             logger.error(f"Error in load_files for {self.file_type}: {str(e)}")
-#             app_signals.append_log.emit(f"[Files] Failed to load {self.file_type} files: {str(e)}")
-#             raise
-
-#     def _populate_table(self, rows):
-#         """Populate the table with the given rows."""
-#         self.table.clearContents()
-#         self.table.setRowCount(0)
-
-#         for row_data in rows:
-#             row = self.table.rowCount()
-#             self.table.insertRow(row)
-#             logger.debug(f"Inserting row {row} with data: {row_data}")
-
-#             thumb_label = QLabel()
-#             thumb_label.setFixedSize(24, 24)
-#             thumb_label.setScaledContents(True)
-#             thumb_label.setPixmap(QPixmap("default_thumbnail.png"))
-#             self.table.setCellWidget(row, 0, thumb_label)
-
-#             loader = ThumbnailLoader(thumb_label, row_data["thumbnail"])
-#             pool = QThreadPool.globalInstance()
-#             pool.start(loader)
-
-#             self.table.setItem(row, 1, QTableWidgetItem(row_data["project_name"]))
-#             self.table.setItem(row, 2, QTableWidgetItem(row_data["job_name"]))
-#             self.table.setItem(row, 3, QTableWidgetItem(row_data["file_name"]))
-#             self.table.setItem(row, 4, QTableWidgetItem(row_data["created_at"]))
-
-#             folder_btn = QPushButton()
-#             folder_btn.setIcon(load_icon(FOLDER_ICON_PATH, "folder"))
-#             folder_btn.setIconSize(QSize(24, 24))
-#             folder_btn.clicked.connect(lambda _, p=row_data["folder_path"]: self.open_folder(p))
-#             self.table.setCellWidget(row, 5, folder_btn)
-
-#             photoshop_btn = QPushButton()
-#             photoshop_btn.setIcon(load_icon(PHOTOSHOP_ICON_PATH, "photoshop"))
-#             photoshop_btn.setIconSize(QSize(24, 24))
-#             photoshop_btn.clicked.connect(lambda _, p=row_data["photoshop_path"]: self.open_with_photoshop(p))
-#             self.table.setCellWidget(row, 6, photoshop_btn)
-
-#             if row_data["status"] == 'Failed' or row_data["status"] == 'Upload Failed':
-#                 status_btn = QPushButton("Failed")
-#                 status_btn.setIcon(load_icon(RETRY_ICON_PATH, "status"))
-#                 status_btn.setIconSize(QSize(24, 24))
-#                 status_btn.clicked.connect(lambda _, p=row_data["meta_data_response"]: self.retry_file_process(p))
-#                 self.table.setCellWidget(row, 7, status_btn)
-#             else:
-#                 self.table.setItem(row, 7, QTableWidgetItem(row_data["status"]))
-
-#             if platform.system() == "Windows":
-#                 copy_btn = QPushButton()
-#                 copy_btn.setIcon(load_icon(COPY_ICON_PATH, "copy"))
-#                 copy_btn.setIconSize(QSize(24, 24))
-#                 copy_btn.clicked.connect(lambda _, p=row_data["Copy_path"]: self.copy_file_to_clipboard(p))
-#                 self.table.setCellWidget(row, 8, copy_btn)
-
-#         self.table.resizeColumnsToContents()
-
-#     def filter_table(self, search_text):
-#         """Filter table rows based on search text."""
-#         search_text = search_text.lower().strip()
-#         filtered_rows = []
-
-#         for row_data in self.original_rows:
-#             if (search_text in row_data["project_name"].lower() or
-#                 search_text in row_data["job_name"].lower() or
-#                 search_text in row_data["file_name"].lower()):
-#                 filtered_rows.append(row_data)
-
-#         if not filtered_rows:
-#             # Clear table and show "Content not available" message
-#             self.table.clearContents()
-#             self.table.setRowCount(1)
-#             label = QLabel("Content not available")
-#             label.setAlignment(Qt.AlignCenter)
-#             self.table.setCellWidget(0, 0, label)
-#             self.table.setSpan(0, 0, 1, self.table.columnCount())
-#             logger.debug("No matching rows found, displaying 'Content not available'")
-#             app_signals.append_log.emit(f"[Files] No {self.file_type} files match the search: {search_text}")
-#         else:
-#             self._populate_table(filtered_rows)
-#             logger.debug(f"Filtered table to {len(filtered_rows)} rows with search: {search_text}")
-#             app_signals.append_log.emit(f"[Files] Filtered {self.file_type} files to {len(filtered_rows)} rows")
-
-#     def clear_search(self):
-#         """Clear the search bar and repopulate the table with all rows."""
-#         self.search_bar.clear()
-#         self._populate_table(self.original_rows)
-#         logger.debug(f"Cleared search and restored {len(self.original_rows)} rows")
-#         app_signals.append_log.emit(f"[Files] Cleared search and restored {len(self.original_rows)} {self.file_type} files")
-
-#     def refresh_files(self, file_path, status, action_type, progress, is_nas_src):
-#         """Refresh the file list if the action_type matches file_type."""
-#         try:
-#             if action_type == self.file_type:
-#                 logger.debug(f"Refreshing files for {self.file_type} due to update: {file_path}, status: {status}, progress: {progress}")
-#                 self._load_files_with_logging()
-#                 # Reapply filter after refresh
-#                 self.filter_table(self.search_bar.text())
-#                 app_signals.append_log.emit(f"[Files] Refreshed {self.file_type} file list")
-#         except Exception as e:
-#             logger.error(f"Error refreshing file list: {e}")
-#             app_signals.append_log.emit(f"[Files] Failed to refresh {self.file_type} file list: {str(e)}")
-
-#     def update_file_list(self, file_path, status, action_type, progress, is_nas_src):
-#         """Update the table with file transfer status."""
-#         if action_type != self.file_type or not file_path:
-#             return
-#         try:
-#             logger.debug(f"Updating file list for {self.file_type}: {file_path}, status: {status}, progress: {progress}")
-#             for row in range(self.table.rowCount()):
-#                 if self.table.item(row, 3) and self.table.item(row, 3).text() == Path(file_path).name:
-#                     status_col = 7
-#                     progress_col = 4
-#                     self.table.setItem(row, status_col, QTableWidgetItem(status))
-#                     progress_bar = self.table.cellWidget(row, progress_col)
-#                     if not isinstance(progress_bar, QProgressBar):
-#                         progress_bar = QProgressBar(self)
-#                         progress_bar.setMinimum(0)
-#                         progress_bar.setMaximum(100)
-#                         progress_bar.setFixedHeight(20)
-#                         self.table.setCellWidget(row, progress_col, progress_bar)
-#                     progress_bar.setValue(progress)
-#                     self.table.resizeColumnsToContents()
-#                     app_signals.append_log.emit(f"[Files] Updated {self.file_type} file list: {Path(file_path).name}")
-#                     return
-
-#             # If file not found, reload the entire table
-#             logger.debug(f"File {file_path} not found in table, reloading full list")
-#             self._load_files_with_logging()
-#             self.filter_table(self.search_bar.text())
-#             app_signals.append_log.emit(f"[Files] Added {Path(file_path).name} to {self.file_type} list by refreshing")
-#         except Exception as e:
-#             logger.error(f"Error updating file list: {e}")
-#             app_signals.append_log.emit(f"[Files] Failed to update {self.file_type} file list: {str(e)}")
-
-#     def update_progress(self, file_path, progress):
-#         """Update progress for a file in the table."""
-#         try:
-#             logger.debug(f"Updating progress for {self.file_type}: {file_path}, progress: {progress}")
-#             for row in range(self.table.rowCount()):
-#                 if self.table.item(row, 3) and self.table.item(row, 3).text() == Path(file_path).name:
-#                     progress_col = 4
-#                     progress_bar = self.table.cellWidget(row, progress_col)
-#                     if not isinstance(progress_bar, QProgressBar):
-#                         progress_bar = QProgressBar(self)
-#                         progress_bar.setMinimum(0)
-#                         progress_bar.setMaximum(100)
-#                         progress_bar.setFixedHeight(20)
-#                         self.table.setCellWidget(row, progress_col, progress_bar)
-#                     progress_bar.setValue(progress)
-#                     app_signals.append_log.emit(f"[Files] Progress updated for {Path(file_path).name}: {progress}%")
-#                     return
-#             logger.debug(f"File {file_path} not found for progress update, reloading table")
-#             self._load_files_with_logging()
-#             self.filter_table(self.search_bar.text())
-#         except Exception as e:
-#             logger.error(f"Error updating progress: {e}")
-#             app_signals.append_log.emit(f"[Files] Failed to update progress: {str(e)}")
-
-#     def open_with_photoshop(self, file_path):
-#         """Dynamically find Adobe Photoshop path and open the specified file."""
-#         try:
-#             import platform
-#             import subprocess
-#             import time
-#             import logging
-#             import os
-#             from pathlib import Path
-
-#             logger = logging.getLogger(__name__)
-#             system = platform.system()
-#             file_path = str(Path(file_path).resolve())
-
-#             if not Path(file_path).exists():
-#                 raise FileNotFoundError(f"File does not exist: {file_path}")
-
-#             logger.debug(f"System: {system}, File path: {file_path}")
-#             photoshop_path = None
-
-#             if system == "Windows":
-#                 try:
-#                     import win32gui
-#                     import win32con
-#                     import win32com.client
-#                     import win32api
-#                     import win32process
-#                     import ctypes
-#                 except ImportError as e:
-#                     raise ImportError("Required pywin32 modules not found. Run: pip install pywin32") from e
-
-#                 photoshop_path = os.getenv("PHOTOSHOP_PATH")
-#                 if photoshop_path and Path(photoshop_path).exists():
-#                     logger.debug(f"Using Photoshop path from PHOTOSHOP_PATH: {photoshop_path}")
-#                 else:
-#                     search_dirs = [
-#                         Path("C:/Program Files/Adobe"),
-#                         Path("C:/Program Files (x86)/Adobe")
-#                     ]
-#                     for base_dir in search_dirs:
-#                         if not base_dir.exists():
-#                             logger.debug(f"Search directory does not exist: {base_dir}")
-#                             continue
-#                         photoshop_exes = list(base_dir.glob("Adobe Photoshop */Photoshop.exe"))
-#                         if photoshop_exes:
-#                             photoshop_exes.sort(key=lambda x: x.parent.name, reverse=True)
-#                             photoshop_path = str(photoshop_exes[0])
-#                             logger.debug(f"Found Photoshop at: {photoshop_path}")
-#                             break
-#                     if not photoshop_path:
-#                         raise FileNotFoundError("Adobe Photoshop executable not found in Program Files")
-
-#                 if not os.access(photoshop_path, os.X_OK):
-#                     raise PermissionError(f"Photoshop executable is not accessible: {photoshop_path}")
-
-#                 com_success = False
-#                 try:
-#                     logger.debug("Attempting to open via COM")
-#                     ps_app = win32com.client.Dispatch("Photoshop.Application")
-#                     ps_app.Visible = True
-#                     ps_app.Open(file_path)
-
-#                     def bring_to_front(title_contains="Adobe Photoshop"):
-#                         def enum_handler(hwnd, _):
-#                             if win32gui.IsWindowVisible(hwnd):
-#                                 title = win32gui.GetWindowText(hwnd)
-#                                 if title_contains.lower() in title.lower():
-#                                     try:
-#                                         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-#                                         fg_thread = win32process.GetWindowThreadProcessId(
-#                                             win32gui.GetForegroundWindow())[0]
-#                                         target_thread = win32process.GetWindowThreadProcessId(hwnd)[0]
-#                                         this_thread = win32api.GetCurrentThreadId()
-#                                         if ctypes.windll.user32.AttachThreadInput(this_thread, target_thread, True):
-#                                             win32gui.SetForegroundWindow(hwnd)
-#                                             ctypes.windll.user32.AttachThreadInput(this_thread, target_thread, False)
-#                                     except Exception as e:
-#                                         logger.debug(f"Window activation failed: {e}")
-#                         win32gui.EnumWindows(enum_handler, None)
-
-#                     time.sleep(1.5)
-#                     bring_to_front()
-#                     logger.info(f"Opened {Path(file_path).name} via COM")
-#                     print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-#                     com_success = True
-#                 except Exception as e:
-#                     logger.debug(f"COM attempt failed: {e}. Falling back to subprocess.")
-
-#                 if not com_success:
-#                     for attempt in range(3):
-#                         try:
-#                             cmd = [photoshop_path, file_path]
-#                             logger.debug(f"Executing subprocess command: {cmd}")
-#                             result = subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True)
-#                             time.sleep(2)
-#                             def enum_windows_callback(hwnd, hwnds):
-#                                 if win32gui.IsWindowVisible(hwnd) and 'Adobe Photoshop' in win32gui.GetWindowText(hwnd):
-#                                     hwnds.append(hwnd)
-#                             hwnds = []
-#                             win32gui.EnumWindows(enum_windows_callback, hwnds)
-#                             if hwnds:
-#                                 win32gui.ShowWindow(hwnds[0], win32con.SW_RESTORE)
-#                                 win32gui.SetForegroundWindow(hwnds[0])
-#                             logger.info(f"Opened {Path(file_path).name} via subprocess")
-#                             print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-#                             break
-#                         except subprocess.CalledProcessError as e:
-#                             if attempt < 2:
-#                                 logger.debug(f"Subprocess attempt {attempt+1} failed: {e}, stderr: {e.stderr}. Retrying...")
-#                                 time.sleep(2)
-#                             else:
-#                                 logger.debug(f"Subprocess failed after retries: {e}, stderr: {e.stderr}")
-#                                 try:
-#                                     process = subprocess.Popen([photoshop_path, file_path], stderr=subprocess.PIPE, text=True)
-#                                     time.sleep(2)
-#                                     def enum_windows_callback(hwnd, hwnds):
-#                                         if win32gui.IsWindowVisible(hwnd) and 'Adobe Photoshop' in win32gui.GetWindowText(hwnd):
-#                                             hwnds.append(hwnd)
-#                                     hwnds = []
-#                                     win32gui.EnumWindows(enum_windows_callback, hwnds)
-#                                     if hwnds:
-#                                         win32gui.ShowWindow(hwnds[0], win32con.SW_RESTORE)
-#                                         win32gui.SetForegroundWindow(hwnds[0])
-#                                     logger.info(f"Opened {Path(file_path).name} via Popen fallback")
-#                                     print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-#                                 except Exception as e2:
-#                                     raise RuntimeError(f"Failed to open file after 3 attempts: {e}, Popen fallback failed: {e2}")
-
-#             elif system == "Darwin":
-#                 custom_path = os.getenv("PHOTOSHOP_PATH")
-#                 if custom_path and Path(custom_path).exists():
-#                     photoshop_path = str(Path(custom_path).resolve())
-#                     logger.debug(f"Found Photoshop via environment variable: {photoshop_path}")
-
-#                 if not photoshop_path:
-#                     try:
-#                         result = subprocess.run(
-#                             ["mdfind", "kMDItemKind == 'Application' && (kMDItemFSName == 'Adobe Photoshop*.app' || kMDItemFSName == 'Photoshop*.app' || kMDItemFSName == 'Adobe*Photoshop*.app')"],
-#                             capture_output=True, text=True, check=True
-#                         )
-#                         if result.stdout.strip():
-#                             photoshop_path = result.stdout.strip().split("\n")[0]
-#                             logger.debug(f"Found Photoshop via mdfind: {photoshop_path}")
-#                     except subprocess.CalledProcessError as e:
-#                         logger.debug(f"mdfind failed with error: {e}, stderr: {e.stderr}")
-
-#                 if not photoshop_path:
-#                     search_locations = [
-#                         Path("/Applications"),
-#                         Path("~/Applications").expanduser(),
-#                         Path("/Applications/Adobe Creative Cloud"),
-#                         Path("~/Applications/Adobe Creative Cloud").expanduser(),
-#                         Path("/Applications/Adobe"),
-#                         Path("~/Applications/Adobe").expanduser(),
-#                         Path("/Applications/Adobe Photoshop*"),
-#                         Path("~/Applications/Adobe Photoshop*").expanduser(),
-#                         Path("/Applications/Adobe Creative Cloud/Adobe Photoshop*"),
-#                         Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop*").expanduser(),
-#                     ]
-#                     for search_dir in search_locations:
-#                         if not search_dir.exists():
-#                             logger.debug(f"Search directory does not exist: {search_dir}")
-#                             continue
-#                         logger.debug(f"Searching for Photoshop in: {search_dir}")
-#                         photoshop_apps = (
-#                             list(search_dir.glob("Adobe*Photoshop*.app")) +
-#                             list(search_dir.glob("Photoshop*.app")) +
-#                             list(search_dir.glob("*/Adobe*Photoshop*.app"))
-#                         )
-#                         if photoshop_apps:
-#                             logger.debug(f"Found potential Photoshop apps: {[str(app) for app in photoshop_apps]}")
-#                             photoshop_apps.sort(key=lambda x: x.name, reverse=True)
-#                             photoshop_path = str(photoshop_apps[0])
-#                             logger.debug(f"Selected Photoshop via glob in {search_dir}: {photoshop_path}")
-#                             break
-
-#                 if not photoshop_path:
-#                     versioned_paths = [
-#                         Path("/Applications/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-#                         Path("/Applications/Adobe Photoshop 2025/Adobe Photoshop.app"),
-#                         Path("/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-#                         Path("/Applications/Adobe Photoshop 2024/Adobe Photoshop.app"),
-#                         Path("/Applications/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-#                         Path("/Applications/Adobe Photoshop 2023/Adobe Photoshop.app"),
-#                         Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-#                         Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop.app"),
-#                         Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-#                         Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop.app"),
-#                         Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-#                         Path("/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop.app"),
-#                         Path("/Applications/Adobe/Adobe Photoshop 2025/Adobe Photoshop 2025.app"),
-#                         Path("/Applications/Adobe/Adobe Photoshop 2025/Adobe Photoshop.app"),
-#                         Path("/Applications/Adobe/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
-#                         Path("/Applications/Adobe/Adobe Photoshop 2024/Adobe Photoshop.app"),
-#                         Path("/Applications/Adobe/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
-#                         Path("/Applications/Adobe/Adobe Photoshop 2023/Adobe Photoshop.app"),
-#                         Path("~/Applications/Adobe Photoshop 2025/Adobe Photoshop 2025.app").expanduser(),
-#                         Path("~/Applications/Adobe Photoshop 2025/Adobe Photoshop.app").expanduser(),
-#                         Path("~/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app").expanduser(),
-#                         Path("~/Applications/Adobe Photoshop 2024/Adobe Photoshop.app").expanduser(),
-#                         Path("~/Applications/Adobe Photoshop 2023/Adobe Photoshop 2023.app").expanduser(),
-#                         Path("~/Applications/Adobe Photoshop 2023/Adobe Photoshop.app").expanduser(),
-#                         Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop 2025.app").expanduser(),
-#                         Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2025/Adobe Photoshop.app").expanduser(),
-#                         Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop 2024.app").expanduser(),
-#                         Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2024/Adobe Photoshop.app").expanduser(),
-#                         Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop 2023.app").expanduser(),
-#                         Path("~/Applications/Adobe Creative Cloud/Adobe Photoshop 2023/Adobe Photoshop.app").expanduser(),
-#                     ]
-#                     for path in versioned_paths:
-#                         if path.exists():
-#                             photoshop_path = str(path)
-#                             logger.debug(f"Found Photoshop in versioned path: {photoshop_path}")
-#                             break
-
-#                 if not photoshop_path and hasattr(self, 'window'):
-#                     from PySide6.QtWidgets import QFileDialog
-#                     logger.debug("Prompting user to select Photoshop application")
-#                     photoshop_path, _ = QFileDialog.getOpenFileName(
-#                         self.window(), "Locate Adobe Photoshop", "/Applications", "Applications (*.app)"
-#                     )
-#                     if photoshop_path:
-#                         logger.debug(f"User-selected Photoshop path: {photoshop_path}")
-#                     else:
-#                         logger.debug("User cancelled Photoshop path selection")
-
-#                 if not photoshop_path:
-#                     error_msg = (
-#                         "Adobe Photoshop application not found in /Applications, ~/Applications, "
-#                         "Adobe Creative Cloud, or Adobe directories. Please set PHOTOSHOP_PATH environment variable."
-#                     )
-#                     logger.error(error_msg)
-#                     raise FileNotFoundError(error_msg)
-
-#                 for attempt in range(3):
-#                     try:
-#                         subprocess.run(["open", "-a", photoshop_path, file_path], check=True)
-#                         applescript = f'tell application "{Path(photoshop_path).name}" to activate'
-#                         subprocess.run(["osascript", "-e", applescript], check=True)
-#                         logger.info(f"Opened {Path(file_path).name} via open -a at {photoshop_path}")
-#                         print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-#                         break
-#                     except subprocess.CalledProcessError as e:
-#                         if attempt < 2:
-#                             logger.debug(f"Attempt {attempt+1} failed: {e}. Retrying...")
-#                             time.sleep(2)
-#                         else:
-#                             raise RuntimeError(f"Failed to open file after 3 attempts: {e}")
-
-#             elif system == "Linux":
-#                 try:
-#                     subprocess.run(["wine", "--version"], capture_output=True, check=True)
-#                     wine_dirs = [
-#                         Path.home() / ".wine/drive_c/Program Files/Adobe",
-#                         Path.home() / ".wine/drive_c/Program Files (x86)/Adobe"
-#                     ]
-#                     for base_dir in wine_dirs:
-#                         if not base_dir.exists():
-#                             continue
-#                         photoshop_exes = list(base_dir.glob("Adobe Photoshop */Photoshop.exe"))
-#                         if photoshop_exes:
-#                             photoshop_exes.sort(key=lambda x: x.parent.name, reverse=True)
-#                             photoshop_path = str(photoshop_exes[0])
-#                             break
-#                     if not photoshop_path:
-#                         raise FileNotFoundError("Photoshop.exe not found in Wine directories")
-
-#                     for attempt in range(3):
-#                         try:
-#                             subprocess.run(["wine", photoshop_path, file_path], check=True)
-#                             try:
-#                                 subprocess.run(["wmctrl", "-a", "Adobe Photoshop"], check=False)
-#                             except Exception as e:
-#                                 logger.debug(f"Could not raise Photoshop window: {e}")
-#                             logger.info(f"Opened {Path(file_path).name} via wine")
-#                             print(f"[Photoshop] Opened {Path(file_path).name} at {photoshop_path}")
-#                             break
-#                         except subprocess.CalledProcessError as e:
-#                             if attempt < 2:
-#                                 logger.debug(f"Attempt {attempt+1} failed: {e}. Retrying...")
-#                                 time.sleep(2)
-#                             else:
-#                                 raise RuntimeError(f"Failed to open file after 3 attempts: {e}")
-#                 except subprocess.CalledProcessError:
-#                     raise FileNotFoundError("Wine is not installed or not functioning")
-
-#             else:
-#                 error_message = f"Unsupported platform for Photoshop: {system}"
-#                 logger.warning(error_message)
-#                 print(f"[Photoshop] {error_message}")
-#                 raise ValueError(error_message)
-
-#         except Exception as e:
-#             error_message = f"Failed to open {Path(file_path).name} in Photoshop: {str(e)}"
-#             logger.error(error_message)
-#             print(f"[Photoshop] {error_message}")
-#             raise
-
-#     def open_folder(self, file_path):
-#         """Open the folder containing the file."""
-#         try:
-#             folder_path = str(Path(file_path).parent)
-#             system = platform.system()
-#             if system == "Windows":
-#                 subprocess.run(["explorer", folder_path], check=True)
-#             elif system == "Darwin":
-#                 subprocess.run(["open", folder_path], check=True)
-#             elif system == "Linux":
-#                 subprocess.run(["xdg-open", folder_path], check=True)
-#             else:
-#                 logger.warning(f"Unsupported platform for opening folder: {system}")
-#                 app_signals.append_log.emit(f"[Folder] Unsupported platform for opening folder: {system}")
-#                 app_signals.update_status.emit(f"Unsupported platform for opening folder: {system}")
-#                 return
-#             app_signals.update_status.emit(f"Opened folder for {Path(file_path).name}")
-#             app_signals.append_log.emit(f"[Folder] Opened folder for {Path(file_path).name}")
-#         except Exception as e:
-#             logger.error(f"Failed to open folder {file_path}: {e}")
-#             app_signals.append_log.emit(f"[Folder] Failed to open folder: {str(e)}")
-#             app_signals.update_status.emit(f"Failed to open folder for {Path(file_path).name}: {str(e)}")
-
-#     def copy_file_to_clipboard(self, file_path):
-#         """Copy the file path to the clipboard."""
-#         try:
-#             file_path = os.path.join(BASE_TARGET_DIR, file_path)
-#             if not os.path.exists(file_path):
-#                 raise FileNotFoundError(file_path)
-
-#             system = platform.system()
-#             if system == "Windows":
-#                 import pyautogui
-#                 import ctypes
-#                 import pygetwindow as gw
-
-#             folder, filename = os.path.split(os.path.abspath(file_path))
-#             if system == "Windows":
-#                 SW_SHOWNOACTIVATE = 4
-#                 ctypes.windll.shell32.ShellExecuteW(None, "open", folder, None, None, SW_SHOWNOACTIVATE)
-#             elif system == "Darwin":
-#                 subprocess.run(["open", folder])
-#             else:
-#                 raise NotImplementedError(f"Unsupported OS: {system}")
-
-#             time.sleep(0.1)
-#             pyautogui.typewrite(filename)
-#             time.sleep(0.1)
-
-#             if system == "Windows":
-#                 pyautogui.hotkey('ctrl', 'c')
-#                 pyautogui.hotkey('alt', 'f4')
-#             elif system == "Darwin":
-#                 pyautogui.hotkey('command', 'c')
-#                 pyautogui.hotkey('command', 'w')
-#             else:
-#                 raise NotImplementedError(f"Copy not supported on {system}")
-#         except Exception as e:
-#             print(f"An error occurred: {e}")
-#         finally:
-#             print("Cleanup or final steps executed.")
-
-#     def retry_file_process(self, row_data: dict):
-#         """
-#         Retry a failed file process using cached API metadata.
-#         """
-
-#         # ---- Guard: retry only failed jobs ----
-#         status = row_data.get("status")
-#         if status not in ("Download Failed", "Upload Failed"):
-#             logger.warning(
-#                 f"[Retry] Blocked retry for spec_id={row_data.get('spec_id')} "
-#                 f"because status={status}"
-#             )
-#             return
-
-#         # ---- Get spec_id ----
-#         spec_id = str(row_data.get("spec_id"))
-#         if not spec_id:
-#             raise ValueError("Retry failed: spec_id missing")
-
-#         # ---- Load authoritative metadata from cache ----
-#         cache = load_cache()
-#         meta = cache.get("downloaded_files_with_metadata", {}).get(spec_id)
-
-#         if not meta or "api_response" not in meta:
-#             raise ValueError(f"Retry failed: no cached api_response for spec_id={spec_id}")
-
-#         api = meta["api_response"]
-
-#         # ---- Validate API contract ----
-#         action_type = api.get("request_type")
-#         file_path = api.get("file_path")
-#         nas_path = api.get("nas_path")
-
-#         if action_type not in ("download", "upload"):
-#             raise ValueError(f"Invalid request_type: {action_type}")
-
-#         if not file_path or not nas_path:
-#             raise ValueError(
-#                 f"Retry aborted: missing file_path or nas_path "
-#                 f"(file_path={file_path}, nas_path={nas_path})"
-#             )
-
-#         # ---- Resolve paths ----
-#         if action_type == "download":
-#             src_path = file_path
-#             dest_path = os.path.join(BASE_TARGET_DIR, nas_path)
-#             is_nas_src = True
-#             is_nas_dest = False
-#         else:  # upload
-#             src_path = os.path.join(BASE_TARGET_DIR, nas_path)
-#             dest_path = file_path
-#             is_nas_src = False
-#             is_nas_dest = True
-
-#         # ---- Execute retry ----
-#         file_worker = FileWatcherWorker.get_instance()
-
-#         return file_worker.perform_file_transfer(
-#             src_path,
-#             dest_path,
-#             action_type,
-#             api,            # ✅ PASS api_response, NOT wrapper
-#             is_nas_src,
-#             is_nas_dest
-#         )
-
-    
     
 
 # LoginWorker (provided, with fixes)
@@ -5481,6 +7077,7 @@ class LoginWorker(QObject):
     user_in_use = Signal(str)
     proceed = None
     switch_login = False
+
     def __init__(self, username, password, remember_me, tray_icon, status_bar, switch_login):
         super().__init__()
         self.username = username
@@ -5489,64 +7086,71 @@ class LoginWorker(QObject):
         self.tray_icon = tray_icon
         self.status_bar = status_bar
         self.switch_login = switch_login
-        
+
+    def _set_status(self, message: str):
+        """
+        Safely update the status bar — guards against the widget being
+        deleted by Qt before the background thread finishes.
+        """
+        try:
+            if self.status_bar is not None:
+                self.status_bar.showMessage(message)
+        except RuntimeError:
+            # Qt already deleted the C++ object — silently ignore
+            pass
+        except Exception as e:
+            logger.debug(f"[LoginWorker] Status bar update skipped: {e}")
+
     def run(self):
         try:
             print("inside_logworker")
             logger.debug("Starting LoginWorker.run")
             app_signals.append_log.emit("[Login] Starting LoginWorker.run")
-            logger.debug(f"OAuth request data: {{\n"
-                        f"  grant_type: password,\n"
-                        f"  username: {self.username},\n"
-                        f"  password: {'*' * len(self.password)},\n"
-                        f"  client_id: hZBc4VyhUSQgZobyjdVH7ZPk4WRey2BIjqws_UxF5cM,\n"
-                        f"  client_secret: crazy-cloud,\n"
-                        f"  scope: pm_client\n}}")
-            
+
             if self.status_bar is None:
                 logger.warning("Status bar is None, cannot update message")
-            else:
-                self.status_bar.showMessage("Requesting access token...")
             
-            # Create a new session for thread safety
+            self._set_status("Requesting access token...")
+
             session = requests.Session()
             payload = {
-                    "grant_type": "password",
-                    "username": self.username,
-                    "password": self.password,
-                    "client_id": "hZBc4VyhUSQgZobyjdVH7ZPk4WRey2BIjqws_UxF5cM",
-                    "client_secret": "crazy-cloud",
-                    "scope": "pm_client",
-                    "details": USER_SYSTEM_INFO.get("details", {}),
-                    "machine_id": USER_SYSTEM_INFO.get("encoded_mac", ""),
-                    "mac_address": USER_SYSTEM_INFO.get("mac_address", ""),
-                    "add_mac": 1 if self.switch_login else 0
+                "grant_type": "password",
+                "username": self.username,
+                "password": self.password,
+                "client_id": "hZBc4VyhUSQgZobyjdVH7ZPk4WRey2BIjqws_UxF5cM",
+                "client_secret": "crazy-cloud",
+                "scope": "pm_client",
+                "details": USER_SYSTEM_INFO.get("details", {}),
+                "machine_id": USER_SYSTEM_INFO.get("encoded_mac", ""),
+                "mac_address": USER_SYSTEM_INFO.get("mac_address", ""),
+                "add_mac": 1 if self.switch_login else 0
+            }
 
-                }
-            print(f"payload of login {payload}")
             token_resp = session.post(
                 OAUTH_URL,
-                data = payload,
+                data=payload,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
-                verify=False,  # Enable SSL verification
+                verify=False,
                 timeout=60
             )
             self.switch_login = False
-            
-            logger.debug(f"Token response raw: {token_resp.text}")
+
             app_signals.api_call_status.emit(
                 OAUTH_URL,
                 f"Status: {token_resp.status_code}, Response: {token_resp.text}",
                 token_resp.status_code
             )
-            app_signals.append_log.emit(f"[Login] Token API response: {token_resp.status_code}, {token_resp.text}")
-            print(f"token_resp.status_code ======== {token_resp.text}")
+            app_signals.append_log.emit(
+                f"[Login] Token API response: {token_resp.status_code}, {token_resp.text}"
+            )
+
             if token_resp.status_code == 403:
                 self.user_in_use.emit("user_already_logged_in")
                 QThread.currentThread().quit()
                 return
-            if self.status_bar:
-                self.status_bar.showMessage(f"Token API response: {token_resp.status_code}")
+
+            self._set_status(f"Token API response: {token_resp.status_code}")
+
             if token_resp.status_code in (400, 401):
                 try:
                     error_details = token_resp.json()
@@ -5555,65 +7159,58 @@ class LoginWorker(QObject):
                     error_msg = f"Bad request: {token_resp.text}"
                 logger.error(f"Token API error: {error_msg}")
                 raise Exception(error_msg)
+
             token_resp.raise_for_status()
             token_data = token_resp.json()
-            logger.debug(f"Token response JSON: {token_data}")
             access_token = token_data.get("access_token")
             if not access_token:
                 raise Exception("No access token received in response")
 
-            if self.status_bar:
-                self.status_bar.showMessage("Fetching user info...")
+            self._set_status("Fetching user info...")
+
             info_resp = session.get(
                 f"{BASE_DOMAIN}/api/user/getinfo?emailid={self.username}",
                 headers={"Authorization": f"Bearer {access_token}"},
                 verify=False,
                 timeout=60
             )
-            logger.debug(f"User info response raw: {info_resp.text}")
             app_signals.api_call_status.emit(
                 f"{BASE_DOMAIN}/api/user/getinfo?emailid={self.username}",
                 f"Status: {info_resp.status_code}, Response: {info_resp.text}",
                 info_resp.status_code
             )
-            app_signals.append_log.emit(f"[Login] User info API response: {info_resp.status_code}, {info_resp.text}")
-            if self.status_bar:
-                self.status_bar.showMessage(f"User info API response: {info_resp.status_code}")
+            app_signals.append_log.emit(
+                f"[Login] User info API response: {info_resp.status_code}"
+            )
+            self._set_status(f"User info API response: {info_resp.status_code}")
             info_resp.raise_for_status()
             user_info = info_resp.json()
 
-            if self.status_bar:
-                self.status_bar.showMessage("Fetching user data...")
+            self._set_status("Fetching user data...")
+
             user_resp = session.get(
                 f"{BASE_DOMAIN}/jsonapi/user/user?filter[name]={self.username}",
                 headers={"Authorization": f"Bearer {access_token}"},
                 verify=False,
                 timeout=60
             )
-            logger.debug(f"User data response raw: {user_resp.text}")
             app_signals.api_call_status.emit(
                 f"{BASE_DOMAIN}/jsonapi/user/user?filter[name]={self.username}",
                 f"Status: {user_resp.status_code}, Response: {user_resp.text}",
                 user_resp.status_code
             )
-            app_signals.append_log.emit(f"[Login] User data API response: {user_resp.status_code}, {user_resp.text}")
-            if self.status_bar:
-                self.status_bar.showMessage(f"User data API response: {user_resp.status_code}")
+            app_signals.append_log.emit(
+                f"[Login] User data API response: {user_resp.status_code}"
+            )
+            self._set_status(f"User data API response: {user_resp.status_code}")
             user_resp.raise_for_status()
             user_data = user_resp.json()
 
-            cache = load_cache() or {}  # Handle case where load_cache returns None
-            logger.debug(f"Loaded cache: {cache}")
-            print(f"Loaded cacheaaa: {cache}")
+            cache = load_cache() or {}
             cached_user = cache.get("user")
             cached_token = cache.get("token")
 
-            # if not load_cache() or self.username != load_cache().get("user"):
-
-            # If new user or cache empty → save cache
             if not cached_user or self.username != cached_user:
-                logger.debug("New user login or cache empty. Saving full cache data.")
-       
                 cache_data = {
                     "token": access_token,
                     "user": self.username,
@@ -5630,71 +7227,100 @@ class LoginWorker(QObject):
                     "cached_at": datetime.now(ZoneInfo("UTC")).isoformat()
                 }
                 save_cache(cache_data)
-                logger.debug(f"Cache saved: {cache_data}")
                 app_signals.append_log.emit(f"[Login] Cache saved for user: {self.username}")
-                
+
             elif self.username == cached_user and not cached_token:
-                # Same user but token empty → only update token
-                logger.debug("Same user re-login detected. Updating token only.")
                 cache["token"] = access_token
                 cache["cached_at"] = datetime.now(ZoneInfo("UTC")).isoformat()
                 save_cache(cache)
-                logger.debug(f"[Login] Token updated for user: {self.username}")
 
-            # start_local_api()   # START local api server
-            
-            logger.debug("Emitting success signal")
+            _username = self.username
+            _password = self.password
+            _rememberme = self.rememberme
             self.success.emit(user_info, access_token)
-            if self.rememberme:
-                keyring.set_password(
-                    "PremediaApp",      # service name
-                    self.username,      # account
-                    self.password       # secret (securely stored)
-                )
-            else:
+
+            def _save_keyring():
                 try:
-                    keyring.delete_password("PremediaApp", self.username)
-                except keyring.errors.PasswordDeleteError:
-                    pass
+                    system = platform.system()
+                    if _rememberme:
+                        if system == "Windows":
+                            try:
+                                import win32cred as _wc
+                                _wc.CredWrite({
+                                    'Type': _wc.CRED_TYPE_GENERIC,
+                                    'TargetName': f"PremediaApp/{_username}",
+                                    'CredentialBlob': _password,
+                                    'Persist': _wc.CRED_PERSIST_LOCAL_MACHINE,
+                                    'UserName': _username,
+                                }, 0)
+                                c = load_cache()
+                                c["saved_username"] = _username
+                                c["saved_password"] = _password
+                                save_cache(c)
+                            except ImportError:
+                                c = load_cache()
+                                c["saved_username"] = _username
+                                c["saved_password"] = _password
+                                save_cache(c)
+                            except Exception as e:
+                                logger.warning(f"win32cred write failed ({e}), falling back to cache")
+                                c = load_cache()
+                                c["saved_username"] = _username
+                                c["saved_password"] = _password
+                                save_cache(c)
+                        else:
+                            c = load_cache()
+                            c["saved_username"] = _username
+                            c["saved_password"] = _password
+                            save_cache(c)
+                    else:
+                        c = load_cache()
+                        c["saved_username"] = ""
+                        c["saved_password"] = ""
+                        save_cache(c)
+                        if system == "Windows":
+                            try:
+                                import win32cred as _wc
+                                _wc.CredDelete(f"PremediaApp/{_username}", _wc.CRED_TYPE_GENERIC)
+                            except Exception:
+                                pass
+                except Exception as e:
+                    logger.warning(f"_save_keyring failed: {e}")
+
+            threading.Thread(target=_save_keyring, daemon=True).start()
             app_signals.append_log.emit(f"[Login] Successful login for user: {self.username}")
-            if self.status_bar:
-                self.status_bar.showMessage(f"Successful login for {self.username}")
-        
+            self._set_status(f"Successful login for {self.username}")
+
         except requests.exceptions.SSLError as e:
             error_msg = f"SSL error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            if self.status_bar:
-                self.status_bar.showMessage(error_msg)
+            self._set_status(error_msg)
         except requests.exceptions.ConnectionError as e:
             error_msg = f"Connection error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            if self.status_bar:
-                self.status_bar.showMessage(error_msg)
+            self._set_status(error_msg)
         except requests.exceptions.Timeout as e:
             error_msg = f"Request timed out: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            if self.status_bar:
-                self.status_bar.showMessage(error_msg)
+            self._set_status(error_msg)
         except requests.exceptions.RequestException as e:
             error_msg = f"Network error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            if self.status_bar:
-                self.status_bar.showMessage(error_msg)
+            self._set_status(error_msg)
         except Exception as e:
             error_msg = f"Login error: {str(e)}"
             logger.error(error_msg)
             self.failure.emit(error_msg)
             app_signals.append_log.emit(f"[Login] Failed: {error_msg}")
-            if self.status_bar:
-                self.status_bar.showMessage(error_msg)
+            self._set_status(error_msg)
         
         
     
@@ -5789,13 +7415,20 @@ class LoginDialog(QDialog):
             cache = load_cache()
             token = cache.get("token")
             user_id = cache.get("user_id")
-            name = cache.get("user_data", {}).get("data", [{}])[0].get("attributes", {}).get("name", cache.get("user_info", {}).get("mail", "user"))
-            user_info = {
+           
+            name = cache.get("user_data", {}).get("data", [{}])[0].get(
+                "attributes", {}
+            ).get("name", cache.get("user_info", {}).get("mail", "user"))
+
+            # Store on instance so the background thread can emit them via invokeMethod
+            self._cached_user_info = {
                 "uid": user_id,
                 "name": name,
-                "mail": cache.get("user_info", {}).get("mail", "user"),  
+                "mail": cache.get("user_info", {}).get("mail", "user"),
                 "access_key": cache.get("user_info", {}).get("access_key")
             }
+            self._cached_token = token
+            
             # if token and user_id:
             #     logger.info(f"Auto-login from cache for user: {user_id}")
             #     app_signals.append_log.emit(f"[Login] Auto-login from cache for user: {user_id}")
@@ -5806,38 +7439,16 @@ class LoginDialog(QDialog):
 
             if token and user_id:
                 logger.info(f"Attempting auto-login from cache for user: {user_id}")
-                app_signals.append_log.emit(f"[Login] Attempting auto-login from cache for user: {user_id}")
+                app_signals.append_log.emit(
+                    f"[Login] Attempting auto-login from cache for user: {user_id}"
+                )
+                self.status_bar.showMessage("Validating session...")
 
-                # Get access_key from cached user_info
-                access_key = user_info.get("access_key")
-
-                # Validate cached token/access_key
-                validation_result = validate_user(access_key, status_bar=self.status_bar)
-                
-                if validation_result.get("status") == 403:
-                    
-                    self.user_in_other_system.emit("user_already_logged_in")
-                    print("ssssssssssssssssssssssssssssssssssssssssssssssssssss")
-                    # QThread.currentThread().quit()
-                    return
-
-                if validation_result.get("uuid"):
-                    # Token valid, schedule login success
-                    QTimer.singleShot(300, lambda: self.on_login_success(user_info, token))
-                    # print('-------------------------------------------------')
-                    # print(f"Auto-login scheduled for user: {user_id}")
-                    app_signals.append_log.emit(f"[Login] Auto-login scheduled for user: {user_id}")
-                else:
-                    # Token invalid, call existing on_login_failed
-                    error_msg = "Cached login expired, please log in manually"
-                    # print("=================================================")
-                    # print(f"{error_msg} for user: {user_id}")
-                    app_signals.append_log.emit(f"[Login] Cached token invalid for user: {user_id}")
-                    self.status_bar.showMessage(error_msg)
-
-                    # Call your existing on_login_failed (dialog remains open)
-                    QTimer.singleShot(100, lambda: self.on_login_failed(error_msg))
-
+                # Run validate_user on a background thread so __init__ never blocks
+                threading.Thread(
+                    target=self._validate_cached_login,
+                    daemon=True
+                ).start()
             # if cache.get("saved_username") and cache.get("saved_password"):
             #     self.ui.usernametxt.setText(cache["saved_username"])
             #     self.ui.passwordtxt.setText(cache["saved_password"])
@@ -5847,22 +7458,64 @@ class LoginDialog(QDialog):
             # else:
             #     app_signals.append_log.emit("[Login] No saved credentials found in cache")
             #     self.status_bar.showMessage("No saved credentials found")
+            # REPLACE the saved credentials block in LoginDialog.__init__:
+            # In LoginDialog.__init__, replace the _load_keyring_credentials block:
 
             saved_username = cache.get("saved_username")
-
             if saved_username:
-                saved_password = keyring.get_password("PremediaApp", saved_username)
+                def _load_keyring_credentials(uname):
+                    try:
+                        pwd = None
+                        system = platform.system()
+                        
+                        if system == "Windows":
+                            try:
+                                import win32cred as _wc
+                                cred = _wc.CredRead(f"PremediaApp/{uname}", _wc.CRED_TYPE_GENERIC)
+                                raw = cred['CredentialBlob']
+                                # win32cred returns bytes on Python 3 — decode to str
+                                if isinstance(raw, bytes):
+                                    pwd = raw.decode('utf-16-le').rstrip('\x00')
+                                else:
+                                    pwd = raw
+                            except ImportError:
+                                current_cache = load_cache()
+                                pwd = current_cache.get("saved_password") or None
+                            except Exception:
+                                current_cache = load_cache()
+                                pwd = current_cache.get("saved_password") or None
+                        else:
+                            current_cache = load_cache()
+                            pwd = current_cache.get("saved_password") or None
 
-                if saved_password:
-                    self.ui.usernametxt.setText(saved_username)
-                    self.ui.passwordtxt.setText(saved_password)
-                    self.ui.rememberme.setChecked(True)
-                    self.status_bar.showMessage("Loaded saved credentials")
-                else:
-                    self.ui.rememberme.setChecked(False)
-                    self.status_bar.showMessage("Saved username found, but no password stored")
+                        if pwd:
+                            QMetaObject.invokeMethod(
+                                self, "_apply_saved_credentials",
+                                Qt.QueuedConnection,
+                                Q_ARG(str, uname),
+                                Q_ARG(str, pwd)
+                            )
+                        else:
+                            QMetaObject.invokeMethod(
+                                self, "_no_saved_credentials",
+                                Qt.QueuedConnection
+                            )
+                    except Exception as e:
+                        logger.warning(f"_load_keyring_credentials failed: {e}")
+                        QMetaObject.invokeMethod(
+                            self, "_no_saved_credentials",
+                            Qt.QueuedConnection
+                        )
+
+                self.status_bar.showMessage("Loading saved credentials...")
+                threading.Thread(
+                    target=_load_keyring_credentials,
+                    args=(saved_username,),
+                    daemon=True
+                ).start()
             else:
                 self.status_bar.showMessage("No saved credentials found")
+
 
             app_signals.update_status.connect(self.status_bar.showMessage, Qt.QueuedConnection)
             self.ui.buttonBox.accepted.connect(self.handle_login)
@@ -5884,8 +7537,43 @@ class LoginDialog(QDialog):
         except Exception as e:
             logger.error(f"Failed to initialize LoginDialog: {e}")
             app_signals.append_log.emit(f"[Login] Failed to initialize LoginDialog: {str(e)}")
-            QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
+            # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
+            show_alert("Initialization Error",  f"Failed to initialize login dialog: {str(e)}", QMessageBox.Critical)
             raise
+
+
+    @Slot(str, str)
+    def _apply_saved_credentials(self, username: str, password: str):
+        """Main thread — apply credentials loaded from keyring."""
+        try:
+            self.ui.usernametxt.setText(username)
+            self.ui.passwordtxt.setText(password)
+            self.ui.rememberme.setChecked(True)
+            self.status_bar.showMessage("Loaded saved credentials")
+            logger.debug("Saved credentials applied from keyring")
+        except RuntimeError:
+            pass  # dialog already closed
+
+    @Slot()
+    def _no_saved_credentials(self):
+        """Main thread — no saved password found."""
+        try:
+            self.ui.rememberme.setChecked(False)
+            self.status_bar.showMessage("No saved credentials found")
+        except RuntimeError:
+            pass
+
+    @Slot(str, str)
+    def _on_saved_credentials_loaded(self, username: str, password: str):
+        """Main thread — saved credentials loaded from keyring."""
+        try:
+            self.ui.usernametxt.setText(username)
+            self.ui.passwordtxt.setText(password)
+            self.ui.rememberme.setChecked(True)
+            self.status_bar.showMessage("Loaded saved credentials")
+            logger.debug("Saved credentials loaded from keyring")
+        except RuntimeError:
+            pass  # dialog already closed
 
     def toggle_password_visibility(self, checked: bool):
         """
@@ -5904,7 +7592,74 @@ class LoginDialog(QDialog):
             logger.error(f"Password toggle failed: {e}")
             app_signals.append_log.emit(f"[Login] Password toggle error: {str(e)}")
 
+    def _validate_cached_login(self):
+        """
+        Runs on a background thread — NEVER touch Qt widgets here.
+        Calls validate_user then routes back to the main thread via
+        invokeMethod so all UI updates are safe.
+        """
+        try:
+            access_key = self._cached_user_info.get("access_key")
+            validation_result = validate_user(access_key, status_bar=None)
 
+            if validation_result.get("status") == 403:
+                QMetaObject.invokeMethod(
+                    self,
+                    "_on_cached_login_blocked",
+                    Qt.QueuedConnection
+                )
+            elif validation_result.get("uuid"):
+                QMetaObject.invokeMethod(
+                    self,
+                    "_on_cached_login_valid",
+                    Qt.QueuedConnection
+                )
+            else:
+                QMetaObject.invokeMethod(
+                    self,
+                    "_on_cached_login_expired",
+                    Qt.QueuedConnection
+                )
+        except Exception as e:
+            logger.error(f"Background validation error: {e}")
+            app_signals.append_log.emit(
+                f"[Login] Background validation error: {str(e)}"
+            )
+            QMetaObject.invokeMethod(
+                self,
+                "_on_cached_login_expired",
+                Qt.QueuedConnection
+            )
+
+    @Slot()
+    def _on_cached_login_valid(self):
+        """Main thread — token is valid, proceed with auto-login."""
+        logger.info("Cached token valid, proceeding with auto-login")
+        app_signals.append_log.emit("[Login] Cached token valid, auto-login proceeding")
+        self.status_bar.showMessage("Session valid, logging in...")
+        # Small delay so the status message is visible before the dialog closes
+        QTimer.singleShot(
+            200,
+            lambda: self.on_login_success(self._cached_user_info, self._cached_token)
+        )
+
+    @Slot()
+    def _on_cached_login_blocked(self):
+        """Main thread — 403 means user is logged in elsewhere."""
+        logger.warning("Cached login blocked: user logged in on another machine")
+        app_signals.append_log.emit(
+            "[Login] Cached login blocked: user already logged in elsewhere"
+        )
+        self.user_in_other_system.emit("user_already_logged_in")
+
+    @Slot()
+    def _on_cached_login_expired(self):
+        """Main thread — token invalid or expired, show login form."""
+        error_msg = "Session expired, please log in again"
+        logger.info(error_msg)
+        app_signals.append_log.emit(f"[Login] {error_msg}")
+        self.status_bar.showMessage(error_msg)
+        QTimer.singleShot(100, lambda: self.on_login_failed(error_msg))
 
     def show_progress(self, message):
         try:
@@ -5921,7 +7676,7 @@ class LoginDialog(QDialog):
             self.progress.setWindowTitle("Please wait")
             self.progress.setWindowIcon(load_icon(ICON_PATH, "progress dialog"))
             self.progress.show()
-            QApplication.processEvents()
+            # QApplication.processEvents()
             logger.debug(f"Progress dialog shown: {message}, visible={self.progress.isVisible()}")
             app_signals.append_log.emit(f"[Login] Showing progress: {message}")
             self.status_bar.showMessage(message)
@@ -5929,7 +7684,8 @@ class LoginDialog(QDialog):
             logger.error(f"Progress dialog error: {e}")
             app_signals.append_log.emit(f"[Login] Failed: Progress dialog error - {str(e)}")
             self.status_bar.showMessage(f"Progress error: {str(e)}")
-            QMessageBox.critical(self, "Progress Error", f"Progress dialog error: {str(e)}")
+            # QMessageBox.critical(self, "Progress Error", f"Progress dialog error: {str(e)}")
+            show_alert("Progress Error", f"Progress dialog error: {str(e)}", QMessageBox.Critical)
 
     def handle_login(self):
         try:
@@ -5940,7 +7696,8 @@ class LoginDialog(QDialog):
             app_signals.append_log.emit(f"[Login] Attempting login with username: {username}")
             self.status_bar.showMessage(f"Attempting login for {username}")
             if not username or not password:
-                QMessageBox.warning(self, "Input Error", "Please enter both username and password.")
+                show_alert("Input Error", "Please enter both username and password.", QMessageBox.Warning)
+                # QMessageBox.warning(self, "Input Error", "Please enter both username and password.")
                 app_signals.append_log.emit("[Login] Failed: Missing username or password")
                 self.status_bar.showMessage("Missing username or password")
                 return
@@ -5952,7 +7709,8 @@ class LoginDialog(QDialog):
             self.status_bar.showMessage(f"Login error: {str(e)}")
             if self.progress:
                 self.progress.close()
-            QMessageBox.critical(self, "Login Error", f"Login error: {str(e)}")
+            show_alert("Login Error",  f"Login error: {str(e)}", QMessageBox.Critical)
+            # QMessageBox.critical(self, "Login Error", f"Login error: {str(e)}")
 
     def perform_login(self, username, password):
         try:
@@ -5960,6 +7718,13 @@ class LoginDialog(QDialog):
             self.LoginDialog_PASSWORD = password
             logger.debug("Starting login thread")
             self.thread = QThread()
+             # Keep reference alive until thread finishes
+            if not hasattr(self, '_login_threads'):
+                self._login_threads = []
+            self._login_threads.append(self.thread)
+            self.thread.finished.connect(
+                lambda t=self.thread: self._login_threads.remove(t) if t in self._login_threads else None
+            )
             tray_icon = getattr(self.parent(), 'tray_icon', None)
             self.worker = LoginWorker(username, password, self.ui.rememberme.isChecked(), tray_icon=tray_icon, status_bar=self.status_bar, switch_login=self.switch_login)
             self.switch_login = False
@@ -5976,6 +7741,7 @@ class LoginDialog(QDialog):
             self.thread.finished.connect(self.thread.deleteLater)
             self.thread.finished.connect(lambda: self.cleanup_progress())  # Clean up progress dialog
             self.thread.start()
+            self.thread.finished.connect(lambda: None)
             app_signals.append_log.emit(f"[Login] Starting login thread for user: {username}")
             self.status_bar.showMessage(f"Starting login for {username}")
         except Exception as e:
@@ -5984,61 +7750,97 @@ class LoginDialog(QDialog):
             self.status_bar.showMessage(f"Login thread error: {str(e)}")
             if self.progress and self.progress.isVisible():
                 self.progress.close()
-                QApplication.processEvents()
+                # QApplication.processEvents()
                 logger.debug("Progress dialog closed in perform_login error handler")
                 app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
-            QMessageBox.critical(self, "Login Error", f"Login thread error: {str(e)}")
+            # QMessageBox.critical(self, "Login Error", f"Login thread error: {str(e)}")
+            show_alert("Title", "message", QMessageBox.Critical)
 
     def cleanup_progress(self):
         try:
             if self.progress and self.progress.isVisible():
                 self.progress.close()
-                QApplication.processEvents()
                 logger.debug("Progress dialog closed in cleanup_progress")
                 app_signals.append_log.emit("[Login] Progress dialog closed in cleanup_progress")
+        except RuntimeError:
+            # Qt already deleted the C++ progress dialog object — ignore safely
+            self.progress = None
         except Exception as e:
             logger.error(f"Error in cleanup_progress: {str(e)}")
             app_signals.append_log.emit(f"[Login] Failed: Error in cleanup_progress - {str(e)}")
 
-    def validate_account_already_inuse(self):
-        print("in validate_account_already_inuse")
+    # def validate_account_already_inuse(self):
+    #     print("in validate_account_already_inuse")
 
+    #     msg_box = QMessageBox(self)
+    #     msg_box.setWindowTitle("Account In Use")
+    #     msg_box.setText("You are already logged in on another device.\nDo you want to switch this session here?")
+    #     msg_box.setIcon(QMessageBox.Warning)
+    #     switch_btn = msg_box.addButton("Switch Here", QMessageBox.AcceptRole)
+    #     cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+    #     # Apply red color only to Cancel button
+    #     switch_btn.setStyleSheet("""
+    #         QPushButton {
+    #             color: white;
+    #             border-radius: 4px;
+    #             padding: 2px;
+    #         }
+    #     """)
+    #     cancel_btn.setStyleSheet("""
+    #         QPushButton {
+    #             background-color: #d32f2f;   /* Red background */
+    #             color: white;
+    #             border-radius: 4px;
+    #             padding: 2px;
+    #         }
+    #     """)
+
+
+    #     # --- Block here until user clicks ---
+    #     msg_box.exec()
+
+    #     if msg_box.clickedButton() == switch_btn:
+    #         print("User chose to switch session.")
+    #         self.switch_login = True
+    #     else:
+    #         print("User cancelled.")
+    #         self.switch_login = False
+    #     print(f"self.LoginDialog_USERNAME={self.LoginDialog_USERNAME}===self.LoginDialog_PASSWORD{self.LoginDialog_PASSWORD}")
+    #     if self.switch_login:
+    #         self.perform_login(self.LoginDialog_USERNAME, self.LoginDialog_PASSWORD)
+
+
+
+    def validate_account_already_inuse(self):
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Account In Use")
-        msg_box.setText("You are already logged in on another device.\nDo you want to switch this session here?")
+        msg_box.setText(
+            "You are already logged in on another device.\n"
+            "Do you want to switch this session here?"
+        )
         msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setWindowFlags(
+        msg_box.windowFlags()
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        msg_box.setWindowState(Qt.WindowState.WindowActive)
+        msg_box.setAttribute(Qt.WA_ShowWithoutActivating, False)
+
         switch_btn = msg_box.addButton("Switch Here", QMessageBox.AcceptRole)
         cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
-        # Apply red color only to Cancel button
-        switch_btn.setStyleSheet("""
-            QPushButton {
-                color: white;
-                border-radius: 4px;
-                padding: 2px;
-            }
-        """)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #d32f2f;   /* Red background */
-                color: white;
-                border-radius: 4px;
-                padding: 2px;
-            }
-        """)
+        switch_btn.setStyleSheet("QPushButton { color: white; border-radius: 4px; padding: 2px; }")
+        cancel_btn.setStyleSheet(
+            "QPushButton { background-color: #d32f2f; color: white; border-radius: 4px; padding: 2px; }"
+        )
 
-
-        # --- Block here until user clicks ---
+        msg_box.raise_()
+        msg_box.activateWindow()
         msg_box.exec()
 
-        if msg_box.clickedButton() == switch_btn:
-            print("User chose to switch session.")
-            self.switch_login = True
-        else:
-            print("User cancelled.")
-            self.switch_login = False
-        print(f"self.LoginDialog_USERNAME={self.LoginDialog_USERNAME}===self.LoginDialog_PASSWORD{self.LoginDialog_PASSWORD}")
+        self.switch_login = (msg_box.clickedButton() == switch_btn)
         if self.switch_login:
             self.perform_login(self.LoginDialog_USERNAME, self.LoginDialog_PASSWORD)
+
  
     def on_login_success(self, user_info: dict, token: str):
         try:
@@ -6049,19 +7851,19 @@ class LoginDialog(QDialog):
             # Update parent (PremediaApp) state
             if hasattr(self, 'app') and self.app:
                 self.app.set_logged_in_state()
-                self.app.start_file_watcher()
+                self.app.post_login_processes()   # handles start_file_watcher internally
                 logger.debug("Updated PremediaApp state")
                 app_signals.append_log.emit("[Login] Updated PremediaApp state")
             
             # Close progress dialog
             if self.progress and self.progress.isVisible():
                 self.progress.close()
-                QApplication.processEvents()  # Ensure close is processed
                 logger.debug("Progress dialog closed in on_login_success")
                 app_signals.append_log.emit("[Login] Progress dialog closed")
             
             # Show success message
-            QMessageBox.information(self, "Login Success", f"Successfully logged in as {user_name}")
+            # QMessageBox.information(self, "Login Success", f"Successfully logged in as {user_name}")
+            show_alert("Login Success",  f"Successfully logged in as {user_name}", QMessageBox.Information)
             
             self.accept()
             app_signals.update_status.emit("Logged in successfully")
@@ -6077,80 +7879,117 @@ class LoginDialog(QDialog):
                 QApplication.processEvents()
                 logger.debug("Progress dialog closed in on_login_success error handler")
                 app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
-            QMessageBox.critical(self, "Login Error", f"Error handling login success: {str(e)}")
+            # QMessageBox.critical(self, "Login Error", f"Error handling login success: {str(e)}")
+            show_alert("Login Error", f"Error handling login success: {str(e)}", QMessageBox.Critical)
 
+
+
+    # def on_login_failed(self, error):
+    #     try:
+    #         # Log the failure
+    #         logger.error(f"Login failed: {error}")
+    #         app_signals.append_log.emit(f"[App] Login failed: {error}")
+    #         app_signals.update_status.emit(f"Login failed: {error}")
+
+    #         # Close progress dialog if open
+    #         if self.progress and self.progress.isVisible():
+    #             self.progress.close()
+    #             QApplication.processEvents()
+    #             logger.debug("Progress dialog closed in on_login_failed")
+    #             app_signals.append_log.emit("[Login] Progress dialog closed")
+
+    #         # Show error popup
+    #         QMessageBox.critical(self, "Login Error", str(error))
+
+    #         # Update parent (PremediaApp) to logged-out state and refresh tray menu
+    #         if hasattr(self, 'app') and self.app:
+    #             # Ensure logged_in = False and clear cached user info
+    #             self.app.set_logged_out_state()  # Updates tray menu to logged-out state
+
+    #             # Open login dialog again after a short delay to ensure tray updates
+    #             QTimer.singleShot(100, lambda: self.app.show_login())
+
+    #     except Exception as e:
+    #         logger.error(f"Error in on_login_failed: {str(e)}")
+    #         app_signals.append_log.emit(f"[Login] Failed: Error in on_login_failed - {str(e)}")
+    #         app_signals.update_status.emit(f"Error in on_login_failed: {str(e)}")
+
+    #         # Ensure progress dialog is closed on error
+    #         if self.progress and self.progress.isVisible():
+    #             self.progress.close()
+    #             QApplication.processEvents()
+    #             logger.debug("Progress dialog closed in on_login_failed error handler")
+    #             app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
+
+
+
+    # def on_login_failed(self, error):
+    #     try:
+    #         logger.error(f"Login failed: {error}")
+    #         app_signals.append_log.emit(f"[App] Login failed: {error}")
+    #         app_signals.update_status.emit(f"Login failed: {error}")
+
+    #         # Close progress dialog
+    #         if self.progress and self.progress.isVisible():
+    #             self.progress.close()
+    #             QApplication.processEvents()
+    #             logger.debug("Progress dialog closed in on_login_failed")
+    #             app_signals.append_log.emit("[Login] Progress dialog closed")
+
+    #         # Show error popup
+    #         QMessageBox.critical(self, "Login Error", str(error))
+
+    #         # Update parent (PremediaApp) to logged-out state and show login form
+    #         if hasattr(self, 'app') and self.app:
+    #             self.app.set_logged_out_state()  # Set tray menu/logged-out state
+    #             QTimer.singleShot(100, lambda: self.app.show_login())  # Open login dialog again
+
+    #     except Exception as e:
+    #         logger.error(f"Error in on_login_failed: {str(e)}")
+    #         app_signals.append_log.emit(f"[Login] Failed: Error in on_login_failed - {str(e)}")
+    #         app_signals.update_status.emit(f"Error in on_login_failed: {str(e)}")
+    #         if self.progress and self.progress.isVisible():
+    #             self.progress.close()
+    #             QApplication.processEvents()
+    #             logger.debug("Progress dialog closed in on_login_failed error handler")
+    #             app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
 
 
     def on_login_failed(self, error):
         try:
-            # Log the failure
             logger.error(f"Login failed: {error}")
             app_signals.append_log.emit(f"[App] Login failed: {error}")
             app_signals.update_status.emit(f"Login failed: {error}")
 
-            # Close progress dialog if open
+            # Close progress dialog safely
             if self.progress and self.progress.isVisible():
                 self.progress.close()
-                QApplication.processEvents()
+                # NOTE: No QApplication.processEvents() here — re-entrant crash risk
                 logger.debug("Progress dialog closed in on_login_failed")
                 app_signals.append_log.emit("[Login] Progress dialog closed")
 
             # Show error popup
-            QMessageBox.critical(self, "Login Error", str(error))
+            # QMessageBox.critical(self, "Login Error", str(error))
+            show_alert("Login Error", str(error), QMessageBox.Critical)
 
-            # Update parent (PremediaApp) to logged-out state and refresh tray menu
+            # Set logged-out state and re-show login
             if hasattr(self, 'app') and self.app:
-                # Ensure logged_in = False and clear cached user info
-                self.app.set_logged_out_state()  # Updates tray menu to logged-out state
-
-                # Open login dialog again after a short delay to ensure tray updates
+                self.app.set_logged_out_state()
                 QTimer.singleShot(100, lambda: self.app.show_login())
 
         except Exception as e:
             logger.error(f"Error in on_login_failed: {str(e)}")
-            app_signals.append_log.emit(f"[Login] Failed: Error in on_login_failed - {str(e)}")
+            app_signals.append_log.emit(
+                f"[Login] Failed: Error in on_login_failed - {str(e)}"
+            )
             app_signals.update_status.emit(f"Error in on_login_failed: {str(e)}")
 
-            # Ensure progress dialog is closed on error
             if self.progress and self.progress.isVisible():
                 self.progress.close()
-                QApplication.processEvents()
                 logger.debug("Progress dialog closed in on_login_failed error handler")
-                app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
-
-
-
-    def on_login_failed(self, error):
-        try:
-            logger.error(f"Login failed: {error}")
-            app_signals.append_log.emit(f"[App] Login failed: {error}")
-            app_signals.update_status.emit(f"Login failed: {error}")
-
-            # Close progress dialog
-            if self.progress and self.progress.isVisible():
-                self.progress.close()
-                QApplication.processEvents()
-                logger.debug("Progress dialog closed in on_login_failed")
-                app_signals.append_log.emit("[Login] Progress dialog closed")
-
-            # Show error popup
-            QMessageBox.critical(self, "Login Error", str(error))
-
-            # Update parent (PremediaApp) to logged-out state and show login form
-            if hasattr(self, 'app') and self.app:
-                self.app.set_logged_out_state()  # Set tray menu/logged-out state
-                QTimer.singleShot(100, lambda: self.app.show_login())  # Open login dialog again
-
-        except Exception as e:
-            logger.error(f"Error in on_login_failed: {str(e)}")
-            app_signals.append_log.emit(f"[Login] Failed: Error in on_login_failed - {str(e)}")
-            app_signals.update_status.emit(f"Error in on_login_failed: {str(e)}")
-            if self.progress and self.progress.isVisible():
-                self.progress.close()
-                QApplication.processEvents()
-                logger.debug("Progress dialog closed in on_login_failed error handler")
-                app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
-
+                app_signals.append_log.emit(
+                    "[Login] Progress dialog closed in error handler"
+                )
 
     def closeEvent(self, event):
         try:
@@ -6230,7 +8069,7 @@ class PremediaApp(QApplication):
             if self.tray_icon:
                 self.tray_icon.setContextMenu(self.tray_menu)
                 # Remove redundant show() call
-                QApplication.processEvents()
+                # QApplication.processEvents()
 
             # Connect actions to slots
             self.login_action.triggered.connect(self.show_login)
@@ -6253,7 +8092,8 @@ class PremediaApp(QApplication):
                 logger.error(f"Failed to initialize LoginDialog: {e}")
                 app_signals.append_log.emit(f"[Init] Failed to initialize LoginDialog: {str(e)}")
                 self.login_dialog = None
-                QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
+                # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize login dialog: {str(e)}")
+                show_alert("Initialization Error",  f"Failed to initialize login dialog: {str(e)}", QMessageBox.Critical)
                 self.cleanup_and_quit()
                 return
 
@@ -6315,83 +8155,48 @@ class PremediaApp(QApplication):
 
 
             # Auto-login logic
+            # Non-blocking startup — LoginDialog handles validation on background thread
+            # The LoginDialog.__init__ already spawns _validate_cached_login on a daemon
+            # thread when token + user_id are present in cache. So we just need to
+            # show the login dialog and let it handle everything asynchronously.
+
             if cache.get("token") and cache.get("user") and cache.get("user_id") and not self.logged_in:
-                logger.debug("Attempting auto-login with cached credentials")
-                app_signals.append_log.emit("[Init] Attempting auto-login with cached credentials")
-                user_info = cache.get("user_info", {})
-                access_key = user_info.get("access_key", "")
-                validation_result = validate_user(access_key, self.log_window.status_bar)
-                print(f"Validation result: {validation_result}")
-                print("==================================================================")
-                if validation_result.get("status") == 403:
-                #   
-                    self.logout()
-                    # self.set_logged_out_state()
-                    # self.show_login()
-                    # raise
-                elif validation_result.get("uuid"):
-                    try:
-                        info_resp = HTTP_SESSION.get(
-                            f"{BASE_DOMAIN}/api/user/getinfo?emailid={cache.get('user')}",
-                            headers={"Authorization": f"Bearer {cache.get('token')}"},
-                            verify=False,
-                            timeout=30
-                        )
-                        app_signals.api_call_status.emit(
-                            f"{BASE_DOMAIN}/api/user/getinfo?emailid={cache.get('user')}",
-                            f"Status: {info_resp.status_code}, Response: {info_resp.text}",
-                            info_resp.status_code
-                        )
-                        app_signals.append_log.emit(f"[Init] User info API response: {info_resp.status_code}")
-                        info_resp.raise_for_status()
-                        user_info = info_resp.json()
-                        cache_data = {
-                            "token": cache.get("token", ""),
-                            "user": cache.get("user", ""),
-                            "user_id": user_info.get("uid", cache.get("user_id", "")),
-                            "user_info": user_info,
-                            "info_resp": validation_result,
-                            "user_data": cache.get("user_data", {}),
-                            "data": key,
-                            "downloaded_files": cache.get("downloaded_files", []),
-                            "downloaded_files_with_metadata": cache.get("downloaded_files_with_metadata", {}),
-                            "uploaded_files_with_metadata": cache.get("uploaded_files_with_metadata", {}),
-                            "uploaded_files": cache.get("uploaded_files", []),
-                            "timer_responses": cache.get("timer_responses", {}),
-                            "saved_username": cache.get("saved_username", ""),
-                            "saved_password": cache.get("saved_password", ""),
-                            "cached_at": datetime.now(ZoneInfo("UTC")).isoformat()
-                        }
-                        save_cache(cache_data)
-                        self.set_logged_in_state()
-                        logger.debug("Calling start_file_watcher after auto-login")
-                        app_signals.append_log.emit("[Init] Calling start_file_watcher after auto-login")
-                        self.start_file_watcher()
-                        self.log_window.status_bar.showMessage(f"Auto-login successful for {cache.get('user')}")
-                        self.post_login_processes()
-                        app_signals.append_log.emit("[Init] Auto-login successful with cached credentials")
-                    except Exception as e:
-                        logger.error(f"Auto-login failed during user info fetch: {e}")
-                        app_signals.append_log.emit(f"[Init] Auto-login failed during user info fetch: {str(e)}")
-                        self.logout()
-                        # self.set_logged_out_state()
-                        # self.show_login()
+                logger.debug("Cached credentials found — LoginDialog will validate in background")
+                app_signals.append_log.emit("[Init] Cached credentials found — background validation starting")
+                # LoginDialog.__init__ already started _validate_cached_login thread
+                # Just show the dialog — it will call on_login_success or on_login_failed
+                self.login_dialog.show()
+                self.login_dialog.raise_()
+
+            elif cache.get("saved_username"):
+                saved_password = None
+                try:
+                    import win32cred as _wc
+                    cred = _wc.CredRead(
+                        f"PremediaApp/{cache['saved_username']}",
+                        _wc.CRED_TYPE_GENERIC
+                    )
+                    saved_password = cred['CredentialBlob']
+                except ImportError:
+                    # win32cred not available in this build — use cache fallback
+                    saved_password = cache.get("saved_password") or None
+                except Exception:
+                    saved_password = None
+
+                if saved_password:
+                    logger.debug("Attempting auto-login with saved credentials")
+                    app_signals.append_log.emit("[Init] Attempting auto-login with saved credentials")
+                    self.login_dialog.perform_login(cache["saved_username"], saved_password)
                 else:
-                    logger.warning(f"Auto-login failed: {validation_result.get('message', 'Unknown error')}")
-                    app_signals.append_log.emit(f"[Init] Auto-login failed: {validation_result.get('message', 'Unknown error')}")
-                    self.logout()
-                    # self.set_logged_out_state()
-                    # self.show_login()
-            elif cache.get("saved_username") and cache.get("saved_password"):
-                logger.debug("Attempting auto-login with saved credentials")
-                app_signals.append_log.emit("[Init] Attempting auto-login with saved credentials")
-                self.login_dialog.perform_login(cache["saved_username"], cache["saved_password"])
+                    logger.debug("No saved password found, showing login dialog")
+                    self.set_logged_out_state()
+                    self.show_login()
             else:
                 logger.debug("No valid cached credentials, showing login dialog")
                 app_signals.append_log.emit("[Init] No valid cached credentials, showing login dialog")
                 self.set_logged_out_state()
                 self.show_login()
-
+                
             logger.info("PremediaApp initialized")
             app_signals.append_log.emit("[Init] PremediaApp initialized")
         except Exception as e:
@@ -6401,7 +8206,8 @@ class PremediaApp(QApplication):
                 app_signals.update_status.emit(f"Initialization error: {str(e)}")
                 self.show_login()
             else:
-                QMessageBox.critical(None, "Initialization Error", f"Failed to initialize application: {str(e)}")
+                # QMessageBox.critical(None, "Initialization Error", f"Failed to initialize application: {str(e)}")
+                show_alert("Initialization Error", f"Failed to initialize application: {str(e)}", QMessageBox.Critical)
             self.cleanup_and_quit()
 
     def event(self, event):
@@ -6457,8 +8263,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in handle_tray_icon_activated: {e}")
             app_signals.append_log.emit(f"[Tray] Failed: Error handling tray icon activation - {str(e)}")
             app_signals.update_status.emit(f"Error handling tray icon activation: {str(e)}")
-            QMessageBox.critical(None, "Tray Icon Error", f"Error handling tray icon activation: {str(e)}")
-
+            # QMessageBox.critical(None, "Tray Icon Error", f"Error handling tray icon activation: {str(e)}")
+            show_alert("Tray Icon Error", f"Error handling tray icon activation: {str(e)}", QMessageBox.Critical)
 
 
     def update_tray_menu(self):
@@ -6648,7 +8454,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error updating tray menu: {e}\n{traceback.format_exc()}")
             app_signals.append_log.emit(f"[Tray] Failed to update tray menu: {str(e)}")
             app_signals.update_status.emit(f"Failed to update tray menu: {str(e)}")
-            QMessageBox.critical(None, "Tray Menu Error", f"Failed to update tray menu: {str(e)}")
+            # QMessageBox.critical(None, "Tray Menu Error", f"Failed to update tray menu: {str(e)}")
+            show_alert("Tray Menu Error", f"Failed to update tray menu: {str(e)}", QMessageBox.Critical)
 
     def is_file_watcher_running(self):
         """Safely check if the file watcher thread is running."""
@@ -6663,31 +8470,94 @@ class PremediaApp(QApplication):
             return False
 
 
+    
+    
     def stop_file_watcher_thread(self):
-        """Safely stop the file watcher thread and worker."""
+        """
+        Safely stop the poll timer, worker, and thread.
+        Each resource is individually guarded so one failure never skips the rest.
+        Always resets all references to None so start_file_watcher gets a clean slate.
+        """
+        # ── 1. Stop poll timer first — prevents new invokeMethod calls ───────
+        timer = getattr(self, 'poll_timer', None)
+        if timer is not None:
+            try:
+                if timer.isActive():
+                    timer.stop()
+            except RuntimeError:
+                pass  # already deleted by Qt
+            finally:
+                self.poll_timer = None
+
+        # ── 2. Stop watchdog timer ────────────────────────────────────────────
+        watchdog = getattr(self, 'watchdog_timer', None)
+        if watchdog is not None:
+            try:
+                if watchdog.isActive():
+                    watchdog.stop()
+            except RuntimeError:
+                pass
+            finally:
+                self.watchdog_timer = None
+
+        # ── 3. Ask the thread to stop and wait up to 5 seconds ───────────────
         thread = getattr(self, 'file_watcher_thread', None)
         if thread is not None:
             try:
                 if thread.isRunning():
                     thread.quit()
-                    thread.wait(5000)
+                    if not thread.wait(5000):
+                        logger.warning(
+                            "FileWatcherThread did not stop in 5s — terminating"
+                        )
+                        app_signals.append_log.emit(
+                            "[App] FileWatcherThread did not stop in 5s — terminating"
+                        )
+                        thread.terminate()
+                        thread.wait(2000)
             except RuntimeError:
-                logger.warning("FileWatcherThread already deleted")
+                pass  # thread already deleted by Qt
             finally:
                 self.file_watcher_thread = None
 
+        # ── 4. Release worker reference ───────────────────────────────────────
+        # Do NOT call deleteLater() here — Qt owns the lifecycle once
+        # moveToThread() was called. Just drop our reference.
         worker = getattr(self, 'file_watcher', None)
         if worker is not None:
-            self.file_watcher = None  # Let Python GC handle it
+            try:
+                worker.running = False
+            except RuntimeError:
+                pass
+            finally:
+                self.file_watcher = None
 
-        timer = getattr(self, 'poll_timer', None)
-        if timer is not None and timer.isActive():
-            timer.stop()
-            self.poll_timer = None
-
+        logger.debug("stop_file_watcher_thread completed cleanly")
+        app_signals.append_log.emit("[App] FileWatcher stopped cleanly")
+    
+    
 
     def start_file_watcher(self):
         global FILE_WATCHER_RUNNING
+        
+        # ── Guard: prevent double-start if called while already running ───────
+        # This can happen if post_login_processes and auto-login both
+        # trigger start_file_watcher in the same cycle.
+        if getattr(self, 'file_watcher_thread', None) is not None:
+            try:
+                if self.file_watcher_thread.isRunning():
+                    logger.warning(
+                        "[start_file_watcher] Called while thread already running — skipping"
+                    )
+                    app_signals.append_log.emit(
+                        "[App] start_file_watcher skipped — thread already running"
+                    )
+                    return
+            except RuntimeError:
+                # Thread was deleted — safe to proceed
+                self.file_watcher_thread = None
+                
+                
         try:
             logger.info("Attempting to start FileWatcherWorker")
             app_signals.append_log.emit("[App] Attempting to start FileWatcherWorker")
@@ -6731,17 +8601,54 @@ class PremediaApp(QApplication):
             self.file_watcher.progress_update.connect(
                 self.update_progress, Qt.QueuedConnection
             )
+            
+            self.file_watcher.alert_notification.connect(
+                self._show_worker_alert, Qt.QueuedConnection
+            )
 
             app_signals.append_log.emit("[Security] Auto-logout on session conflict enabled")
 
             # ✅ FIX: Start the poll timer ONLY after thread has started.
             #         Use thread.started signal to guarantee worker is live before
             #         any invokeMethod calls happen.
+            # def on_thread_started():
+            #     logger.info("FileWatcherWorker thread is live — starting poll timer")
+            #     app_signals.append_log.emit("[App] FileWatcherWorker thread live, poll timer starting")
+
+            #     # ✅ FIX: Safe poll timer with None guard (see _safe_invoke_watcher)
+            #     if getattr(self, "poll_timer", None):
+            #         try:
+            #             self.poll_timer.stop()
+            #         except Exception:
+            #             pass
+
+            #     self.poll_timer = QTimer(self)
+            #     self.poll_timer.timeout.connect(self._safe_invoke_watcher)
+            #     self.poll_timer.start(3000)  # 3 seconds
+
+            # self.file_watcher_thread.started.connect(on_thread_started)
+
+            # # Start the thread — worker is already inside it via moveToThread
+            # self.file_watcher_thread.start()
+
+            # logger.info("FileWatcherWorker thread started successfully")
+            # app_signals.append_log.emit("[App] FileWatcherWorker thread started successfully")
+
+            # # Watchdog timer (runs on main thread, just checks memory — safe)
+            # if getattr(self, "watchdog_timer", None):
+            #     try:
+            #         self.watchdog_timer.stop()
+            #     except Exception:
+            #         pass
+            # self.watchdog_timer = QTimer(self)
+            # self.watchdog_timer.timeout.connect(self.check_memory_usage)
+            # self.watchdog_timer.start(60000)  # every 60 seconds
+
+            # self.schedule_daily_restart(3, 0)
             def on_thread_started():
                 logger.info("FileWatcherWorker thread is live — starting poll timer")
                 app_signals.append_log.emit("[App] FileWatcherWorker thread live, poll timer starting")
 
-                # ✅ FIX: Safe poll timer with None guard (see _safe_invoke_watcher)
                 if getattr(self, "poll_timer", None):
                     try:
                         self.poll_timer.stop()
@@ -6750,17 +8657,54 @@ class PremediaApp(QApplication):
 
                 self.poll_timer = QTimer(self)
                 self.poll_timer.timeout.connect(self._safe_invoke_watcher)
-                self.poll_timer.start(3000)  # 3 seconds
+                self.poll_timer.start(3000)
 
+                # Fire first scan immediately without waiting 3s
+                QTimer.singleShot(500, self._safe_invoke_watcher)
+
+                # ── Notification Manager ──────────────────────────────────────
+                # FIX: This used to be gated behind "a visible top-level widget
+                # exists" via _find_best_anchor(), even though
+                # TransferNotificationManager doesn't actually use an anchor —
+                # it positions itself off the screen's own geometry. If that
+                # search came back empty (e.g. right after login before any
+                # window was shown), the whole block was skipped and progress
+                # popups silently never got wired up for the rest of the
+                # session. Always (re)create and connect it.
+                if getattr(self, "notif_manager", None):
+                    try:
+                        self.notif_manager.hide()
+                        self.notif_manager.deleteLater()
+                    except Exception:
+                        pass
+
+                self.notif_manager = TransferNotificationManager()
+
+                watcher = self.file_watcher
+                watcher.download_progress.connect(
+                    self.notif_manager.on_download_progress, Qt.QueuedConnection
+                )
+                watcher.download_status_detail.connect(
+                    self.notif_manager.on_download_status_detail, Qt.QueuedConnection
+                )
+                watcher.upload_progress.connect(
+                    self.notif_manager.on_upload_progress, Qt.QueuedConnection
+                )
+                watcher.upload_status_detail.connect(
+                    self.notif_manager.on_upload_status_detail, Qt.QueuedConnection
+                )
+                logger.info("[App] TransferNotificationManager connected")
+                app_signals.append_log.emit("[App] TransferNotificationManager connected")
+                # ─────────────────────────────────────────────────────────────
+
+            # Connect and start the thread
             self.file_watcher_thread.started.connect(on_thread_started)
-
-            # Start the thread — worker is already inside it via moveToThread
             self.file_watcher_thread.start()
 
             logger.info("FileWatcherWorker thread started successfully")
             app_signals.append_log.emit("[App] FileWatcherWorker thread started successfully")
 
-            # Watchdog timer (runs on main thread, just checks memory — safe)
+            # Watchdog timer
             if getattr(self, "watchdog_timer", None):
                 try:
                     self.watchdog_timer.stop()
@@ -6768,13 +8712,16 @@ class PremediaApp(QApplication):
                     pass
             self.watchdog_timer = QTimer(self)
             self.watchdog_timer.timeout.connect(self.check_memory_usage)
-            self.watchdog_timer.start(60000)  # every 60 seconds
+            self.watchdog_timer.start(60000)
 
             self.schedule_daily_restart(3, 0)
 
         except Exception as e:
             self.handle_error("FileWatcher", f"Failed to start FileWatcherWorker: {str(e)}")
 
+
+            
+        # ─────────────────────────────────────────────────────────────────
 
     def _safe_invoke_watcher(self):
         """
@@ -6908,14 +8855,16 @@ class PremediaApp(QApplication):
         app_signals.append_log.emit(f"[{context}] Failed: {str(error)}")
         app_signals.update_status.emit(f"{context} error: {str(error)}")
         if show_dialog:
-            QMessageBox.critical(None, f"{context} Error", f"{context} error: {str(error)}")
+            # QMessageBox.critical(None, f"{context} Error", f"{context} error: {str(error)}")
+            show_alert(f"{context} Error",  f"{context} error: {str(error)}", QMessageBox.Critical)
 
 
     def cleanup_and_quit(self):
         if IS_APP_ACTIVE_UPLOAD_DOWNLOAD:
             print(f"Skip log out: {IS_APP_ACTIVE_UPLOAD_DOWNLOAD}")
             # Show success message
-            QMessageBox.information(None, "Action blocked", "An upload/download is currently in progress. Try again once it is complete.")
+            # QMessageBox.information(None, "Action blocked", "An upload/download is currently in progress. Try again once it is complete.")
+            show_alert("Action blocked", "An upload/download is currently in progress. Try again once it is complete.", QMessageBox.Information)
             return
 
         try:
@@ -6996,36 +8945,79 @@ class PremediaApp(QApplication):
 
     def logout(self):
         if IS_APP_ACTIVE_UPLOAD_DOWNLOAD:
-            QMessageBox.information(None, "Action blocked",
-                                    "An upload/download is currently in progress. Try again once it is complete.")
+            # QMessageBox.information(
+            #     None,
+            #     "Action blocked",
+            #     "An upload/download is currently in progress. "
+            #     "Try again once it is complete."
+            # )
+            show_alert(
+                "Action blocked",
+                "An upload/download is currently in progress. Try again once it is complete.",
+                QMessageBox.Information
+            )
             print(f"Skip log out: {IS_APP_ACTIVE_UPLOAD_DOWNLOAD}")
             return
 
         try:
+            # ── 1. Stop file watcher FIRST before anything else ──────────────
+            # This prevents the old thread from polling, writing cache, or
+            # emitting signals while we are tearing down the session.
+            self.stop_file_watcher_thread()
+
+            global FILE_WATCHER_RUNNING
+            FILE_WATCHER_RUNNING = False
+
+            # Reset the singleton so start_file_watcher creates a fresh instance
+            # on the next login — not the stale one from this session.
+            FileWatcherWorker._instance = None
+
+            # ── 2. Clear token from cache ─────────────────────────────────────
             self.logged_in = False
             cache = load_cache()
-            # print(cache.get("user_id", ""), 'cacacasc')
             user_id = cache.get("user_id", "")
             print(f"logout --------------------------------user_id: {user_id}")
+
             self.logout_apicall(user_id)
+
             cache["token"] = ""
-            if not self.login_dialog.ui.rememberme.isChecked():
+            try:
+                if (self.login_dialog is not None and
+                        hasattr(self.login_dialog, 'ui') and
+                        self.login_dialog.ui is not None):
+                    if not self.login_dialog.ui.rememberme.isChecked():
+                        cache["saved_username"] = ""
+                        cache["saved_password"] = ""
+            except RuntimeError:
+                # Dialog already deleted by Qt — clear credentials to be safe
                 cache["saved_username"] = ""
                 cache["saved_password"] = ""
             save_cache(cache)
-            stop_local_api()    # CLEAN SHUTDOWN
+
+            # ── 3. Stop local API ─────────────────────────────────────────────
+            stop_local_api()
+
+            # ── 4. Update tray to logged-out state ───────────────────────────
             self.update_tray_menu()
+
             logger.info("Logged out successfully")
             app_signals.append_log.emit("[Login] Logged out successfully")
             app_signals.update_status.emit("Logged out successfully")
 
-            # 🧩 FIX: Create a fresh login dialog before showing
+            # ── 5. Close old dialog and create a fresh one ───────────────────
+            # Close first so Qt can clean up its widget tree properly
             try:
-                self.login_dialog.close()
-            except Exception:
-                pass
+                if self.login_dialog is not None:
+                    self.login_dialog.close()
+                    self.login_dialog.deleteLater()
+            except Exception as close_err:
+                logger.warning(f"Could not close old login dialog: {close_err}")
+
+            self.login_dialog = None  # explicit None before reassignment
 
             self.login_dialog = LoginDialog(parent=None, app=self)
+            self.login_dialog.user_in_other_system.connect(self.show_login_page)
+
             self.login_dialog.show()
             self.login_dialog.raise_()
             self.login_dialog.activateWindow()
@@ -7039,8 +9031,6 @@ class PremediaApp(QApplication):
             logger.error(f"Logout error: {e}")
             app_signals.append_log.emit(f"[Login] Failed: Logout error - {str(e)}")
             app_signals.update_status.emit(f"Logout error: {str(e)}")
-            # QMessageBox.critical(self, "Logout Error", f"Failed to log out: {str(e)}")
-
 
     def set_logged_in_state(self):
         try:
@@ -7077,7 +9067,7 @@ class PremediaApp(QApplication):
 
             # Force tray menu update
             self.update_tray_menu()
-            QApplication.processEvents()  # Make sure UI updates immediately
+            # QApplication.processEvents()  # Make sure UI updates immediately
 
             # Optionally force reset the tray icon tooltip
             if self.tray_icon:
@@ -7100,7 +9090,8 @@ class PremediaApp(QApplication):
                 logger.warning(f"Cache file does not exist: {cache_file}")
                 app_signals.append_log.emit(f"[Cache] Cache file does not exist: {cache_file}")
                 app_signals.update_status.emit("Cache file does not exist")
-                QMessageBox.warning(None, "Cache Error", f"Cache file does not exist:\n{cache_file}")
+                # QMessageBox.warning(None, "Cache Error", f"Cache file does not exist:\n{cache_file}")
+                show_alert("Cache Error", f"Cache file does not exist:\n{cache_file}", QMessageBox.Warning)
                 return
 
             # Verify file is readable
@@ -7108,7 +9099,8 @@ class PremediaApp(QApplication):
                 logger.warning(f"Cache file is not a valid file: {cache_file}")
                 app_signals.append_log.emit(f"[Cache] Invalid file: {cache_file}")
                 app_signals.update_status.emit("Invalid cache file")
-                QMessageBox.warning(None, "Cache Error", f"Invalid cache file:\n{cache_file}")
+                # QMessageBox.warning(None, "Cache Error", f"Invalid cache file:\n{cache_file}")
+                show_alert("Cache Error", f"Invalid cache file:\n{cache_file}", QMessageBox.Warning)
                 return
 
             # Read and beautify file content
@@ -7156,12 +9148,14 @@ class PremediaApp(QApplication):
             logger.error(f"IO error opening cache file: {e}\n{traceback.format_exc()}")
             app_signals.append_log.emit(f"[Cache] Failed: IO error - {str(e)}")
             app_signals.update_status.emit(f"Error opening cache file: {str(e)}")
-            QMessageBox.critical(None, "Cache Error", f"Failed to open cache file:\n{str(e)}")
+            # QMessageBox.critical(None, "Cache Error", f"Failed to open cache file:\n{str(e)}")
+            show_alert("Cache Error",f"Failed to open cache file:\n{str(e)}", QMessageBox.Critical)
         except Exception as e:
             logger.error(f"Unexpected error opening cache file: {e}\n{traceback.format_exc()}")
             app_signals.append_log.emit(f"[Cache] Failed: Unexpected error - {str(e)}")
             app_signals.update_status.emit("Unexpected error")
-            QMessageBox.critical(None, "Cache Error", f"Unexpected error opening cache file:\n{str(e)}")
+            # QMessageBox.critical(None, "Cache Error", f"Unexpected error opening cache file:\n{str(e)}")
+            show_alert("Cache Error",f"Unexpected error opening cache file:\n{str(e)}", QMessageBox.Critical)
 
     def clear_cache(self):
         global IS_APP_ACTIVE_UPLOAD_DOWNLOAD
@@ -7209,14 +9203,16 @@ class PremediaApp(QApplication):
                 app_signals.update_status.emit("Cache cleared successfully")
 
                 # ✅ Show success dialog
-                QMessageBox.information(None, "Cache Cleared", "Cache cleared successfully!")
+                # QMessageBox.information(None, "Cache Cleared", "Cache cleared successfully!")
+                show_alert("Cache Cleared", "Cache cleared successfully!", QMessageBox.Critical)
 
                 self.show_login()
             except Exception as e:
                 print(f"Error clearing cache: {e}")
                 app_signals.append_log.emit(f"[Cache] Failed: Error clearing cache - {str(e)}")
                 app_signals.update_status.emit(f"Error clearing cache: {str(e)}")
-                QMessageBox.critical(None, "Cache Error", f"Failed to clear cache: {str(e)}")
+                # QMessageBox.critical(None, "Cache Error", f"Failed to clear cache: {str(e)}")
+                show_alert("Cache Cleared", f"Failed to clear cache: {str(e)}", QMessageBox.Critical)
         else:
             app_signals.append_log.emit("[Cache] Cache clear cancelled by user")
             logger.info("Cache clear cancelled by user")
@@ -7300,7 +9296,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_login: {e}")
             app_signals.append_log.emit(f"[Login] Failed: Error opening login dialog - {str(e)}")
             app_signals.update_status.emit(f"Error opening login dialog: {str(e)}")
-            QMessageBox.critical(None, "Login Error", f"Failed to open login dialog: {str(e)}")
+            # QMessageBox.critical(None, "Login Error", f"Failed to open login dialog: {str(e)}")
+            show_alert("Login Error", f"Failed to open login dialog: {str(e)}", QMessageBox.Critical)
 
 
     def show_logs(self):
@@ -7319,7 +9316,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_logs: {e}")
             app_signals.append_log.emit(f"[Log] Failed: Error opening log window - {str(e)}")
             app_signals.update_status.emit(f"Error opening log window: {str(e)}")
-            QMessageBox.critical(self, "Log Error", f"Failed to open log window: {str(e)}")
+            # QMessageBox.critical(self, "Log Error", f"Failed to open log window: {str(e)}")
+            show_alert("Log Error", f"Failed to open log window: {str(e)}", QMessageBox.Critical)
 
     def show_downloaded_files(self):
         try:
@@ -7337,7 +9335,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_downloaded_files: {e}")
             app_signals.append_log.emit(f"[Files] Failed: Error showing downloaded files - {str(e)}")
             app_signals.update_status.emit(f"Error showing downloaded files: {str(e)}")
-            QMessageBox.critical(self, "Files Error", f"Failed to show downloaded files: {str(e)}")
+            # QMessageBox.critical(self, "Files Error", f"Failed to show downloaded files: {str(e)}")
+            show_alert("Files Error", f"Failed to show downloaded files: {str(e)}", QMessageBox.Critical)
 
     def show_uploaded_files(self):
         try:
@@ -7355,7 +9354,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in show_uploaded_files: {e}")
             app_signals.append_log.emit(f"[Files] Failed: Error showing uploaded files - {str(e)}")
             app_signals.update_status.emit(f"Error showing uploaded files: {str(e)}")
-            QMessageBox.critical(self, "Files Error", f"Failed to show uploaded files: {str(e)}")
+            # QMessageBox.critical(self, "Files Error", f"Failed to show uploaded files: {str(e)}")
+            show_alert("Files Error", f"Failed to show uploaded files: {str(e)}", QMessageBox.Critical)
 
     def convert_to_jpg_and_psd(self, src_path, dest_dir):
         try:
@@ -7377,7 +9377,8 @@ class PremediaApp(QApplication):
             logger.error(f"File conversion thread error: {e}")
             app_signals.append_log.emit(f"[Conversion] Failed: File conversion thread error - {str(e)}")
             app_signals.update_status.emit(f"File conversion thread error: {str(e)}")
-            QMessageBox.critical(self, "Conversion Error", f"File conversion thread error: {str(e)}")
+            # QMessageBox.critical(self, "Conversion Error", f"File conversion thread error: {str(e)}")
+            show_alert("Conversion Error", f"File conversion thread error: {str(e)}", QMessageBox.Critical)
 
     def on_conversion_finished(self, jpg_path, psd_path, basename):
         try:
@@ -7393,7 +9394,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in on_conversion_finished: {e}")
             app_signals.append_log.emit(f"[Conversion] Failed: Conversion error - {str(e)}")
             app_signals.update_status.emit(f"Conversion error: {str(e)}")
-            QMessageBox.critical(self, "Conversion Error", f"Conversion error: {str(e)}")
+            # QMessageBox.critical(self, "Conversion Error", f"Conversion error: {str(e)}")
+            show_alert("Conversion Error", f"Conversion error: {str(e)}", QMessageBox.Critical)
 
     def on_conversion_error(self, error, basename):
         try:
@@ -7404,7 +9406,8 @@ class PremediaApp(QApplication):
             logger.error(f"Error in on_conversion_error: {e}")
             app_signals.append_log.emit(f"[Conversion] Failed: Error handling conversion error - {str(e)}")
             app_signals.update_status.emit(f"Error handling conversion error: {str(e)}")
-            QMessageBox.critical(self, "Conversion Error", f"Error handling conversion error: {str(e)}")
+            # QMessageBox.critical(self, "Conversion Error", f"Error handling conversion error: {str(e)}")
+            show_alert("Conversion Error", f"Error handling conversion error: {str(e)}", QMessageBox.Critical)
 
     def open_with_photoshop(self, file_path):
         try:
@@ -7464,14 +9467,16 @@ class PremediaApp(QApplication):
                 logger.warning(error_msg)
                 app_signals.append_log.emit(f"[Photoshop] {error_msg}")
                 app_signals.update_status.emit(error_msg)
-                QMessageBox.critical(self, "Photoshop Error", error_msg)
+                # QMessageBox.critical(self, "Photoshop Error", error_msg)
+                show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
                 return
             if not Path(file_path).is_file():
                 error_msg = f"File not found: {file_path}"
                 logger.error(error_msg)
                 app_signals.append_log.emit(f"[Photoshop] {error_msg}")
                 app_signals.update_status.emit(error_msg)
-                QMessageBox.critical(self, "Photoshop Error", error_msg)
+                # QMessageBox.critical(self, "Photoshop Error", error_msg)
+                show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
                 return
             if system == "Darwin":
                 subprocess.run(["open", "-a", photoshop_path, file_path], check=True)
@@ -7485,7 +9490,8 @@ class PremediaApp(QApplication):
             logger.error(error_msg)
             app_signals.append_log.emit(f"[Photoshop] {error_msg}")
             app_signals.update_status.emit(error_msg)
-            QMessageBox.critical(self, "Photoshop Error", error_msg)
+            # QMessageBox.critical(self, "Photoshop Error", error_msg)
+            show_alert("Photoshop Error", error_msg, QMessageBox.Critical)
 
     def update_progress(self, value: int):
         try:
@@ -7498,9 +9504,37 @@ class PremediaApp(QApplication):
         except Exception as e:
             logger.error(f"Error in update_progress: {e}")
             app_signals.append_log.emit(f"[App] Error in update_progress: {str(e)}")
+            
+    # @Slot(str, str)
+    # def _show_worker_alert(self, title: str, message: str):
+    #     """
+    #     Receives alert_notification signals from FileWatcherWorker (background thread)
+    #     and shows the dialog safely on the main thread via Qt.QueuedConnection.
+    #     """
+    #     QMessageBox.warning(None, title, message)
+
+    @Slot(str, str)
+    def _show_worker_alert(self, title: str, message: str):
+        msg = QMessageBox(None)
+        msg.setWindowTitle(title)
+        msg.setText(message)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowFlags(
+            msg.windowFlags()
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        msg.setWindowState(Qt.WindowState.WindowActive)
+        msg.setAttribute(Qt.WA_ShowWithoutActivating, False)
+        msg.raise_()
+        msg.activateWindow()
+        msg.exec()
 
     def post_login_processes(self):
-        global FILE_WATCHER_RUNNING
+        """
+        Called ONLY after a successful manual login from LoginDialog.
+        NOT called during __init__ auto-login — start_file_watcher() handles that.
+        """
+        global FILE_WATCHER_RUNNING_show_worker_alert
         try:
             cache = load_cache()
             token = cache.get("token", "")
@@ -7511,73 +9545,44 @@ class PremediaApp(QApplication):
                 self.show_login()
                 return
 
-            # Stop poll timer safely (non-blocking)
-            if hasattr(self, 'poll_timer') and self.poll_timer is not None:
-                try:
-                    if self.poll_timer.isActive():
-                        self.poll_timer.stop()
-                        logger.debug("Stopped existing poll timer")
-                        app_signals.append_log.emit("[Login] Stopped existing poll timer")
-                except RuntimeError:
-                    pass  # Already deleted
-
             FILE_WATCHER_RUNNING = True
+
+            # Stop any existing watcher cleanly before starting a new one
+            self.stop_file_watcher_thread()
             FileWatcherWorker._instance = None
+            FileWatcherWorker._is_running = False
+            FileWatcherWorker._busy = False
 
-            old_thread = getattr(self, 'file_watcher_thread', None)
+            # start_file_watcher is safe to call directly here —
+            # post_login_processes is only called after the event loop is running
+            # (triggered by LoginDialog.on_login_success, not during __init__)
+            self.start_file_watcher()
 
-            if old_thread is not None:
-                try:
-                    if old_thread.isRunning():
-                        logger.debug("Old file watcher thread running — requesting stop")
-                        app_signals.append_log.emit("[Login] Stopping old file watcher thread")
+            logger.info("Post-login processes: file watcher started")
+            app_signals.append_log.emit("[Login] Post-login: file watcher started")
 
-                        # ✅ FIX: Connect finished signal BEFORE calling quit().
-                        #         This guarantees start_file_watcher only runs AFTER
-                        #         the old thread is fully stopped — no blocking wait needed.
-                        old_thread.finished.connect(self.start_file_watcher, Qt.SingleShotConnection)
-                        old_thread.quit()  # Signal thread to stop — returns immediately
-
-                        logger.debug("Old thread quit() called, new watcher will start on finish")
-                        app_signals.append_log.emit(
-                            "[Login] Old thread quit requested, new watcher queued on finish"
-                        )
-                    else:
-                        # Thread already stopped — start new watcher immediately
-                        self.start_file_watcher()
-                except RuntimeError:
-                    # Thread was already deleted by Qt GC
-                    logger.warning("Old file_watcher_thread already deleted, starting fresh")
-                    self.start_file_watcher()
-            else:
-                # No existing thread — start immediately
-                self.start_file_watcher()
-
-            # Update tray menu (non-blocking UI update)
+            # Update tray
             self.update_tray_menu()
             if self.tray_icon and QSystemTrayIcon.isSystemTrayAvailable():
                 self.tray_icon.show()
-                logger.debug(f"Tray icon visible after post-login: {self.tray_icon.isVisible()}")
-                app_signals.append_log.emit(
-                    f"[Login] Tray icon visible after post-login: {self.tray_icon.isVisible()}"
-                )
-            else:
-                logger.warning("Tray icon or system tray not available")
-                app_signals.append_log.emit("[Tray] Tray icon or system tray not available")
 
-            # Close progress dialog if visible
-            if (hasattr(self, 'login_dialog') and
-                    self.login_dialog.progress and
-                    self.login_dialog.progress.isVisible()):
-                self.login_dialog.progress.close()
-                logger.debug("Progress dialog closed")
-                app_signals.append_log.emit("[Login] Progress dialog closed")
+            # Close progress dialog if still visible
+            try:
+                if (hasattr(self, 'login_dialog') and
+                        self.login_dialog is not None and
+                        self.login_dialog.progress and
+                        self.login_dialog.progress.isVisible()):
+                    self.login_dialog.progress.close()
+                    logger.debug("Progress dialog closed")
+                    app_signals.append_log.emit("[Login] Progress dialog closed")
+            except RuntimeError:
+                pass  # dialog already deleted
 
-            # Reconnect status signals
+            # Reconnect status signal
             try:
                 app_signals.update_status.disconnect(self.log_window.status_bar.showMessage)
             except Exception:
-                logger.debug("No existing update_status connection to disconnect")
+                pass
             app_signals.update_status.connect(
                 self.log_window.status_bar.showMessage, Qt.QueuedConnection
             )
@@ -7588,15 +9593,18 @@ class PremediaApp(QApplication):
 
         except Exception as e:
             self.handle_error("Post-Login", f"Post-login error: {str(e)}")
-            if (hasattr(self, 'login_dialog') and
-                    self.login_dialog.progress and
-                    self.login_dialog.progress.isVisible()):
-                self.login_dialog.progress.close()
-                logger.debug("Progress dialog closed in error handler")
-                app_signals.append_log.emit("[Login] Progress dialog closed in error handler")
+            try:
+                if (hasattr(self, 'login_dialog') and
+                        self.login_dialog is not None and
+                        self.login_dialog.progress and
+                        self.login_dialog.progress.isVisible()):
+                    self.login_dialog.progress.close()
+            except RuntimeError:
+                pass
             self.set_logged_out_state()
             self.show_login()
-
+            
+            
     def show_dialog(self, title, message, dialog_type):
         try:
             msg_box = QMessageBox(self)
@@ -7616,23 +9624,33 @@ class PremediaApp(QApplication):
             app_signals.append_log.emit(f"[Dialog] Failed: Error displaying dialog - {str(e)}")
             app_signals.update_status.emit(f"Error displaying dialog: {str(e)}")
 
-get_system_info()
+# get_system_info()
+threading.Thread(target=get_system_info, daemon=True).start()
 
+# Start the Google Chat transfer reporter — it stays idle (sends nothing)
+# until _CURRENT_TRANSFER_STATS["active"] is True, i.e. an upload/download
+# is actually in progress. Then it reports every TRANSFER_REPORT_INTERVAL_SEC.
+TRANSFER_REPORTER.start()
 
-def run_updater(new_exe_path):
-    """Launch the updater.exe with paths, then exit current app."""
-    current_exe = sys.executable  # Path of the running PremediaApp.exe
-    updater_path = os.path.join(os.path.dirname(current_exe), "updater.exe")
+import ctypes
+import sys
 
-    if not os.path.exists(updater_path):
-        print("❌ updater.exe missing")
-        return
+def run_updater(updater_path, new_exe, old_exe):
+    params = f'"{new_exe}" "{old_exe}"'
 
-    print(f"🚀 Launching updater: {updater_path}")
-    subprocess.Popen([updater_path, new_exe_path, current_exe], shell=False)
-    os._exit(0)  # Hard exit to release file lock
+    result = ctypes.windll.shell32.ShellExecuteW(
+        None,
+        "runas",   # 🔥 forces admin
+        updater_path,
+        params,
+        None,
+        1
+    )
 
+    if result <= 32:
+        print("Failed to elevate updater")
 
+    sys.exit(0)
 
 api_process = None
 
@@ -7711,7 +9729,7 @@ if __name__ == "__main__":
     try:
         # 🔹 Step 1: Check for updates before launching GUI
         exe_path = sys.executable
-        # check_for_update(APPVERSION, exe_path)
+        check_for_update(APPVERSION, exe_path)
 
         # 🔹 Step 2: Launch your main GUI
         key = parse_custom_url()
