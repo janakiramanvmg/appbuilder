@@ -293,7 +293,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # NAS_USERNAME = "irnasappprod"
 # MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
 # NAS_PATH = "softwaremedia/IR_prod/"
-# APPVERSION = "1.2.7"
+# APPVERSION = "1.2.8"
 # GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
 
 BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
@@ -305,12 +305,13 @@ NAS_SHARE = ""
 NAS_PREFIX = "/mnt/nas/softwaremedia/IR_uat"
 MOUNTED_NAS_PATH = "/mnt/nas/softwaremedia/IR_uat"
 NAS_PATH = "softwaremedia/IR_uat/"
-APPVERSION = "1.2.7(UAT)"
+APPVERSION = "1.2.8(UAT)"
 
 # === Rclone S3-compatible object storage (UAT) ===
 # `rclone serve s3` endpoint. Bucket is the root directory name exposed by rclone.
 # Environment variables override these values, which is recommended outside UAT/POC.
-S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://192.168.2.199:9000").rstrip("/")
+# S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://192.168.2.199:9000").rstrip("/")
+S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3uat.vmgpremedia.com:9000").rstrip("/")
 S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
 S3_SECRET_KEY = os.getenv("PREMEDIA_S3_SECRET_KEY", "KJDSKJNOIWEBNSSDEW")
 S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
@@ -6710,15 +6711,15 @@ class FileWatcherWorker(QObject):
 
     def _download_from_http(self, src_path, dest_path, item=None):
         """
-        Download from the rclone S3-compatible endpoint.
+        Resumable download from the rclone S3-compatible endpoint.
 
-        The historical method name is kept so existing callers do not need a
-        broad rename. This is NOT a plain unauthenticated HTTP GET: boto3 signs
-        the request using S3 Signature V4 and talks to `rclone serve s3`.
+        A partial download is kept as ``<dest>.s3part`` together with a small
+        metadata file. After a network interruption the next request uses an
+        S3 Range request starting at the exact byte already present locally,
+        so a transfer that reached (for example) 85% continues from there
+        instead of starting again at 0%.
         """
         bucket, object_key = _resolve_s3_location(src_path)
-        client = _create_s3_client()
-        transfer_config = _s3_transfer_config()
 
         dest_path = str(Path(dest_path).resolve())
         Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
@@ -6726,91 +6727,229 @@ class FileWatcherWorker(QObject):
         spec_id = str(item.get("spec_id", "")) if isinstance(item, dict) else ""
 
         temp_path = dest_path + ".s3part"
-        try:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-        except OSError:
-            pass
+        meta_path = temp_path + ".json"
+        chunk_size = max(1024 * 1024, S3_MULTIPART_CHUNK_MB * 1024 * 1024)
+        max_attempts = max(1, int(globals().get("MAX_RETRIES", 10)))
 
         transfer_start = time.time()
-        transferred = 0
         last_emit = 0.0
-        progress_lock = threading.Lock()
+        total_size = 0
+        total_mb = 0.0
+        object_etag = ""
 
-        try:
-            head = client.head_object(Bucket=bucket, Key=object_key)
-            total_size = int(head.get("ContentLength", 0) or 0)
-            total_mb = total_size / 1024 / 1024
+        def _write_meta():
+            meta = {
+                "bucket": bucket,
+                "key": object_key,
+                "etag": object_etag,
+                "size": total_size,
+            }
+            tmp_meta = meta_path + ".tmp"
+            with open(tmp_meta, "w", encoding="utf-8") as f:
+                json.dump(meta, f)
+            os.replace(tmp_meta, meta_path)
 
-            report_transfer_event(
-                "Started",
+        def _emit_progress(transferred, resumed=False):
+            nonlocal last_emit
+            now = time.time()
+            if now - last_emit < 0.5 and transferred < total_size:
+                return
+            last_emit = now
+
+            elapsed = max(now - transfer_start, 0.000001)
+            percent = int((transferred / total_size) * 100) if total_size else 100
+            percent = max(0, min(percent, 100))
+            speed_mbps = (transferred / 1024 / 1024) / elapsed
+            remaining_mb = max(total_size - transferred, 0) / 1024 / 1024
+            eta_sec = remaining_mb / speed_mbps if speed_mbps > 0 else float("inf")
+            eta_text = _format_elapsed(eta_sec) if eta_sec != float("inf") else "—"
+
+            prefix = "Resuming download" if resumed else "Downloading"
+            if spec_id:
+                self.download_progress.emit(spec_id, dest_path, filename, percent)
+            self.download_status_detail.emit(
+                dest_path,
+                f"{prefix} {percent}% • {speed_mbps:.1f} MB/s • ETA {eta_text}",
+                "download",
+                percent,
+                False,
+            )
+            _update_transfer_stats(
                 "download",
                 filename,
+                speed_mbps,
+                percent,
                 file_size_mb=total_mb,
-                eta_text="Calculating...",
+                elapsed_sec=elapsed,
+                eta_text=eta_text,
                 backend="s3",
             )
 
-            def callback(bytes_amount):
-                nonlocal transferred, last_emit
-                with progress_lock:
-                    transferred += int(bytes_amount or 0)
-                    now = time.time()
-                    if now - last_emit < 0.5 and transferred < total_size:
-                        return
-                    last_emit = now
+        attempt = 0
+        started_reported = False
 
-                    elapsed = max(now - transfer_start, 0.000001)
-                    percent = int((transferred / total_size) * 100) if total_size else 0
-                    percent = min(percent, 100)
-                    speed_mbps = (transferred / 1024 / 1024) / elapsed
-                    remaining_mb = max(total_size - transferred, 0) / 1024 / 1024
-                    eta_sec = (
-                        remaining_mb / speed_mbps if speed_mbps > 0 else float("inf")
-                    )
-                    eta_text = (
-                        _format_elapsed(eta_sec) if eta_sec != float("inf") else "—"
-                    )
+        try:
+            while attempt < max_attempts:
+                attempt += 1
+                client = _create_s3_client()
+                body = None
+                try:
+                    head = client.head_object(Bucket=bucket, Key=object_key)
+                    total_size = int(head.get("ContentLength", 0) or 0)
+                    total_mb = total_size / 1024 / 1024
+                    object_etag = str(head.get("ETag", "") or "")
 
-                    if spec_id:
-                        self.download_progress.emit(
-                            spec_id, dest_path, filename, percent
+                    # Validate any existing partial file before trusting it.
+                    existing = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+                    meta_ok = False
+                    if existing and os.path.exists(meta_path):
+                        try:
+                            with open(meta_path, "r", encoding="utf-8") as f:
+                                saved = json.load(f)
+                            meta_ok = (
+                                saved.get("bucket") == bucket
+                                and saved.get("key") == object_key
+                                and int(saved.get("size", -1)) == total_size
+                                and str(saved.get("etag", "") or "") == object_etag
+                            )
+                        except Exception:
+                            meta_ok = False
+
+                    if existing and (not meta_ok or existing > total_size):
+                        logger.warning(
+                            f"[S3] Discarding stale/incompatible partial download: {temp_path}"
                         )
+                        try:
+                            os.remove(temp_path)
+                        except OSError:
+                            pass
+                        existing = 0
+
+                    if total_size == 0:
+                        Path(temp_path).write_bytes(b"")
+                        _write_meta()
+                        os.replace(temp_path, dest_path)
+                        try:
+                            os.remove(meta_path)
+                        except OSError:
+                            pass
+                        break
+
+                    if existing == total_size:
+                        # A previous attempt downloaded every byte but was interrupted
+                        # before the final rename. Finish without downloading again.
+                        os.replace(temp_path, dest_path)
+                        try:
+                            os.remove(meta_path)
+                        except OSError:
+                            pass
+                        break
+
+                    _write_meta()
+
+                    if not started_reported:
+                        report_transfer_event(
+                            "Started",
+                            "download",
+                            filename,
+                            percent=int((existing / total_size) * 100) if total_size else 0,
+                            file_size_mb=total_mb,
+                            eta_text="Resuming..." if existing else "Calculating...",
+                            backend="s3",
+                        )
+                        started_reported = True
+
+                    if existing:
+                        resume_percent = int((existing / total_size) * 100)
+                        logger.info(
+                            f"[S3] Resuming download at byte {existing}/{total_size} "
+                            f"({resume_percent}%): s3://{bucket}/{object_key}"
+                        )
+                        self.download_status_detail.emit(
+                            dest_path,
+                            f"Network restored • Resuming download from {resume_percent}%",
+                            "download",
+                            resume_percent,
+                            False,
+                        )
+
+                    request = {"Bucket": bucket, "Key": object_key}
+                    if existing > 0:
+                        request["Range"] = f"bytes={existing}-"
+
+                    response = client.get_object(**request)
+                    body = response["Body"]
+
+                    # A resume request must be honored as a ranged response.
+                    if existing > 0:
+                        content_range = str(response.get("ContentRange", "") or "")
+                        expected_prefix = f"bytes {existing}-"
+                        if not content_range.startswith(expected_prefix):
+                            raise IOError(
+                                f"S3 server did not honor resume Range {request['Range']} "
+                                f"(ContentRange={content_range!r})"
+                            )
+
+                    mode = "ab" if existing > 0 else "wb"
+                    transferred = existing
+                    with open(temp_path, mode) as out:
+                        while transferred < total_size:
+                            data = body.read(min(chunk_size, total_size - transferred))
+                            if not data:
+                                break
+                            out.write(data)
+                            transferred += len(data)
+                            _emit_progress(transferred, resumed=(existing > 0))
+                        out.flush()
+                        try:
+                            os.fsync(out.fileno())
+                        except OSError:
+                            pass
+
+                    actual_size = os.path.getsize(temp_path)
+                    if actual_size != total_size:
+                        raise IOError(
+                            f"Incomplete S3 download for {object_key}: "
+                            f"expected {total_size}, have {actual_size} bytes"
+                        )
+
+                    os.replace(temp_path, dest_path)
+                    try:
+                        os.remove(meta_path)
+                    except OSError:
+                        pass
+                    break
+
+                except Exception as e:
+                    current_size = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+                    percent = int((current_size / total_size) * 100) if total_size else 0
+                    percent = max(0, min(percent, 99))
+                    logger.warning(
+                        f"[S3] Download interrupted (attempt {attempt}/{max_attempts}) "
+                        f"at {percent}% ({current_size} bytes): {e}"
+                    )
+                    if attempt >= max_attempts:
+                        raise
                     self.download_status_detail.emit(
                         dest_path,
-                        f"Downloading {percent}% • {speed_mbps:.1f} MB/s • ETA {eta_text}",
+                        f"Network interrupted at {percent}% • retrying/resuming...",
                         "download",
                         percent,
-                        False,  # not SFTP/NAS; source is S3
+                        False,
                     )
-                    _update_transfer_stats(
-                        "download",
-                        filename,
-                        speed_mbps,
-                        percent,
-                        file_size_mb=total_mb,
-                        elapsed_sec=elapsed,
-                        eta_text=eta_text,
-                        backend="s3",
-                    )
-
-            client.download_file(
-                bucket,
-                object_key,
-                temp_path,
-                Callback=callback,
-                Config=transfer_config,
-            )
-
-            actual_size = os.path.getsize(temp_path)
-            if total_size and actual_size != total_size:
-                raise IOError(
-                    f"S3 download size mismatch for {object_key}: "
-                    f"expected {total_size}, received {actual_size} bytes"
-                )
-
-            # Only expose the final local file after a successful download.
-            os.replace(temp_path, dest_path)
+                    time.sleep(min(2 ** (attempt - 1), 15))
+                finally:
+                    if body is not None:
+                        try:
+                            body.close()
+                        except Exception:
+                            pass
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+            else:
+                raise RuntimeError("S3 download retry limit exhausted")
 
             duration = time.time() - transfer_start
             final_speed = total_mb / duration if duration > 0 else 0.0
@@ -6836,127 +6975,350 @@ class FileWatcherWorker(QObject):
             )
 
         except Exception:
+            # IMPORTANT: do NOT delete temp_path/meta_path here. They are the
+            # resume checkpoint for the next retry/app restart.
             _clear_transfer_stats()
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except OSError:
-                pass
-
             elapsed = time.time() - transfer_start
             report_transfer_event(
                 "Failed",
                 "download",
                 filename,
-                file_size_mb=(
-                    (total_size / 1024 / 1024) if "total_size" in locals() else 0.0
-                ),
+                file_size_mb=total_mb,
                 elapsed_sec=elapsed,
                 eta_text="-",
                 backend="s3",
             )
-            logger.exception(f"[S3] Download failed: s3://{bucket}/{object_key}")
+            logger.exception(
+                f"[S3] Download failed; partial file preserved for resume: "
+                f"s3://{bucket}/{object_key}"
+            )
             raise
-        finally:
-            try:
-                client.close()
-            except Exception:
-                pass
 
     def _upload_to_http(self, src_path, dest_path, item=None):
         """
-        Upload a local file to the rclone S3-compatible endpoint.
+        Resumable multipart upload to the rclone S3-compatible endpoint.
 
-        dest_path may be a plain object key, s3:// URL, legacy NAS path, or
-        endpoint URL. `_resolve_s3_location` maps all of those to bucket/key.
+        The multipart UploadId and every successfully uploaded part ETag are
+        persisted locally after each part. A network interruption therefore
+        retries only the unfinished/current part and continues with the next
+        missing part instead of restarting the whole file.
+
+        Note: S3 can resume only at completed multipart boundaries. With the
+        current 16 MiB chunk size, at most the in-flight 16 MiB part is sent
+        again after a disconnect; already completed parts are not re-uploaded.
         """
-        src_path = Path(src_path)
+        src_path = Path(src_path).resolve()
         if not src_path.is_file():
             raise FileNotFoundError(f"Source file does not exist: {src_path}")
 
         bucket, object_key = _resolve_s3_location(dest_path)
-        client = _create_s3_client()
-        transfer_config = _s3_transfer_config()
-
         filename = src_path.name
         spec_id = str(item.get("spec_id", "")) if isinstance(item, dict) else ""
         file_size = src_path.stat().st_size
+        source_mtime_ns = src_path.stat().st_mtime_ns
         total_mb = file_size / 1024 / 1024
+        part_size = max(5 * 1024 * 1024, S3_MULTIPART_CHUNK_MB * 1024 * 1024)
+        total_parts = max(1, (file_size + part_size - 1) // part_size) if file_size else 0
+        max_attempts = max(1, int(globals().get("MAX_RETRIES", 10)))
         transfer_start = time.time()
-        transferred = 0
         last_emit = 0.0
-        progress_lock = threading.Lock()
 
-        report_transfer_event(
-            "Started",
-            "upload",
-            filename,
-            file_size_mb=total_mb,
-            eta_text="Calculating...",
-            backend="s3",
-        )
+        resume_dir = Path(CACHE_FILE).parent / "s3_resume"
+        resume_dir.mkdir(parents=True, exist_ok=True)
+        resume_key = hashlib.sha256(
+            f"{bucket}\n{object_key}\n{src_path}".encode("utf-8")
+        ).hexdigest()
+        state_path = resume_dir / f"{resume_key}.upload.json"
 
-        try:
+        def _new_state(upload_id):
+            return {
+                "bucket": bucket,
+                "key": object_key,
+                "source": str(src_path),
+                "source_size": file_size,
+                "source_mtime_ns": source_mtime_ns,
+                "part_size": part_size,
+                "upload_id": upload_id,
+                "parts": {},
+            }
 
-            def callback(bytes_amount):
-                nonlocal transferred, last_emit
-                with progress_lock:
-                    transferred += int(bytes_amount or 0)
-                    now = time.time()
-                    if now - last_emit < 0.5 and transferred < file_size:
-                        return
-                    last_emit = now
+        def _save_state(state):
+            tmp_state = state_path.with_suffix(state_path.suffix + ".tmp")
+            with open(tmp_state, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp_state, state_path)
 
-                    elapsed = max(now - transfer_start, 0.000001)
-                    percent = int((transferred / file_size) * 100) if file_size else 100
-                    percent = min(percent, 100)
-                    speed_mbps = (transferred / 1024 / 1024) / elapsed
-                    remaining_mb = max(file_size - transferred, 0) / 1024 / 1024
-                    eta_sec = (
-                        remaining_mb / speed_mbps if speed_mbps > 0 else float("inf")
-                    )
-                    eta_text = (
-                        _format_elapsed(eta_sec) if eta_sec != float("inf") else "—"
-                    )
+        def _load_state():
+            if not state_path.exists():
+                return None
+            try:
+                with open(state_path, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+                valid = (
+                    state.get("bucket") == bucket
+                    and state.get("key") == object_key
+                    and state.get("source") == str(src_path)
+                    and int(state.get("source_size", -1)) == file_size
+                    and int(state.get("source_mtime_ns", -1)) == source_mtime_ns
+                    and int(state.get("part_size", -1)) == part_size
+                    and bool(state.get("upload_id"))
+                )
+                return state if valid else None
+            except Exception:
+                return None
 
-                    if spec_id:
-                        self.upload_progress.emit(
-                            spec_id, str(dest_path), filename, percent
-                        )
-                    self.upload_status_detail.emit(
-                        str(dest_path),
-                        f"Uploading {percent}% • {speed_mbps:.1f} MB/s • ETA {eta_text}",
-                        "upload",
-                        percent,
-                        False,  # destination is S3, not SFTP/NAS
-                    )
-                    _update_transfer_stats(
-                        "upload",
-                        filename,
-                        speed_mbps,
-                        percent,
-                        file_size_mb=total_mb,
-                        elapsed_sec=elapsed,
-                        eta_text=eta_text,
-                        backend="s3",
-                    )
+        def _completed_bytes(state):
+            completed = 0
+            for raw_num in state.get("parts", {}):
+                part_num = int(raw_num)
+                offset = (part_num - 1) * part_size
+                completed += min(part_size, max(file_size - offset, 0))
+            return min(completed, file_size)
 
-            client.upload_file(
-                str(src_path),
-                bucket,
-                object_key,
-                Callback=callback,
-                Config=transfer_config,
+        def _emit_progress(transferred, resumed=False):
+            nonlocal last_emit
+            now = time.time()
+            if now - last_emit < 0.5 and transferred < file_size:
+                return
+            last_emit = now
+
+            elapsed = max(now - transfer_start, 0.000001)
+            percent = int((transferred / file_size) * 100) if file_size else 100
+            percent = max(0, min(percent, 100))
+            speed_mbps = (transferred / 1024 / 1024) / elapsed
+            remaining_mb = max(file_size - transferred, 0) / 1024 / 1024
+            eta_sec = remaining_mb / speed_mbps if speed_mbps > 0 else float("inf")
+            eta_text = _format_elapsed(eta_sec) if eta_sec != float("inf") else "—"
+            prefix = "Resuming upload" if resumed else "Uploading"
+
+            if spec_id:
+                self.upload_progress.emit(spec_id, str(dest_path), filename, percent)
+            self.upload_status_detail.emit(
+                str(dest_path),
+                f"{prefix} {percent}% • {speed_mbps:.1f} MB/s • ETA {eta_text}",
+                "upload",
+                percent,
+                False,
+            )
+            _update_transfer_stats(
+                "upload",
+                filename,
+                speed_mbps,
+                percent,
+                file_size_mb=total_mb,
+                elapsed_sec=elapsed,
+                eta_text=eta_text,
+                backend="s3",
             )
 
-            # Verify that rclone exposes the completed object at the expected size.
-            head = client.head_object(Bucket=bucket, Key=object_key)
-            remote_size = int(head.get("ContentLength", -1))
-            if remote_size != file_size:
-                raise IOError(
-                    f"S3 upload size mismatch for {object_key}: "
-                    f"local {file_size}, remote {remote_size} bytes"
-                )
+        def _error_code(exc):
+            try:
+                return str(exc.response.get("Error", {}).get("Code", ""))
+            except Exception:
+                return ""
+
+        state = _load_state()
+        started_reported = False
+        attempt = 0
+
+        try:
+            # Zero-byte objects do not need multipart state/resume.
+            if file_size == 0:
+                client = _create_s3_client()
+                try:
+                    client.put_object(Bucket=bucket, Key=object_key, Body=b"")
+                finally:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+                if state_path.exists():
+                    state_path.unlink(missing_ok=True)
+            else:
+                while attempt < max_attempts:
+                    attempt += 1
+                    client = _create_s3_client()
+                    try:
+                        # If no valid checkpoint exists, create one multipart upload.
+                        if state is None:
+                            create = client.create_multipart_upload(
+                                Bucket=bucket, Key=object_key
+                            )
+                            state = _new_state(create["UploadId"])
+                            _save_state(state)
+                            logger.info(
+                                f"[S3] Created multipart upload {state['upload_id']} "
+                                f"for s3://{bucket}/{object_key}"
+                            )
+
+                        completed_before = _completed_bytes(state)
+                        resumed = completed_before > 0
+                        if not started_reported:
+                            report_transfer_event(
+                                "Started",
+                                "upload",
+                                filename,
+                                percent=int((completed_before / file_size) * 100),
+                                file_size_mb=total_mb,
+                                eta_text="Resuming..." if resumed else "Calculating...",
+                                backend="s3",
+                            )
+                            started_reported = True
+
+                        if resumed:
+                            resume_percent = int((completed_before / file_size) * 100)
+                            logger.info(
+                                f"[S3] Resuming multipart upload from completed parts "
+                                f"at ~{resume_percent}%: s3://{bucket}/{object_key}"
+                            )
+                            self.upload_status_detail.emit(
+                                str(dest_path),
+                                f"Network restored • Resuming upload from {resume_percent}%",
+                                "upload",
+                                resume_percent,
+                                False,
+                            )
+
+                        with open(src_path, "rb") as src:
+                            for part_num in range(1, total_parts + 1):
+                                part_key = str(part_num)
+                                if part_key in state.get("parts", {}):
+                                    continue
+
+                                offset = (part_num - 1) * part_size
+                                this_size = min(part_size, file_size - offset)
+                                src.seek(offset)
+                                data = src.read(this_size)
+                                if len(data) != this_size:
+                                    raise IOError(
+                                        f"Could not read upload part {part_num}: "
+                                        f"expected {this_size}, got {len(data)} bytes"
+                                    )
+
+                                response = client.upload_part(
+                                    Bucket=bucket,
+                                    Key=object_key,
+                                    UploadId=state["upload_id"],
+                                    PartNumber=part_num,
+                                    Body=data,
+                                    ContentLength=this_size,
+                                )
+                                etag = response.get("ETag")
+                                if not etag:
+                                    raise IOError(
+                                        f"S3 upload_part returned no ETag for part {part_num}"
+                                    )
+
+                                # Persist immediately. If the network dies later,
+                                # this completed part will be skipped on resume.
+                                state.setdefault("parts", {})[part_key] = etag
+                                _save_state(state)
+                                _emit_progress(_completed_bytes(state), resumed=resumed)
+
+                        completed_parts = [
+                            {
+                                "PartNumber": part_num,
+                                "ETag": state["parts"][str(part_num)],
+                            }
+                            for part_num in range(1, total_parts + 1)
+                        ]
+
+                        client.complete_multipart_upload(
+                            Bucket=bucket,
+                            Key=object_key,
+                            UploadId=state["upload_id"],
+                            MultipartUpload={"Parts": completed_parts},
+                        )
+
+                        head = client.head_object(Bucket=bucket, Key=object_key)
+                        remote_size = int(head.get("ContentLength", -1))
+                        if remote_size != file_size:
+                            raise IOError(
+                                f"S3 upload size mismatch for {object_key}: "
+                                f"local {file_size}, remote {remote_size} bytes"
+                            )
+
+                        try:
+                            state_path.unlink()
+                        except OSError:
+                            pass
+                        break
+
+                    except Exception as e:
+                        code = _error_code(e)
+
+                        # complete_multipart_upload may have succeeded but its
+                        # response can be lost when the network drops. Before
+                        # throwing away the UploadId, check whether the final
+                        # object already exists at the correct size.
+                        completed_remotely = False
+                        try:
+                            verify_client = _create_s3_client()
+                            try:
+                                head = verify_client.head_object(
+                                    Bucket=bucket, Key=object_key
+                                )
+                                completed_remotely = (
+                                    int(head.get("ContentLength", -1)) == file_size
+                                )
+                            finally:
+                                try:
+                                    verify_client.close()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            completed_remotely = False
+
+                        if completed_remotely and state and len(state.get("parts", {})) == total_parts:
+                            logger.info(
+                                f"[S3] Upload completion response was interrupted, "
+                                f"but final object is present and verified: {object_key}"
+                            )
+                            try:
+                                state_path.unlink()
+                            except OSError:
+                                pass
+                            break
+
+                        if code in ("NoSuchUpload", "InvalidArgument", "InvalidRequest"):
+                            logger.warning(
+                                f"[S3] Saved multipart UploadId is no longer valid "
+                                f"({code}); creating a new multipart upload."
+                            )
+                            state = None
+                            try:
+                                state_path.unlink()
+                            except OSError:
+                                pass
+
+                        completed = _completed_bytes(state) if state else 0
+                        percent = int((completed / file_size) * 100) if file_size else 0
+                        logger.warning(
+                            f"[S3] Upload interrupted (attempt {attempt}/{max_attempts}) "
+                            f"after completed parts at ~{percent}%: {e}"
+                        )
+                        if attempt >= max_attempts:
+                            raise
+                        self.upload_status_detail.emit(
+                            str(dest_path),
+                            f"Network interrupted at ~{percent}% • retrying/resuming...",
+                            "upload",
+                            percent,
+                            False,
+                        )
+                        time.sleep(min(2 ** (attempt - 1), 15))
+                    finally:
+                        try:
+                            client.close()
+                        except Exception:
+                            pass
+                else:
+                    raise RuntimeError("S3 upload retry limit exhausted")
 
             duration = time.time() - transfer_start
             final_speed = total_mb / duration if duration > 0 else 0.0
@@ -6982,6 +7344,8 @@ class FileWatcherWorker(QObject):
             )
 
         except Exception:
+            # IMPORTANT: keep the JSON checkpoint and do NOT abort the
+            # multipart upload here. They are required to resume later.
             _clear_transfer_stats()
             elapsed = time.time() - transfer_start
             report_transfer_event(
@@ -6994,14 +7358,10 @@ class FileWatcherWorker(QObject):
                 backend="s3",
             )
             logger.exception(
-                f"[S3] Upload failed: {src_path} -> s3://{bucket}/{object_key}"
+                f"[S3] Upload failed; multipart state preserved for resume: "
+                f"{src_path} -> s3://{bucket}/{object_key}"
             )
             raise
-        finally:
-            try:
-                client.close()
-            except Exception:
-                pass
 
     def _clean_processed_tasks(self):
         """

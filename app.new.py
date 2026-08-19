@@ -205,7 +205,7 @@ NAS_SHARE = ""
 NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
 MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
 NAS_PATH = "softwaremedia/IR_uat/"
-APPVERSION = "1.2.7(UAT)"
+APPVERSION = "1.2.8(UAT)"
 GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 
 

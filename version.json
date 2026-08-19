@@ -1,13 +1,13 @@
 {
-  "version": "1.2.7",
+  "version": "1.2.8",
   "release_notes": "Performance improvements and stability fixes",
   "mandatory": false,
   "windows": {
-    "url": "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/windows/PremediaApp_v1.2.7.exe",
+    "url": "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application_uat/drn/windows/PremediaApp_v1.2.8.exe",
     "sha256": "8c672ce0f2dbd31e2590ca8262214c2915c2f4d1062f1d22d107863fcdacb0b9"
   },
   "mac": {
-    "url": "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/macos/PremediaApp_v1.2.7.dmg",
+    "url": "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application_uat/drn/macos/PremediaApp_v1.2.8.dmg",
     "sha256": "6af1f72a54cfd49e703906d1acf781bbb5dd2ee0176e7c2bc2ac386ecf7d9964"
   }
 }

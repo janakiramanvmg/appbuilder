@@ -219,7 +219,7 @@ NAS_SHARE = ""
 NAS_PREFIX ='/mnt/nas/softwaremedia/IR_uat'
 MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_uat'
 NAS_PATH = "softwaremedia/IR_uat/"
-APPVERSION = "1.2.7(UAT)"
+APPVERSION = "1.2.8(UAT)"
 
 # === Rclone S3-compatible object storage (UAT) ===
 # `rclone serve s3` endpoint. Bucket is the root directory name exposed by rclone.
