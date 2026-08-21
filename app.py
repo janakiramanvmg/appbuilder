@@ -311,11 +311,12 @@ APPVERSION = "1.2.8(UAT)"
 # `rclone serve s3` endpoint. Bucket is the root directory name exposed by rclone.
 # Environment variables override these values, which is recommended outside UAT/POC.
 # S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://192.168.2.199:9000").rstrip("/")
-S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3uat.vmgpremedia.com:9000").rstrip("/")
+S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3uat.vmgpremedia.com").rstrip("/")
 S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
 S3_SECRET_KEY = os.getenv("PREMEDIA_S3_SECRET_KEY", "KJDSKJNOIWEBNSSDEW")
 S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
-S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "IR_uat")
+S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "softwaremedia")
+S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_uat")
 S3_MULTIPART_CHUNK_MB = 16
 S3_MAX_CONCURRENCY = 2
 GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
@@ -480,12 +481,15 @@ def _task_uses_s3(item, file_path=""):
 def _resolve_s3_location(remote_path):
     """
     Return (bucket, object_key) for any of these input styles:
-      s3://IR_uat/client/project/file.psd
-      http://192.168.2.199:9000/IR_uat/client/project/file.psd
-      IR_uat/client/project/file.psd
+      s3://softwaremedia/IR_uat/client/project/file.psd
+      http://192.168.2.199:9000/softwaremedia/IR_uat/client/project/file.psd
+      /IR_uat/client/project/file.psd
       /mnt/nas/softwaremedia/IR_uat/client/project/file.psd
       softwaremedia/IR_uat/client/project/file.psd
       client/project/file.psd
+
+    S3_PATH_PREFIX is applied exactly once to the final object key. For
+    example, /pro1/ff/hsd.psd becomes IR_uat/pro1/ff/hsd.psd.
     """
     raw = str(remote_path or "").strip().replace("\\", "/")
     if not raw:
@@ -541,6 +545,18 @@ def _resolve_s3_location(remote_path):
     parts = key.split("/")
     if any(part in ("", ".", "..") for part in parts):
         raise ValueError(f"Invalid S3 object key: {key}")
+
+    # Keep every S3 upload/download below the configured root directory.
+    # strip('/') prevents accidental leading/double slashes in boto3 keys,
+    # while the startswith check prevents IR_uat/IR_uat/... duplication when
+    # the API already supplies the prefix.
+    path_prefix = str(S3_PATH_PREFIX or "").strip().replace("\\", "/").strip("/")
+    if path_prefix:
+        prefix_parts = path_prefix.split("/")
+        if any(part in ("", ".", "..") for part in prefix_parts):
+            raise ValueError(f"Invalid S3 path prefix: {S3_PATH_PREFIX}")
+        if key != path_prefix and not key.startswith(path_prefix + "/"):
+            key = f"{path_prefix}/{key}"
 
     return bucket, key
 
@@ -4477,6 +4493,46 @@ class FileWatcherWorker(QObject):
         #     logger.debug("FileWatcherWorker timer already active")
         #     self.log_update.emit("[FileWatcher] Timer already active")
 
+    def _emit_transfer_notification(
+        self,
+        spec_id,
+        file_path,
+        filename,
+        action_type,
+        status_text,
+        percent,
+        is_nas,
+    ):
+        """Emit the correct progress/status pair for a transfer action."""
+        ui_action = "download" if str(action_type).lower() == "download" else "upload"
+        safe_spec_id = str(spec_id or "")
+        safe_path = str(file_path or "")
+        safe_filename = str(filename or Path(safe_path).name)
+        safe_percent = max(0, min(int(percent), 100))
+
+        if ui_action == "download":
+            self.download_progress.emit(
+                safe_spec_id, safe_path, safe_filename, safe_percent
+            )
+            self.download_status_detail.emit(
+                safe_path,
+                str(status_text),
+                "download",
+                safe_percent,
+                bool(is_nas),
+            )
+        else:
+            self.upload_progress.emit(
+                safe_spec_id, safe_path, safe_filename, safe_percent
+            )
+            self.upload_status_detail.emit(
+                safe_path,
+                str(status_text),
+                "upload",
+                safe_percent,
+                bool(is_nas),
+            )
+
     def _prepare_download_path(self, item):
         """Prepare the local destination path for download using file_path."""
         file_path = item.get("file_path", "")
@@ -5446,12 +5502,14 @@ class FileWatcherWorker(QObject):
             self.progress_update.emit(
                 f"{action_type} (Task {task_id}): {Path(src_path).name}", dest_path, 10
             )
-            self.download_status_detail.emit(
+            self._emit_transfer_notification(
+                spec_id,
                 dest_path,
-                f"{action_type} (Task {task_id}): {Path(src_path).name}",
+                Path(src_path).name,
                 action_type,
-                10,
-                True,
+                f"{action_type} starting (Task {task_id}): {Path(src_path).name}",
+                0,
+                is_nas_src if action_type.lower() == "download" else is_nas_dest,
             )
             # ------------------------------
             # Handle Download
@@ -5793,12 +5851,14 @@ class FileWatcherWorker(QObject):
                     dest_path,
                     100,
                 )
-                self.download_status_detail.emit(
+                self._emit_transfer_notification(
+                    spec_id,
                     dest_path,
-                    f"{action_type} (Task {task_id}): {Path(src_path).name}",
+                    Path(src_path).name,
                     action_type,
-                    10,
-                    True,
+                    f"{action_type} Completed (Task {task_id}): {Path(src_path).name}",
+                    100,
+                    is_nas_dest,
                 )
 
                 try:
@@ -5865,12 +5925,14 @@ class FileWatcherWorker(QObject):
                 dest_path,
                 0,
             )
-            self.download_status_detail.emit(
+            self._emit_transfer_notification(
+                spec_id,
                 dest_path,
-                f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}",
+                Path(src_path).name,
                 action_type,
+                f"{action_type} Cancelled (Task {task_id}): {Path(src_path).name}",
                 0,
-                True,
+                is_nas_dest,
             )
 
             raise
@@ -5904,12 +5966,14 @@ class FileWatcherWorker(QObject):
                 dest_path,
                 0,
             )
-            self.download_status_detail.emit(
+            self._emit_transfer_notification(
+                spec_id,
                 dest_path,
-                f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}",
+                Path(src_path).name,
                 action_type,
+                f"{action_type} Blocked (Task {task_id}): {Path(src_path).name}",
                 0,
-                True,
+                is_nas_dest,
             )
 
             raise
@@ -5937,12 +6001,14 @@ class FileWatcherWorker(QObject):
                 dest_path,
                 0,
             )
-            self.download_status_detail.emit(
+            self._emit_transfer_notification(
+                spec_id,
                 dest_path,
-                f"{action_type} Failed (Task {task_id}): {Path(src_path).name}",
+                Path(src_path).name,
                 action_type,
-                10,
-                True,
+                f"{action_type} Failed (Task {task_id}): {Path(src_path).name}",
+                0,
+                is_nas_src if action_type.lower() == "download" else is_nas_dest,
             )
 
             raise
@@ -6678,6 +6744,7 @@ class FileWatcherWorker(QObject):
         print("=================item=========================================")
 
         task_id = str(item.get("id", ""))
+        spec_id = str(item.get("spec_id") or task_id)
         original_filename = Path(src_path).name
         update_download_upload_metadata(task_id, "in progress")
         try:
@@ -6695,12 +6762,14 @@ class FileWatcherWorker(QObject):
                 dest_path,
                 100,
             )
-            self.download_status_detail.emit(
+            self._emit_transfer_notification(
+                spec_id,
                 dest_path,
-                f"{action_type} Completed (Task {task_id}): {original_filename}",
+                original_filename,
                 action_type,
-                10,
-                True,
+                f"{action_type} Completed (Task {task_id}): {original_filename}",
+                100,
+                is_nas_src if action_type.lower() == "download" else is_nas_dest,
             )
         except Exception as e:
             logger.error(f"Progress error for {action_type} (Task {task_id}): {str(e)}")
@@ -7679,7 +7748,9 @@ class TransferNotificationPopup(QFrame):
         super().__init__(parent)
         self.spec_id = spec_id
         self.action = action
+        self.file_path = ""
         self._done = False
+        self._dismissing = False
 
         self.setFixedWidth(320)
         self.setObjectName("NotifCard")
@@ -7773,6 +7844,7 @@ class TransferNotificationPopup(QFrame):
     # ── Public API ────────────────────────────────────────────────────────────
 
     def update_progress(self, percent: int, status_text: str = ""):
+        percent = max(0, min(int(percent), 100))
         self.bar.setValue(percent)
         self.pct_lbl.setText(f"{percent}%")
         if status_text:
@@ -7783,9 +7855,9 @@ class TransferNotificationPopup(QFrame):
         if self._done:
             return
         self._done = True
-        self.bar.setValue(100)
-        self.pct_lbl.setText("100%")
         if success:
+            self.bar.setValue(100)
+            self.pct_lbl.setText("100%")
             self.status_lbl.setText("✅ Completed")
             self.status_lbl.setStyleSheet(
                 "color:#2ecc71; font-size:11px; background:transparent;"
@@ -7800,6 +7872,9 @@ class TransferNotificationPopup(QFrame):
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _dismiss(self):
+        if self._dismissing:
+            return
+        self._dismissing = True
         self._anim2 = QPropertyAnimation(self._opacity, b"opacity")
         self._anim2.setDuration(250)
         self._anim2.setStartValue(1.0)
@@ -7830,15 +7905,15 @@ class TransferNotificationManager(QWidget):
         # ── CRITICAL: pass None so this becomes a real top-level window ───────
         super().__init__(None)
 
-        self._popups: dict = {}  # spec_id → TransferNotificationPopup
+        # (action + spec_id/path) → TransferNotificationPopup.  The action
+        # is part of the key because an upload and download can share a spec_id.
+        self._popups: dict = {}
 
         # ── Window flags: frameless, always-on-top tool window ────────────────
-        self.setWindowFlags(
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.X11BypassWindowManagerHint  # needed on some Linux WMs
-        )
+        flags = Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        if platform.system() == "Linux":
+            flags |= Qt.X11BypassWindowManagerHint
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)  # never steal focus
         self.setWindowOpacity(0.95)
@@ -7849,8 +7924,7 @@ class TransferNotificationManager(QWidget):
         self._layout.setAlignment(Qt.AlignBottom | Qt.AlignRight)
 
         self._reposition()
-        self.show()
-        self.raise_()
+        self.hide()
 
     # ── Geometry ──────────────────────────────────────────────────────────────
 
@@ -7872,20 +7946,71 @@ class TransferNotificationManager(QWidget):
 
     # ── Popup management ──────────────────────────────────────────────────────
 
-    def _get_or_create(self, spec_id: str, filename: str, action: str):
-        if spec_id not in self._popups:
-            popup = TransferNotificationPopup(spec_id, filename, action, parent=self)
-            self._popups[spec_id] = popup
+    @staticmethod
+    def _normalized_path(file_path: str) -> str:
+        return os.path.normcase(os.path.normpath(str(file_path or "")))
+
+    def _popup_key(self, spec_id: str, action: str, file_path: str) -> str:
+        spec_id = str(spec_id or "").strip()
+        if spec_id and spec_id.lower() not in ("none", "null"):
+            return f"{action}:spec:{spec_id}"
+        return f"{action}:path:{self._normalized_path(file_path)}"
+
+    def _find_popup(self, action: str, filename: str, file_path: str):
+        wanted_path = self._normalized_path(file_path)
+        for popup in self._popups.values():
+            if popup.action != action:
+                continue
+            popup_path = self._normalized_path(popup.file_path)
+            if wanted_path and popup_path and wanted_path == popup_path:
+                return popup
+            if filename and popup.file_lbl.text() == filename:
+                return popup
+        return None
+
+    def _get_or_create(
+        self, spec_id: str, filename: str, action: str, file_path: str = ""
+    ):
+        key = self._popup_key(spec_id, action, file_path)
+        popup = self._popups.get(key)
+
+        # A status-detail event may arrive before the first numeric progress
+        # event. Reuse that early popup and re-key it once spec_id is known.
+        if popup is None:
+            popup = self._find_popup(action, filename, file_path)
+            if popup is not None:
+                old_key = next(
+                    (k for k, value in self._popups.items() if value is popup), None
+                )
+                if old_key != key:
+                    if old_key is not None:
+                        del self._popups[old_key]
+                    self._popups[key] = popup
+
+        if popup is None:
+            popup = TransferNotificationPopup(str(spec_id or ""), filename, action, parent=self)
+            popup.file_path = str(file_path or "")
+            self._popups[key] = popup
             self._layout.addWidget(popup)
             popup.show()
-            self.raise_()  # keep overlay on top whenever a new card arrives
-        return self._popups[spec_id]
+        elif file_path:
+            popup.file_path = str(file_path)
+
+        # The overlay can have been obscured/hidden by a display or session
+        # change. Re-show and reposition it for every new transfer event.
+        self._reposition()
+        if not self.isVisible():
+            self.show()
+        self.raise_()
+        return popup
 
     def _remove_popup(self, popup: TransferNotificationPopup):
-        spec_id = popup.spec_id
-        if spec_id in self._popups:
+        key = next((k for k, value in self._popups.items() if value is popup), None)
+        if key is not None:
             self._layout.removeWidget(popup)
-            del self._popups[spec_id]
+            del self._popups[key]
+        if not self._popups:
+            self.hide()
 
     # ── Slots ─────────────────────────────────────────────────────────────────
 
@@ -7893,7 +8018,9 @@ class TransferNotificationManager(QWidget):
     def on_download_progress(
         self, spec_id: str, file_path: str, filename: str, percent: int
     ):
-        popup = self._get_or_create(spec_id, filename, "download")
+        popup = self._get_or_create(
+            spec_id, filename, "download", file_path=file_path
+        )
         popup.update_progress(percent)
         if percent >= 100:
             popup.mark_done(True)
@@ -7905,22 +8032,21 @@ class TransferNotificationManager(QWidget):
         if action_type != "download":
             return
         fname = Path(file_path).name
-        for popup in self._popups.values():
-            if popup.action == "download" and (
-                popup.file_lbl.text() == fname or file_path in popup.file_lbl.text()
-            ):
-                popup.update_progress(percent, text)
-                if "Failed" in text:
-                    popup.mark_done(False)
-                elif "Completed" in text:
-                    popup.mark_done(True)
-                break
+        popup = self._get_or_create(
+            "", fname, "download", file_path=file_path
+        )
+        popup.update_progress(percent, text)
+        lower_text = text.lower()
+        if any(word in lower_text for word in ("failed", "error", "cancelled", "blocked")):
+            popup.mark_done(False)
+        elif "completed" in lower_text:
+            popup.mark_done(True)
 
     @Slot(str, str, str, int)
     def on_upload_progress(
         self, spec_id: str, file_path: str, filename: str, percent: int
     ):
-        popup = self._get_or_create(spec_id, filename, "upload")
+        popup = self._get_or_create(spec_id, filename, "upload", file_path=file_path)
         popup.update_progress(percent)
         if percent >= 100:
             popup.mark_done(True)
@@ -7929,19 +8055,16 @@ class TransferNotificationManager(QWidget):
     def on_upload_status_detail(
         self, file_path: str, text: str, action_type: str, percent: int, is_nas: bool
     ):
-        if action_type != "upload":
+        if action_type not in ("upload", "replace"):
             return
         fname = Path(file_path).name
-        for popup in self._popups.values():
-            if popup.action == "upload" and (
-                popup.file_lbl.text() == fname or file_path in popup.file_lbl.text()
-            ):
-                popup.update_progress(percent, text)
-                if "Failed" in text:
-                    popup.mark_done(False)
-                elif "Completed" in text:
-                    popup.mark_done(True)
-                break
+        popup = self._get_or_create("", fname, "upload", file_path=file_path)
+        popup.update_progress(percent, text)
+        lower_text = text.lower()
+        if any(word in lower_text for word in ("failed", "error", "cancelled", "blocked")):
+            popup.mark_done(False)
+        elif "completed" in lower_text:
+            popup.mark_done(True)
 
 
 class CardWidget(QFrame):
@@ -10850,6 +10973,16 @@ class PremediaApp(QApplication):
             finally:
                 self.file_watcher = None
 
+        manager = getattr(self, "notif_manager", None)
+        if manager is not None:
+            try:
+                manager.hide()
+                manager.deleteLater()
+            except RuntimeError:
+                pass
+            finally:
+                self.notif_manager = None
+
         logger.debug("stop_file_watcher_thread completed cleanly")
         app_signals.append_log.emit("[App] FileWatcher stopped cleanly")
 
@@ -10964,65 +11097,36 @@ class PremediaApp(QApplication):
             # self.watchdog_timer.start(60000)  # every 60 seconds
 
             # self.schedule_daily_restart(3, 0)
-            def on_thread_started():
-                logger.info("FileWatcherWorker thread is live — starting poll timer")
-                app_signals.append_log.emit(
-                    "[App] FileWatcherWorker thread live, poll timer starting"
-                )
+            # QWidget and QTimer objects must be created on the main GUI
+            # thread. Doing this from QThread.started caused the intermittent
+            # missing progress window.
+            self.notif_manager = TransferNotificationManager()
+            watcher = self.file_watcher
+            watcher.download_progress.connect(
+                self.notif_manager.on_download_progress, Qt.QueuedConnection
+            )
+            watcher.download_status_detail.connect(
+                self.notif_manager.on_download_status_detail, Qt.QueuedConnection
+            )
+            watcher.upload_progress.connect(
+                self.notif_manager.on_upload_progress, Qt.QueuedConnection
+            )
+            watcher.upload_status_detail.connect(
+                self.notif_manager.on_upload_status_detail, Qt.QueuedConnection
+            )
+            logger.info("[App] TransferNotificationManager connected on GUI thread")
+            app_signals.append_log.emit(
+                "[App] TransferNotificationManager connected on GUI thread"
+            )
 
-                if getattr(self, "poll_timer", None):
-                    try:
-                        self.poll_timer.stop()
-                    except Exception:
-                        pass
+            self.poll_timer = QTimer(self)
+            self.poll_timer.timeout.connect(self._safe_invoke_watcher)
+            self.poll_timer.start(3000)
 
-                self.poll_timer = QTimer(self)
-                self.poll_timer.timeout.connect(self._safe_invoke_watcher)
-                self.poll_timer.start(3000)
-
-                # Fire first scan immediately without waiting 3s
-                QTimer.singleShot(500, self._safe_invoke_watcher)
-
-                # ── Notification Manager ──────────────────────────────────────
-                # FIX: This used to be gated behind "a visible top-level widget
-                # exists" via _find_best_anchor(), even though
-                # TransferNotificationManager doesn't actually use an anchor —
-                # it positions itself off the screen's own geometry. If that
-                # search came back empty (e.g. right after login before any
-                # window was shown), the whole block was skipped and progress
-                # popups silently never got wired up for the rest of the
-                # session. Always (re)create and connect it.
-                if getattr(self, "notif_manager", None):
-                    try:
-                        self.notif_manager.hide()
-                        self.notif_manager.deleteLater()
-                    except Exception:
-                        pass
-
-                self.notif_manager = TransferNotificationManager()
-
-                watcher = self.file_watcher
-                watcher.download_progress.connect(
-                    self.notif_manager.on_download_progress, Qt.QueuedConnection
-                )
-                watcher.download_status_detail.connect(
-                    self.notif_manager.on_download_status_detail, Qt.QueuedConnection
-                )
-                watcher.upload_progress.connect(
-                    self.notif_manager.on_upload_progress, Qt.QueuedConnection
-                )
-                watcher.upload_status_detail.connect(
-                    self.notif_manager.on_upload_status_detail, Qt.QueuedConnection
-                )
-                logger.info("[App] TransferNotificationManager connected")
-                app_signals.append_log.emit(
-                    "[App] TransferNotificationManager connected"
-                )
-                # ─────────────────────────────────────────────────────────────
-
-            # Connect and start the thread
-            self.file_watcher_thread.started.connect(on_thread_started)
+            # Start only after all progress receivers are connected, then
+            # queue the first scan once the worker event loop is available.
             self.file_watcher_thread.start()
+            QTimer.singleShot(500, self._safe_invoke_watcher)
 
             logger.info("FileWatcherWorker thread started successfully")
             app_signals.append_log.emit(
