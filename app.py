@@ -306,21 +306,33 @@ NAS_PREFIX = "/mnt/nas/softwaremedia/IR_uat"
 MOUNTED_NAS_PATH = "/mnt/nas/softwaremedia/IR_uat"
 NAS_PATH = "softwaremedia/IR_uat/"
 APPVERSION = "1.2.8(UAT)"
+GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 
 # === Rclone S3-compatible object storage (UAT) ===
 # `rclone serve s3` endpoint. Bucket is the root directory name exposed by rclone.
 # Environment variables override these values, which is recommended outside UAT/POC.
-# S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://192.168.2.199:9000").rstrip("/")
-S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3uat.vmgpremedia.com").rstrip("/")
+S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://192.168.1.145:9000").rstrip("/")
+
+# S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3.vmgpremedia.com").rstrip("/")
 S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
-S3_SECRET_KEY = os.getenv("PREMEDIA_S3_SECRET_KEY", "KJDSKJNOIWEBNSSDEW")
+S3_SECRET_KEY = os.getenv(
+    "PREMEDIA_S3_SECRET_KEY",
+    "25a1c467feb351a4693e876816260472e632a2a2a03145afe76f9d28960f752f",
+)
 S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
 S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "softwaremedia")
 S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_uat")
 S3_MULTIPART_CHUNK_MB = 16
 S3_MAX_CONCURRENCY = 2
-GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 
+# S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3uat.vmgpremedia.com").rstrip("/")
+# S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
+# S3_SECRET_KEY = os.getenv("PREMEDIA_S3_SECRET_KEY", "KJDSKJNOIWEBNSSDEW")
+# S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
+# S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "softwaremedia")
+# S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_uat")
+# S3_MULTIPART_CHUNK_MB = 16
+# S3_MAX_CONCURRENCY = 2
 
 BASE_DIR = Path(__file__).parent.resolve()
 
@@ -3908,68 +3920,103 @@ def open_file_with_photoshop(file_path: str, log_callback=None) -> bool:
                 f"Photoshop executable not accessible: {photoshop_path}"
             )
 
-        # Try COM first
-        try:
-            ps_app = win32com.client.Dispatch("Photoshop.Application")
-            ps_app.Visible = True
-            ps_app.Open(file_path)
+        def _bring_to_front():
+            """Best-effort focus only; never report an open failure."""
 
-            def _bring_to_front():
-                def _enum(hwnd, _):
-                    if (
-                        win32gui.IsWindowVisible(hwnd)
-                        and "adobe photoshop" in win32gui.GetWindowText(hwnd).lower()
-                    ):
-                        try:
-                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                            this = win32api.GetCurrentThreadId()
-                            target = win32process.GetWindowThreadProcessId(hwnd)[0]
-                            if ctypes.windll.user32.AttachThreadInput(
-                                this, target, True
-                            ):
+            def _enum(hwnd, _):
+                if (
+                    win32gui.IsWindowVisible(hwnd)
+                    and "adobe photoshop" in win32gui.GetWindowText(hwnd).lower()
+                ):
+                    try:
+                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                        this = win32api.GetCurrentThreadId()
+                        target = win32process.GetWindowThreadProcessId(hwnd)[0]
+                        if ctypes.windll.user32.AttachThreadInput(this, target, True):
+                            try:
                                 win32gui.SetForegroundWindow(hwnd)
+                            finally:
                                 ctypes.windll.user32.AttachThreadInput(
                                     this, target, False
                                 )
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
 
-                win32gui.EnumWindows(_enum, None)
+            win32gui.EnumWindows(_enum, None)
 
-            time.sleep(1.5)
-            _bring_to_front()
-            _log(f"[Photoshop] Opened {Path(file_path).name} via COM")
-            return True
-        except Exception as com_err:
-            _log(f"[Photoshop] COM failed ({com_err}), trying subprocess...")
+        def _is_photoshop_running():
+            """Return True only when a Photoshop process already exists."""
+            for process in psutil.process_iter(["name", "exe"]):
+                try:
+                    process_name = (process.info.get("name") or "").lower()
+                    process_exe = process.info.get("exe") or ""
+                    executable_name = (
+                        Path(process_exe).name.lower() if process_exe else ""
+                    )
+                    if (
+                        process_name == "photoshop.exe"
+                        or executable_name == "photoshop.exe"
+                    ):
+                        return True
+                except (
+                    psutil.NoSuchProcess,
+                    psutil.AccessDenied,
+                    psutil.ZombieProcess,
+                ):
+                    continue
+            return False
 
-        # Fallback: subprocess
-        for attempt in range(3):
+        # COM can start Photoshop while creating the automation object. If COM
+        # then reports "Server execution failed", launching the subprocess as a
+        # fallback creates a second Photoshop instance. Use COM only when an
+        # instance was already running; otherwise perform exactly one launch.
+        if _is_photoshop_running():
             try:
-                subprocess.Popen(
-                    [photoshop_path, file_path], stderr=subprocess.PIPE, text=True
+                ps_app = win32com.client.Dispatch("Photoshop.Application")
+                ps_app.Visible = True
+                ps_app.Open(file_path)
+            except Exception as com_err:
+                _log(
+                    f"[Photoshop] Existing instance COM open failed ({com_err}), "
+                    "using subprocess once..."
                 )
-                time.sleep(2)
-                hwnds = []
-                win32gui.EnumWindows(
-                    lambda h, l: (
-                        l.append(h)
-                        if win32gui.IsWindowVisible(h)
-                        and "adobe photoshop" in win32gui.GetWindowText(h).lower()
-                        else None
-                    ),
-                    hwnds,
-                )
-                if hwnds:
-                    win32gui.ShowWindow(hwnds[0], win32con.SW_RESTORE)
-                    win32gui.SetForegroundWindow(hwnds[0])
-                _log(f"[Photoshop] Opened {Path(file_path).name} via subprocess")
+            else:
+                try:
+                    time.sleep(1.5)
+                    _bring_to_front()
+                except Exception as focus_err:
+                    _log(f"[Photoshop] File opened; focus skipped ({focus_err})")
+                _log(f"[Photoshop] Opened {Path(file_path).name} via COM")
                 return True
-            except Exception as e:
-                if attempt < 2:
-                    time.sleep(2)
-                else:
-                    raise RuntimeError(f"Failed to open after 3 attempts: {e}")
+        else:
+            _log("[Photoshop] Photoshop is not running; launching it once...")
+
+        # Fallback: launch exactly once. Window discovery/focus is retried
+        # separately; a focus failure must never launch another Photoshop
+        # process or open the file again.
+        try:
+            subprocess.Popen(
+                [photoshop_path, file_path], stderr=subprocess.PIPE, text=True
+            )
+        except Exception as launch_err:
+            raise RuntimeError(
+                f"Failed to launch Photoshop: {launch_err}"
+            ) from launch_err
+
+        for focus_attempt in range(3):
+            try:
+                time.sleep(2 if focus_attempt == 0 else 1)
+                _bring_to_front()
+                break
+            except Exception as focus_err:
+                if focus_attempt == 2:
+                    _log(
+                        f"[Photoshop] Opened file; could not bring window to front: "
+                        f"{focus_err}"
+                    )
+
+        _log(f"[Photoshop] Opened {Path(file_path).name} via subprocess")
+        return True
 
     elif system == "Darwin":
         photoshop_path = os.getenv("PHOTOSHOP_PATH")
@@ -6869,7 +6916,9 @@ class FileWatcherWorker(QObject):
                     object_etag = str(head.get("ETag", "") or "")
 
                     # Validate any existing partial file before trusting it.
-                    existing = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+                    existing = (
+                        os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+                    )
                     meta_ok = False
                     if existing and os.path.exists(meta_path):
                         try:
@@ -6921,7 +6970,9 @@ class FileWatcherWorker(QObject):
                             "Started",
                             "download",
                             filename,
-                            percent=int((existing / total_size) * 100) if total_size else 0,
+                            percent=(
+                                int((existing / total_size) * 100) if total_size else 0
+                            ),
                             file_size_mb=total_mb,
                             eta_text="Resuming..." if existing else "Calculating...",
                             backend="s3",
@@ -6990,8 +7041,12 @@ class FileWatcherWorker(QObject):
                     break
 
                 except Exception as e:
-                    current_size = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
-                    percent = int((current_size / total_size) * 100) if total_size else 0
+                    current_size = (
+                        os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+                    )
+                    percent = (
+                        int((current_size / total_size) * 100) if total_size else 0
+                    )
                     percent = max(0, min(percent, 99))
                     logger.warning(
                         f"[S3] Download interrupted (attempt {attempt}/{max_attempts}) "
@@ -7087,7 +7142,9 @@ class FileWatcherWorker(QObject):
         source_mtime_ns = src_path.stat().st_mtime_ns
         total_mb = file_size / 1024 / 1024
         part_size = max(5 * 1024 * 1024, S3_MULTIPART_CHUNK_MB * 1024 * 1024)
-        total_parts = max(1, (file_size + part_size - 1) // part_size) if file_size else 0
+        total_parts = (
+            max(1, (file_size + part_size - 1) // part_size) if file_size else 0
+        )
         max_attempts = max(1, int(globals().get("MAX_RETRIES", 10)))
         transfer_start = time.time()
         last_emit = 0.0
@@ -7343,7 +7400,11 @@ class FileWatcherWorker(QObject):
                         except Exception:
                             completed_remotely = False
 
-                        if completed_remotely and state and len(state.get("parts", {})) == total_parts:
+                        if (
+                            completed_remotely
+                            and state
+                            and len(state.get("parts", {})) == total_parts
+                        ):
                             logger.info(
                                 f"[S3] Upload completion response was interrupted, "
                                 f"but final object is present and verified: {object_key}"
@@ -7354,7 +7415,11 @@ class FileWatcherWorker(QObject):
                                 pass
                             break
 
-                        if code in ("NoSuchUpload", "InvalidArgument", "InvalidRequest"):
+                        if code in (
+                            "NoSuchUpload",
+                            "InvalidArgument",
+                            "InvalidRequest",
+                        ):
                             logger.warning(
                                 f"[S3] Saved multipart UploadId is no longer valid "
                                 f"({code}); creating a new multipart upload."
@@ -7988,7 +8053,9 @@ class TransferNotificationManager(QWidget):
                     self._popups[key] = popup
 
         if popup is None:
-            popup = TransferNotificationPopup(str(spec_id or ""), filename, action, parent=self)
+            popup = TransferNotificationPopup(
+                str(spec_id or ""), filename, action, parent=self
+            )
             popup.file_path = str(file_path or "")
             self._popups[key] = popup
             self._layout.addWidget(popup)
@@ -8018,9 +8085,7 @@ class TransferNotificationManager(QWidget):
     def on_download_progress(
         self, spec_id: str, file_path: str, filename: str, percent: int
     ):
-        popup = self._get_or_create(
-            spec_id, filename, "download", file_path=file_path
-        )
+        popup = self._get_or_create(spec_id, filename, "download", file_path=file_path)
         popup.update_progress(percent)
         if percent >= 100:
             popup.mark_done(True)
@@ -8032,12 +8097,12 @@ class TransferNotificationManager(QWidget):
         if action_type != "download":
             return
         fname = Path(file_path).name
-        popup = self._get_or_create(
-            "", fname, "download", file_path=file_path
-        )
+        popup = self._get_or_create("", fname, "download", file_path=file_path)
         popup.update_progress(percent, text)
         lower_text = text.lower()
-        if any(word in lower_text for word in ("failed", "error", "cancelled", "blocked")):
+        if any(
+            word in lower_text for word in ("failed", "error", "cancelled", "blocked")
+        ):
             popup.mark_done(False)
         elif "completed" in lower_text:
             popup.mark_done(True)
@@ -8061,7 +8126,9 @@ class TransferNotificationManager(QWidget):
         popup = self._get_or_create("", fname, "upload", file_path=file_path)
         popup.update_progress(percent, text)
         lower_text = text.lower()
-        if any(word in lower_text for word in ("failed", "error", "cancelled", "blocked")):
+        if any(
+            word in lower_text for word in ("failed", "error", "cancelled", "blocked")
+        ):
             popup.mark_done(False)
         elif "completed" in lower_text:
             popup.mark_done(True)
