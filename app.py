@@ -128,12 +128,14 @@ try:
     import boto3
     from boto3.s3.transfer import TransferConfig
     from botocore.config import Config as BotoConfig
+    import botocore.exceptions as BotoCoreExceptions
 
     S3_AVAILABLE = True
 except ImportError as e:
     boto3 = None
     TransferConfig = None
     BotoConfig = None
+    BotoCoreExceptions = None
     S3_AVAILABLE = False
     logging.warning(
         f"boto3/botocore not installed: {e}. Rclone S3 functionality disabled."
@@ -607,6 +609,103 @@ def _create_s3_client():
             retries={"max_attempts": 3, "mode": "standard"},
         ),
     )
+
+
+def _is_s3_network_error(error):
+    """Distinguish transport failures from S3/API/file-processing errors."""
+    network_types = [socket.timeout, TimeoutError, ConnectionError]
+    if BotoCoreExceptions is not None:
+        for name in (
+            "EndpointConnectionError",
+            "ConnectTimeoutError",
+            "ReadTimeoutError",
+            "ConnectionClosedError",
+            "HTTPClientError",
+        ):
+            exc_type = getattr(BotoCoreExceptions, name, None)
+            if isinstance(exc_type, type):
+                network_types.append(exc_type)
+
+    current = error
+    visited = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if isinstance(current, tuple(network_types)):
+            return True
+
+        try:
+            code = str(current.response.get("Error", {}).get("Code", "")).lower()
+            if code in {
+                "requesttimeout",
+                "requesttimeoutexception",
+                "slowdown",
+                "internalerror",
+                "serviceunavailable",
+            }:
+                return True
+        except Exception:
+            pass
+
+        message = str(current).lower()
+        if any(
+            token in message
+            for token in (
+                "timed out",
+                "timeout",
+                "connection reset",
+                "connection aborted",
+                "connection closed",
+                "broken pipe",
+                "endpoint url",
+                "network is unreachable",
+                "temporary failure in name resolution",
+            )
+        ):
+            return True
+
+        current = getattr(current, "__cause__", None) or getattr(
+            current, "__context__", None
+        )
+
+    return False
+
+
+def _s3_retry_status(action, error, percent, attempt, max_attempts):
+    """Return an accurate retry message and log platform diagnostics."""
+    network_error = _is_s3_network_error(error)
+    endpoint_ok = None
+    endpoint_error = None
+
+    if network_error:
+        try:
+            parsed = urlparse(S3_ENDPOINT)
+            host = parsed.hostname
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            if host:
+                endpoint_ok, _, endpoint_error = _tcp_check(host, port, timeout=2.0)
+        except Exception as probe_error:
+            endpoint_error = str(probe_error)
+
+    logger.warning(
+        "[S3][%s][%s] retry %s/%s at %s%%; error_type=%s; "
+        "network_error=%s; endpoint_reachable=%s; endpoint_error=%s; error=%s",
+        platform.system(),
+        action,
+        attempt,
+        max_attempts,
+        percent,
+        type(error).__name__,
+        network_error,
+        endpoint_ok,
+        endpoint_error,
+        error,
+    )
+
+    if network_error and endpoint_ok is False:
+        return f"Network interrupted at {percent}% • retrying/resuming..."
+    if network_error:
+        return f"Temporary S3 connection issue at {percent}% • retrying/resuming..."
+    return f"S3 transfer error at {percent}% • retrying..."
 
 
 def _s3_transfer_config():
@@ -2013,7 +2112,10 @@ def measure_latency_ms(host: str = None, port: int = None, timeout: float = 3.0)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
         sock.connect((host, port))
-        return round((time.perf_counter() - start) * 1000, 1)
+        # A successful local/LAN TCP connection can complete in less than
+        # 0.05 ms on macOS and round to 0.0.  Zero must therefore remain a
+        # successful, very-fast reading rather than being treated as offline.
+        return round(max((time.perf_counter() - start) * 1000, 0.1), 1)
     except Exception as e:
         logger.debug(f"[Latency] Could not reach {host}:{port}: {e}")
         return None
@@ -2736,12 +2838,10 @@ def report_transfer_event(
             }
 
             # ---- Alarm: NAS/server unreachable ("not able to ping server") ----
-            # Treat both a None reading (connection failed / timed out) and an
-            # exact 0ms reading (measure_latency_ms() couldn't produce a real
-            # timing — e.g. socket error swallowed upstream) as "unreachable",
-            # since a legitimate TCP-connect latency of exactly 0ms is not
-            # realistically possible.
-            if latency_ms is None or latency_ms == 0:
+            # Only a failed/timed-out connection is unreachable. A successful
+            # local/LAN connection may legitimately measure below 0.1 ms on
+            # macOS, so a very small latency is healthy rather than an alarm.
+            if latency_ms is None:
                 target_host = latency_host
                 target_port = latency_port
                 raise_network_alarm(
@@ -2758,19 +2858,6 @@ def report_transfer_event(
                     f"server appears unstable or overloaded.",
                     context={**alarm_context, "Latency": f"{latency_ms} ms"},
                 )
-            # ---- Alarm: server latency is abnormally/suspiciously low ----
-            # A very low but non-zero reading (below LATENCY_MIN_MS) can indicate
-            # an unreliable/flaky connection or a bad measurement rather than a
-            # genuinely healthy server, so flag it too instead of silently
-            # treating it as "all good".
-            elif latency_ms < LATENCY_MIN_MS:
-                raise_network_alarm(
-                    "ServerLatencyAbnormal",
-                    f"Server latency reading is abnormally low ({latency_ms} ms) — this may "
-                    f"indicate an unstable connection or an unreliable measurement.",
-                    context={**alarm_context, "Latency": f"{latency_ms} ms"},
-                )
-
             # ---- Alarm: transfer speed is critically slow mid-transfer ----
             if (
                 event == "Progress"
@@ -4628,7 +4715,7 @@ class FileWatcherWorker(QObject):
 
     def _download_from_nas(self, src_path, dest_path, item):
         task_id = item.get("id", "")
-        spec_id = str(item.get("spec_id"))
+        spec_id = str(item.get("spec_id") or item.get("id") or "")
 
         file_watcher = FileWatcherWorker.get_instance()
 
@@ -4834,7 +4921,7 @@ class FileWatcherWorker(QObject):
 
     def _upload_to_nas(self, src_path, dest_path, item):
         task_id = item.get("id", "")
-        spec_id = str(item.get("spec_id"))
+        spec_id = str(item.get("spec_id") or item.get("id") or "")
         # client_id = str(item.get("client_id"))
 
         metadata_key = "uploaded_files_with_metadata"
@@ -5156,10 +5243,6 @@ class FileWatcherWorker(QObject):
                     meta["api_response"]["transfer_duration"] = round(duration, 1)
                     save_cache(cache, significant_change=False)  # ← ADD THIS
 
-                file_watcher.upload_progress.emit(spec_id, dest_path, filename, 100)
-                file_watcher.upload_status_detail.emit(
-                    dest_path, "Upload Completed", "upload", 100, True
-                )
             finally:
                 # FIX: always close local file handle
                 try:
@@ -5176,9 +5259,12 @@ class FileWatcherWorker(QObject):
                 f"in {duration:.2f}s ({final_speed:.2f} MB/s)"
             )
 
-            file_watcher.upload_progress.emit(spec_id, dest_path, filename, 100)
+            # The transport is complete, but perform_file_transfer() still has
+            # cache/API finalization work to do. Keep the original popup alive
+            # at 99%; the outer task emits the single authoritative 100% event.
+            file_watcher.upload_progress.emit(spec_id, dest_path, filename, 99)
             file_watcher.upload_status_detail.emit(
-                dest_path, "Upload Completed", "upload", 100, True
+                dest_path, "Finalizing upload...", "upload", 99, True
             )
 
             if MIN_REQUIRED_MBPS:
@@ -5482,7 +5568,7 @@ class FileWatcherWorker(QObject):
 
         """Perform file transfer (download/upload/replace) and update cache metadata reliably."""
         task_id = str(item.get("id"))
-        spec_id = str(item.get("spec_id"))
+        spec_id = str(item.get("spec_id") or task_id or "")
         print("===================================")
         print(item.get("file_path"))
         print("===================================")
@@ -6809,15 +6895,9 @@ class FileWatcherWorker(QObject):
                 dest_path,
                 100,
             )
-            self._emit_transfer_notification(
-                spec_id,
-                dest_path,
-                original_filename,
-                action_type,
-                f"{action_type} Completed (Task {task_id}): {original_filename}",
-                100,
-                is_nas_src if action_type.lower() == "download" else is_nas_dest,
-            )
+            # perform_file_transfer() / the transport already emitted the
+            # terminal notification. Emitting it again here could recreate a
+            # second completed popup after the first one's dismiss timer fired.
         except Exception as e:
             logger.error(f"Progress error for {action_type} (Task {task_id}): {str(e)}")
             self.log_update.emit(
@@ -6840,7 +6920,11 @@ class FileWatcherWorker(QObject):
         dest_path = str(Path(dest_path).resolve())
         Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
         filename = Path(dest_path).name
-        spec_id = str(item.get("spec_id", "")) if isinstance(item, dict) else ""
+        spec_id = (
+            str(item.get("spec_id") or item.get("id") or "")
+            if isinstance(item, dict)
+            else ""
+        )
 
         temp_path = dest_path + ".s3part"
         meta_path = temp_path + ".json"
@@ -7054,9 +7138,12 @@ class FileWatcherWorker(QObject):
                     )
                     if attempt >= max_attempts:
                         raise
+                    retry_status = _s3_retry_status(
+                        "download", e, percent, attempt, max_attempts
+                    )
                     self.download_status_detail.emit(
                         dest_path,
-                        f"Network interrupted at {percent}% • retrying/resuming...",
+                        retry_status,
                         "download",
                         percent,
                         False,
@@ -7137,7 +7224,11 @@ class FileWatcherWorker(QObject):
 
         bucket, object_key = _resolve_s3_location(dest_path)
         filename = src_path.name
-        spec_id = str(item.get("spec_id", "")) if isinstance(item, dict) else ""
+        spec_id = (
+            str(item.get("spec_id") or item.get("id") or "")
+            if isinstance(item, dict)
+            else ""
+        )
         file_size = src_path.stat().st_size
         source_mtime_ns = src_path.stat().st_mtime_ns
         total_mb = file_size / 1024 / 1024
@@ -7438,9 +7529,12 @@ class FileWatcherWorker(QObject):
                         )
                         if attempt >= max_attempts:
                             raise
+                        retry_status = _s3_retry_status(
+                            "upload", e, percent, attempt, max_attempts
+                        )
                         self.upload_status_detail.emit(
                             str(dest_path),
-                            f"Network interrupted at ~{percent}% • retrying/resuming...",
+                            retry_status,
                             "upload",
                             percent,
                             False,
@@ -7456,10 +7550,12 @@ class FileWatcherWorker(QObject):
 
             duration = time.time() - transfer_start
             final_speed = total_mb / duration if duration > 0 else 0.0
+            # Multipart transfer finished. Keep the trigger-created popup alive
+            # while perform_file_transfer() completes metadata/API finalization.
             if spec_id:
-                self.upload_progress.emit(spec_id, str(dest_path), filename, 100)
+                self.upload_progress.emit(spec_id, str(dest_path), filename, 99)
             self.upload_status_detail.emit(
-                str(dest_path), "Upload Completed", "upload", 100, False
+                str(dest_path), "Finalizing upload...", "upload", 99, False
             )
             _clear_transfer_stats()
             report_transfer_event(
