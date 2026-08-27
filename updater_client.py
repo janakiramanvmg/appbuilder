@@ -36,8 +36,8 @@ def sha256(path):
 def normalize_version(version):
     """
     Convert versions such as:
-        1.2.8(UAT) -> 1.2.8
-        1.2.8      -> 1.2.8
+        1.2.9(UAT) -> 1.2.9
+        1.2.9      -> 1.2.9
     """
     value = str(version or "").strip()
 

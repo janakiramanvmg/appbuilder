@@ -295,7 +295,7 @@ NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
 NAS_USERNAME = "irnasappprod"
 MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
 NAS_PATH = "softwaremedia/IR_prod/"
-APPVERSION = "1.2.8"
+APPVERSION = "1.2.9"
 GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
 
 # BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
@@ -307,7 +307,7 @@ GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/mes
 # NAS_PREFIX = "/mnt/nas/softwaremedia/IR_uat"
 # MOUNTED_NAS_PATH = "/mnt/nas/softwaremedia/IR_uat"
 # NAS_PATH = "softwaremedia/IR_uat/"
-# APPVERSION = "1.2.8(UAT)"
+# APPVERSION = "1.2.9(UAT)"
 # GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 
 # === Rclone S3-compatible object storage (UAT) ===
@@ -5838,22 +5838,22 @@ class FileWatcherWorker(QObject):
                     )
 
                 src_ext = Path(src_path).suffix.lower().lstrip(".")
-                if src_ext in ("psd", "psb"):
-                    proceed_with_upload = self._validate_and_confirm_psd_upload(
-                        str(src_path)
-                    )
-                    if not proceed_with_upload:
-                        cache[metadata_key][spec_id]["api_response"][
-                            "request_status"
-                        ] = f"{status_prefix} Cancelled"
-                        save_cache(cache, significant_change=True)
-                        self.alert_notification.emit(
-                            "Upload Cancelled",
-                            f"Upload of '{Path(src_path).name}' was cancelled after PSD validation review.",
-                        )
-                        raise PSDUploadCancelled(
-                            f"Upload cancelled by user after PSD validation for {Path(src_path).name}"
-                        )
+                # if src_ext in ("psd", "psb"):
+                #     proceed_with_upload = self._validate_and_confirm_psd_upload(
+                #         str(src_path)
+                #     )
+                #     if not proceed_with_upload:
+                #         cache[metadata_key][spec_id]["api_response"][
+                #             "request_status"
+                #         ] = f"{status_prefix} Cancelled"
+                #         save_cache(cache, significant_change=True)
+                #         self.alert_notification.emit(
+                #             "Upload Cancelled",
+                #             f"Upload of '{Path(src_path).name}' was cancelled after PSD validation review.",
+                #         )
+                #         raise PSDUploadCancelled(
+                #             f"Upload cancelled by user after PSD validation for {Path(src_path).name}"
+                #         )
 
                 # ----------------------------------------------------------
                 # Transport selection:
