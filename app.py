@@ -286,55 +286,62 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === Server and environment Pointing global variables ===
 
-# BASE_DOMAIN = "https://app.vmgpremedia.com"
-# NAS_IP = "192.168.1.145"
-# NAS_PASSWORD = "D&*qmn012@12"
-# NAS_PORT = 22
-# NAS_SHARE = ""
-# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_USERNAME = "irnasappprod"
-# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_PATH = "softwaremedia/IR_prod/"
-# APPVERSION = "1.2.9"
-# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
-
-BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+BASE_DOMAIN = "https://app.vmgpremedia.com"
 NAS_IP = "192.168.1.145"
-NAS_USERNAME = "irdev"
-NAS_PASSWORD = "i#0f!L&+@s%^qc"
+NAS_PASSWORD = "D&*qmn012@12"
 NAS_PORT = 22
 NAS_SHARE = ""
-NAS_PREFIX = "/mnt/nas/softwaremedia/IR_uat"
-MOUNTED_NAS_PATH = "/mnt/nas/softwaremedia/IR_uat"
-NAS_PATH = "softwaremedia/IR_uat/"
-APPVERSION = "1.2.9(UAT)"
-GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
+NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
+NAS_USERNAME = "irnasappprod"
+MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
+NAS_PATH = "softwaremedia/IR_prod/"
+APPVERSION = "1.2.9"
+GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
+
+# BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+# NAS_IP = "192.168.1.145"
+# NAS_USERNAME = "irdev"
+# NAS_PASSWORD = "i#0f!L&+@s%^qc"
+# NAS_PORT = 22
+# NAS_SHARE = ""
+# NAS_PREFIX = "/mnt/nas/softwaremedia/IR_uat"
+# MOUNTED_NAS_PATH = "/mnt/nas/softwaremedia/IR_uat"
+# NAS_PATH = "softwaremedia/IR_uat/"
+# APPVERSION = "1.2.9(UAT)"
+# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 
 # === Rclone S3-compatible object storage (UAT) ===
 # `rclone serve s3` endpoint. Bucket is the root directory name exposed by rclone.
 # Environment variables override these values, which is recommended outside UAT/POC.
 # S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://192.168.1.145:9000").rstrip("/")
 
-# S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3.vmgpremedia.com").rstrip("/")
-# S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
-# S3_SECRET_KEY = os.getenv(
-#     "PREMEDIA_S3_SECRET_KEY",
-#     "25a1c467feb351a4693e876816260472e632a2a2a03145afe76f9d28960f752f",
-# )
-# S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
-# S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "softwaremedia")
-# S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_prod")
-# S3_MULTIPART_CHUNK_MB = 16
-# S3_MAX_CONCURRENCY = 2
-
-S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3uat.vmgpremedia.com").rstrip("/")
+S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3.vmgpremedia.com").rstrip("/")
 S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
-S3_SECRET_KEY = os.getenv("PREMEDIA_S3_SECRET_KEY", "KJDSKJNOIWEBNSSDEW")
+S3_SECRET_KEY = os.getenv(
+    "PREMEDIA_S3_SECRET_KEY",
+    "25a1c467feb351a4693e876816260472e632a2a2a03145afe76f9d28960f752f",
+)
 S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
 S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "softwaremedia")
-S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_uat")
+S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_prod")
 S3_MULTIPART_CHUNK_MB = 16
 S3_MAX_CONCURRENCY = 2
+
+# Download-only fast-start tuning. Keep this separate from multipart upload
+# settings so upload behavior/performance is unchanged.
+S3_DOWNLOAD_READ_CHUNK_KB = 512
+S3_DOWNLOAD_CONNECT_TIMEOUT_SEC = 8
+S3_DOWNLOAD_READ_TIMEOUT_SEC = 30
+S3_DOWNLOAD_BOTO_RETRIES = 1
+
+# S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3uat.vmgpremedia.com").rstrip("/")
+# S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
+# S3_SECRET_KEY = os.getenv("PREMEDIA_S3_SECRET_KEY", "KJDSKJNOIWEBNSSDEW")
+# S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
+# S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "softwaremedia")
+# S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_uat")
+# S3_MULTIPART_CHUNK_MB = 16
+# S3_MAX_CONCURRENCY = 2
 
 BASE_DIR = Path(__file__).parent.resolve()
 
@@ -586,8 +593,14 @@ def _replace_remote_suffix(remote_path, new_ext):
     return str(Path(value).with_suffix(f".{new_ext}"))
 
 
-def _create_s3_client():
-    """Create a path-style SigV4 S3 client for `rclone serve s3`."""
+def _create_s3_client(connect_timeout=10, read_timeout=120, max_attempts=3):
+    """
+    Create a path-style SigV4 S3 client for `rclone serve s3`.
+
+    Defaults preserve the existing upload behavior. Downloads can pass shorter
+    timeouts/retries so a stalled first response does not keep the progress
+    window at 0% for a long time before our outer resumable retry takes over.
+    """
     if not S3_AVAILABLE:
         raise RuntimeError(
             "boto3 is required for rclone S3 transfers. Install with: pip install boto3"
@@ -604,9 +617,9 @@ def _create_s3_client():
         config=BotoConfig(
             signature_version="s3v4",
             s3={"addressing_style": "path"},
-            connect_timeout=10,
-            read_timeout=120,
-            retries={"max_attempts": 3, "mode": "standard"},
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            retries={"max_attempts": max_attempts, "mode": "standard"},
         ),
     )
 
@@ -6928,10 +6941,18 @@ class FileWatcherWorker(QObject):
 
         temp_path = dest_path + ".s3part"
         meta_path = temp_path + ".json"
-        chunk_size = max(1024 * 1024, S3_MULTIPART_CHUNK_MB * 1024 * 1024)
+
+        # IMPORTANT: do NOT use the 16 MiB multipart-upload chunk size here.
+        # StreamingBody.read(N) can wait until N bytes arrive. With 16 MiB and
+        # a slow link, the first visible download update can therefore take
+        # 1-2 minutes. A 512 KiB read gives fast first-byte/progress feedback
+        # without changing the upload path at all.
+        chunk_size = max(64 * 1024, int(S3_DOWNLOAD_READ_CHUNK_KB) * 1024)
         max_attempts = max(1, int(globals().get("MAX_RETRIES", 10)))
 
         transfer_start = time.time()
+        data_start_time = None
+        session_start_bytes = 0
         last_emit = 0.0
         total_size = 0
         total_mb = 0.0
@@ -6956,20 +6977,28 @@ class FileWatcherWorker(QObject):
                 return
             last_emit = now
 
-            elapsed = max(now - transfer_start, 0.000001)
+            # Measure speed only from bytes transferred in THIS network session.
+            # This avoids an inflated speed value when resuming a partial file.
+            speed_start = data_start_time or transfer_start
+            elapsed = max(now - speed_start, 0.000001)
+            session_bytes = max(0, transferred - session_start_bytes)
             percent = int((transferred / total_size) * 100) if total_size else 100
             percent = max(0, min(percent, 100))
-            speed_mbps = (transferred / 1024 / 1024) / elapsed
+            speed_mbps = (session_bytes / 1024 / 1024) / elapsed
             remaining_mb = max(total_size - transferred, 0) / 1024 / 1024
             eta_sec = remaining_mb / speed_mbps if speed_mbps > 0 else float("inf")
             eta_text = _format_elapsed(eta_sec) if eta_sec != float("inf") else "—"
+            downloaded_mb = transferred / 1024 / 1024
 
             prefix = "Resuming download" if resumed else "Downloading"
             if spec_id:
                 self.download_progress.emit(spec_id, dest_path, filename, percent)
             self.download_status_detail.emit(
                 dest_path,
-                f"{prefix} {percent}% • {speed_mbps:.1f} MB/s • ETA {eta_text}",
+                (
+                    f"{prefix} {downloaded_mb:.1f}/{total_mb:.1f} MB ({percent}%) "
+                    f"• {speed_mbps:.1f} MB/s • ETA {eta_text}"
+                ),
                 "download",
                 percent,
                 False,
@@ -6988,13 +7017,32 @@ class FileWatcherWorker(QObject):
         attempt = 0
         started_reported = False
 
+        # The popup is already created by perform_file_transfer(); show a useful
+        # startup state immediately instead of leaving it looking frozen at 0%.
+        if spec_id:
+            self.download_progress.emit(spec_id, dest_path, filename, 0)
+        self.download_status_detail.emit(
+            dest_path, "Connecting to S3...", "download", 0, False
+        )
+
         try:
             while attempt < max_attempts:
                 attempt += 1
-                client = _create_s3_client()
+                client = _create_s3_client(
+                    connect_timeout=S3_DOWNLOAD_CONNECT_TIMEOUT_SEC,
+                    read_timeout=S3_DOWNLOAD_READ_TIMEOUT_SEC,
+                    max_attempts=S3_DOWNLOAD_BOTO_RETRIES,
+                )
                 body = None
                 try:
+                    head_started = time.monotonic()
                     head = client.head_object(Bucket=bucket, Key=object_key)
+                    logger.info(
+                        "[S3][Download] HEAD ready in %.2fs: s3://%s/%s",
+                        time.monotonic() - head_started,
+                        bucket,
+                        object_key,
+                    )
                     total_size = int(head.get("ContentLength", 0) or 0)
                     total_mb = total_size / 1024 / 1024
                     object_etag = str(head.get("ETag", "") or "")
@@ -7081,8 +7129,26 @@ class FileWatcherWorker(QObject):
                     if existing > 0:
                         request["Range"] = f"bytes={existing}-"
 
+                    start_percent = int((existing / total_size) * 100) if total_size else 0
+                    self.download_status_detail.emit(
+                        dest_path,
+                        "Opening S3 download stream..." if not existing else f"Opening S3 resume stream at {start_percent}%...",
+                        "download",
+                        start_percent,
+                        False,
+                    )
+
+                    get_started = time.monotonic()
                     response = client.get_object(**request)
                     body = response["Body"]
+                    logger.info(
+                        "[S3][Download] GET stream ready in %.2fs (attempt %s/%s)",
+                        time.monotonic() - get_started,
+                        attempt,
+                        max_attempts,
+                    )
+                    data_start_time = time.time()
+                    session_start_bytes = existing
 
                     # A resume request must be honored as a ranged response.
                     if existing > 0:
@@ -7096,6 +7162,7 @@ class FileWatcherWorker(QObject):
 
                     mode = "ab" if existing > 0 else "wb"
                     transferred = existing
+                    first_data_logged = False
                     with open(temp_path, mode) as out:
                         while transferred < total_size:
                             data = body.read(min(chunk_size, total_size - transferred))
@@ -7103,6 +7170,16 @@ class FileWatcherWorker(QObject):
                                 break
                             out.write(data)
                             transferred += len(data)
+
+                            if not first_data_logged:
+                                first_data_logged = True
+                                logger.info(
+                                    "[S3][Download] First %s bytes received in %.2fs; read_chunk=%s KiB",
+                                    len(data),
+                                    max(time.time() - (data_start_time or time.time()), 0.0),
+                                    chunk_size // 1024,
+                                )
+
                             _emit_progress(transferred, resumed=(existing > 0))
                         out.flush()
                         try:
@@ -7311,13 +7388,17 @@ class FileWatcherWorker(QObject):
             remaining_mb = max(file_size - transferred, 0) / 1024 / 1024
             eta_sec = remaining_mb / speed_mbps if speed_mbps > 0 else float("inf")
             eta_text = _format_elapsed(eta_sec) if eta_sec != float("inf") else "—"
+            uploaded_mb = transferred / 1024 / 1024
             prefix = "Resuming upload" if resumed else "Uploading"
 
             if spec_id:
                 self.upload_progress.emit(spec_id, str(dest_path), filename, percent)
             self.upload_status_detail.emit(
                 str(dest_path),
-                f"{prefix} {percent}% • {speed_mbps:.1f} MB/s • ETA {eta_text}",
+                (
+                    f"{prefix} {uploaded_mb:.1f}/{total_mb:.1f} MB ({percent}%) "
+                    f"• {speed_mbps:.1f} MB/s • ETA {eta_text}"
+                ),
                 "upload",
                 percent,
                 False,
