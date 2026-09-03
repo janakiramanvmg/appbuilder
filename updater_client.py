@@ -18,7 +18,7 @@ from PySide6.QtCore import Qt
 
 VERSION_URL = (
     "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/"
-    "application_uat/drn/latest_version.json"
+    "application/drn/latest_version.json"
 )
 
 
