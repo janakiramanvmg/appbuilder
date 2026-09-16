@@ -315,17 +315,17 @@ GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/mes
 # Environment variables override these values, which is recommended outside UAT/POC.
 # S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://192.168.1.145:9000").rstrip("/")
 
-# S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "http://s3.vmgpremedia.com").rstrip("/")
-# S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
-# S3_SECRET_KEY = os.getenv(
-#     "PREMEDIA_S3_SECRET_KEY",
-#     "25a1c467feb351a4693e876816260472e632a2a2a03145afe76f9d28960f752f",
-# )
-# S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
-# S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "softwaremedia")
-# S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_prod")
-# S3_MULTIPART_CHUNK_MB = 16
-# S3_MAX_CONCURRENCY = 2
+S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "https://s3.vmgpremedia.com").rstrip("/")
+S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
+S3_SECRET_KEY = os.getenv(
+    "PREMEDIA_S3_SECRET_KEY",
+    "25a1c467feb351a4693e876816260472e632a2a2a03145afe76f9d28960f752f",
+)
+S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
+S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "softwaremedia")
+S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_prod")
+S3_MULTIPART_CHUNK_MB = 16
+S3_MAX_CONCURRENCY = 2
 
 # Download-only fast-start tuning. Keep this separate from multipart upload
 # settings so upload behavior/performance is unchanged.
