@@ -10,7 +10,7 @@ import requests
 from packaging.version import Version, InvalidVersion
 
 VERSION_URL = (
-    "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application/drn/latest_version.json"
+    "https://vmg-premedia-22112023.s3.ap-southeast-2.amazonaws.com/application_uat/drn/latest_version.json"
 )
 
 
