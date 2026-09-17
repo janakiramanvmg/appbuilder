@@ -286,29 +286,29 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === Server and environment Pointing global variables ===
 
-# BASE_DOMAIN = "https://app.vmgpremedia.com"
-# NAS_IP = "192.168.1.145"
-# NAS_PASSWORD = "D&*qmn012@12"
-# NAS_PORT = 22
-# NAS_SHARE = ""
-# NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_USERNAME = "irnasappprod"
-# MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
-# NAS_PATH = "softwaremedia/IR_prod/"
-# APPVERSION = "1.2.9"
-# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
-
-BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+BASE_DOMAIN = "https://app.vmgpremedia.com"
 NAS_IP = "192.168.1.145"
-NAS_USERNAME = "irdev"
-NAS_PASSWORD = "i#0f!L&+@s%^qc"
+NAS_PASSWORD = "D&*qmn012@12"
 NAS_PORT = 22
 NAS_SHARE = ""
-NAS_PREFIX = "/mnt/nas/softwaremedia/IR_uat"
-MOUNTED_NAS_PATH = "/mnt/nas/softwaremedia/IR_uat"
-NAS_PATH = "softwaremedia/IR_uat/"
-APPVERSION = "1.2.9(UAT)"
-GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
+NAS_PREFIX ='/mnt/nas/softwaremedia/IR_prod'
+NAS_USERNAME = "irnasappprod"
+MOUNTED_NAS_PATH ='/mnt/nas/softwaremedia/IR_prod'
+NAS_PATH = "softwaremedia/IR_prod/"
+APPVERSION = "1.2.9"
+GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAjCmpAxc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=ibA47XmxTeve-NPc_AXQUVDY3ZvYriKEXL0vAjpKHag"
+
+# BASE_DOMAIN = "https://app-uat.vmgpremedia.com"
+# NAS_IP = "192.168.1.145"
+# NAS_USERNAME = "irdev"
+# NAS_PASSWORD = "i#0f!L&+@s%^qc"
+# NAS_PORT = 22
+# NAS_SHARE = ""
+# NAS_PREFIX = "/mnt/nas/softwaremedia/IR_uat"
+# MOUNTED_NAS_PATH = "/mnt/nas/softwaremedia/IR_uat"
+# NAS_PATH = "softwaremedia/IR_uat/"
+# APPVERSION = "1.2.9(UAT)"
+# GOOGLE_CHAT_WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAQAUrb-ok4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=EUoZGB55TLIOIOBQ_D0uKNyYHB2UJWH9pA23QDGgNug"
 
 # === Rclone S3-compatible object storage (UAT) ===
 # `rclone serve s3` endpoint. Bucket is the root directory name exposed by rclone.
@@ -334,14 +334,14 @@ S3_DOWNLOAD_CONNECT_TIMEOUT_SEC = 8
 S3_DOWNLOAD_READ_TIMEOUT_SEC = 30
 S3_DOWNLOAD_BOTO_RETRIES = 1
 
-S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "https://s3uat.vmgpremedia.com").rstrip("/")
-S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
-S3_SECRET_KEY = os.getenv("PREMEDIA_S3_SECRET_KEY", "KJDSKJNOIWEBNSSDEW")
-S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
-S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "softwaremedia")
-S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_uat")
-S3_MULTIPART_CHUNK_MB = 16
-S3_MAX_CONCURRENCY = 2
+# S3_ENDPOINT = os.getenv("PREMEDIA_S3_ENDPOINT", "https://s3uat.vmgpremedia.com").rstrip("/")
+# S3_ACCESS_KEY = os.getenv("PREMEDIA_S3_ACCESS_KEY", "premediaadmin")
+# S3_SECRET_KEY = os.getenv("PREMEDIA_S3_SECRET_KEY", "KJDSKJNOIWEBNSSDEW")
+# S3_REGION = os.getenv("PREMEDIA_S3_REGION", "us-east-1")
+# S3_BUCKET = os.getenv("PREMEDIA_S3_BUCKET", "softwaremedia")
+# S3_PATH_PREFIX = os.getenv("PREMEDIA_S3_PATH_PREFIX", "IR_uat")
+# S3_MULTIPART_CHUNK_MB = 16
+# S3_MAX_CONCURRENCY = 2
 
 BASE_DIR = Path(__file__).parent.resolve()
 
